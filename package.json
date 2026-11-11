@@ -2,7 +2,7 @@
   "name": "session-watchtower",
   "displayName": "Session Watchtower for Claude Code",
   "description": "%description%",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "scripts": {
     "test": "node --test test/*.test.js"
   },
@@ -114,6 +114,11 @@
         "command": "claudeSessionChanges.openSessionChanges",
         "title": "%command.openSessionChanges%",
         "icon": "$(diff-multiple)"
+      },
+      {
+        "command": "claudeSessionChanges.archiveSession",
+        "title": "%command.archiveSession%",
+        "icon": "$(archive)"
       }
     ],
     "menus": {
@@ -148,6 +153,10 @@
         },
         {
           "command": "claudeSessionChanges.openSessionChanges",
+          "when": "false"
+        },
+        {
+          "command": "claudeSessionChanges.archiveSession",
           "when": "false"
         }
       ],
@@ -228,6 +237,16 @@
           "command": "claudeSessionChanges.openClaudeSession",
           "when": "view == claudeSessionChanges.tree && viewItem =~ /^session/",
           "group": "1_open@1"
+        },
+        {
+          "command": "claudeSessionChanges.archiveSession",
+          "when": "view == claudeSessionChanges.tree && viewItem =~ /^session/",
+          "group": "inline@3"
+        },
+        {
+          "command": "claudeSessionChanges.archiveSession",
+          "when": "view == claudeSessionChanges.tree && viewItem =~ /^session/",
+          "group": "3_archive@1"
         }
       ]
     },
@@ -271,6 +290,13 @@
           "type": "boolean",
           "default": true,
           "description": "%config.sessionDetails%"
+        },
+        "claudeSessionChanges.sessionListDays": {
+          "type": "number",
+          "default": 90,
+          "minimum": 0,
+          "maximum": 365,
+          "description": "%config.sessionListDays%"
         },
         "claudeSessionChanges.includeCodex": {
           "type": "boolean",

@@ -15,6 +15,7 @@
   "command.revealSession": "Show changed files",
   "command.openClaudeSession": "Open Claude conversation",
   "command.openSessionChanges": "Review all changes of this session",
+  "command.archiveSession": "Archive session",
   "config.lookbackHours": "How many hours of changes to show. Running sessions are always listed.",
   "config.showShellGuesses": "Also show files guessed from shell commands (>, >>, tee, sed -i, cp, mv …), marked with a grey ?.",
   "config.hideScratchpadFiles": "Hide Claude's throwaway scratchpad files under /tmp/claude-*. Git worktrees inside the scratchpad stay visible.",
@@ -22,6 +23,7 @@
   "config.pollSeconds": "How often (seconds) to check for new log lines while the view is visible. Only newly appended lines are read.",
   "config.statusBar": "Show a status bar summary (working · waiting · just finished). Clicking it opens the Sessions view.",
   "config.sessionDetails": "Show a second line under each session with its current step and the size of its changes. Turn off for a compact one-line list.",
+  "config.sessionListDays": "List this folder's sessions from the last N days in the Sessions view, like Claude Code's own session list, even when they are not running (0 = only running sessions and sessions with changes in the time range). Sessions with no conversation for longer than Claude Code's \"Archive Inactive Sessions\" setting (14 days by default) go to the Archived section. Sessions you archived or restored by hand inside Claude Code cannot be detected; use the Archive button here for those.",
   "config.includeCodex": "Also show Codex sessions from ~/.codex/sessions (edits made with apply_patch).",
   "config.attentionMarkerDir": "Folder where an approval-notification hook writes <first 12 hex of sha256(session id)>.pending files. Used as an extra 'waiting for you' signal. Leave empty to turn off."
 }

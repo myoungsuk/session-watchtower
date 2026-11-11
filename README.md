@@ -10,9 +10,11 @@
 
 ## Features
 
-- **Session status at a glance** — a roomy list in the same colors as Claude Code's session list: green working, blue waiting for your approval or answer, orange just finished, grey idle, hollow off — plus how long it has been in that state. Sessions in the current folder come first; sessions from other folders are grouped and collapsed below. A badge counts sessions that are waiting for you.
+- **Session status at a glance** — a roomy list in the same colors as Claude Code's session list: green working, blue waiting for your approval or answer, orange just finished, grey idle, hollow off — plus the time since the last conversation. Sessions in the current folder come first; sessions from other folders are grouped and collapsed below. A badge counts sessions that are waiting for you.
+- **The same list as Claude Code, with an Archived section** — this folder's sessions are listed even when nothing is running (for example right after a restart), newest conversation first. Sessions that have been quiet for longer than Claude Code's *Archive Inactive Sessions* setting go to a collapsed **Archived** section, and the archive button on a row moves a session there by hand. An archived session comes back by itself when it gets a new message.
 - **What it is doing now** — under a working or waiting session, a short line such as *Running: npm test* or *Editing README.md*, plus the size of its changes (`+142 −38` with a small green/red bar). The **?** button explains every color. Works in dark and light themes.
 - **Changed files per session** — edits from Claude's Edit/Write tools, shell commands and git commits, with `+added −removed` line counts and times. Click a file to open a diff.
+- **See which file is being edited right now** — a file gets a green spinner while a working session is editing it (changed in the last 30 seconds, or an edit that has not finished), and a blue bell while an edit waits for your approval.
 - **Review a whole session** — one click opens every file the session changed in a single multi-file diff. For files changed only with edit tools or commits, the right side is the file as the session left it, so other sessions' later edits don't get mixed in.
 - **Status bar summary** — working · waiting · just finished counts are always visible at the bottom; it turns to a warning color while a session waits for you.
 - **Jump to the conversation** — click a session to open it in Claude Code, or start a new one with **New session**.
@@ -56,7 +58,10 @@ Everything stays on your machine. The extension only reads `~/.claude/projects`,
 - Opening a conversation uses an internal Claude Code command (tested with Claude Code 2.1.322).
 - Files written by scripts that Claude Code does not record and that are never committed cannot be detected.
 - Codex has no list of running sessions, so a Codex session counts as working only while its log changed in the last 90 seconds. Codex conversations can't be opened from here.
-- *Just finished* means idle for less than 10 minutes; unlike Claude Code's own "unread" mark it cannot know whether you already looked.
+- *Just finished* means the last conversation ended less than 10 minutes ago; unlike Claude Code's own "unread" mark it cannot know whether you already looked.
+- Sessions you archived or restored **by hand inside Claude Code** cannot be detected (Claude Code keeps that list private), and neither can its "unread" mark. Everything else in the list follows the same rules, so the two lists can differ by those sessions; use the archive button here for them. Sessions started by scripts through the SDK are left out of the history list, as in Claude Code.
+- Edit tools finish in well under a second, so "being edited right now" is shown for 30 seconds after a change while the session keeps working.
+- If the Sessions view says *There is no data provider registered* right after updating from 0.6.0, run **Developer: Reload Window** once (that version drew the view differently).
 - The user interface is in English, and switches to Korean automatically when VS Code's display language is Korean.
 
 ## Settings
@@ -70,6 +75,7 @@ Everything stays on your machine. The extension only reads `~/.claude/projects`,
 | `claudeSessionChanges.pollSeconds` | 5 | How often to check for new log lines while the view is visible. |
 | `claudeSessionChanges.statusBar` | true | Show the status bar summary. |
 | `claudeSessionChanges.sessionDetails` | true | Show the second line under each session (current step, change size). Turn off for a compact list. |
+| `claudeSessionChanges.sessionListDays` | 90 | List this folder's sessions from the last N days even when they are not running (0 = only running sessions and sessions with changes in the time range). |
 | `claudeSessionChanges.includeCodex` | true | Also show Codex sessions. |
 | `claudeSessionChanges.attentionMarkerDir` | `~/.cache/claude-attention` | Folder of approval-hook marker files (empty = off). |
 
@@ -83,6 +89,6 @@ Questions, bug reports and ideas are welcome: **k4858678@gmail.com**
 
 ## 한국어 요약
 
-Claude Code 세션마다 지금 **작업 중인지 · 멈춰서 기다리는지 · 쉬는지**와 그 세션이 바꾼 파일을 한 창에서 봅니다. 이 폴더 세션이 위에, 다른 폴더 세션은 접힌 묶음으로 아래에 나옵니다. 세션을 누르면 Claude 대화 창이 열리고, "변경 전부 보기"로 그 세션이 바꾼 파일을 한 화면에서 검토합니다. 아래 상태 표시줄에 요약이 늘 보이며, Codex 세션도 함께 나옵니다. 파일 색은 git과 같습니다: 초록 A 새 파일, 노랑 M 수정, 빨강 D 지워짐, 회색 ? 추정. 파일은 읽기만 하며, 기록은 이 컴퓨터 밖으로 나가지 않습니다.
+Claude Code 세션마다 지금 **작업 중인지 · 멈춰서 기다리는지 · 쉬는지**와 그 세션이 바꾼 파일을 한 창에서 봅니다. 이 폴더 세션이 위에, 다른 폴더 세션은 접힌 묶음으로 아래에 나옵니다. 실행 중인 세션이 없어도(예: 컴퓨터를 새로 켠 직후) 이 폴더 세션이 Claude Code 목록처럼 나오고, 오래 대화가 없던 세션과 보관 단추로 넣은 세션은 접힌 **보관함**에 모입니다. 작업 중인 세션이 지금 고치는 파일에는 초록 회전 표시가 붙습니다. 세션을 누르면 Claude 대화 창이 열리고, "변경 전부 보기"로 그 세션이 바꾼 파일을 한 화면에서 검토합니다. 아래 상태 표시줄에 요약이 늘 보이며, Codex 세션도 함께 나옵니다. 파일 색은 git과 같습니다: 초록 A 새 파일, 노랑 M 수정, 빨강 D 지워짐, 회색 ? 추정. 파일은 읽기만 하며, 기록은 이 컴퓨터 밖으로 나가지 않습니다.
 
 문의·버그 제보·아이디어: **k4858678@gmail.com**

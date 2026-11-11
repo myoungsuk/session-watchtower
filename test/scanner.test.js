@@ -220,3 +220,58 @@ test('apply_patch 글 해석과 임시 파일 판정', () => {
   assert.strictEqual(S.isScratch('/tmp/claude-0000/no-such-project/abc/scratchpad/out.txt'), true);
   assert.strictEqual(S.isScratch(path.join(home, 'work', 'file.txt')), path.join(home, 'x').startsWith('/tmp/claude-'));
 });
+
+test('마지막 활동은 마지막 대화 시각이다(파일이 바뀐 시각이 아님)', () => {
+  const sid = '77777777-7777-4777-8777-777777777777';
+  const last = now - 6 * 60 * MIN;
+  fx.claudeSession(home, project, sid, [
+    rec.user(project, last - MIN, 'earlier work'),
+    rec.toolUse(project, last, 'toolu_l', 'Bash', { command: 'ls', description: 'List' }),
+    rec.toolResult(last + 400, 'toolu_l', rec.bashResult({})),
+    { type: 'last-prompt', lastPrompt: 'earlier work', sessionId: sid }, // 꺼질 때 붙는 정리 기록: 시각이 없다
+    { type: 'cost-state', sessionId: sid },
+  ]);
+  const s = find(S.createModel().scan(base()), sid);
+  assert.ok(Math.abs(s.lastActivity - (last + 400)) < 1500, '마지막 대화 시각이어야 함: ' + new Date(s.lastActivity).toISOString());
+});
+
+test('이 폴더의 오래된 세션은 설정한 날 수만큼 목록에만 보여 준다', () => {
+  const sid = '88888888-8888-4888-8888-888888888888';
+  const old = now - 5 * 24 * 60 * MIN;
+  const oldFile = path.join(project, 'ancient.js');
+  const file = fx.claudeSession(home, project, sid, [
+    rec.user(project, old - MIN, 'a task from last week'),
+    rec.aiTitle(sid, 'Last week task'),
+    rec.toolUse(project, old, 'toolu_a', 'Write', { file_path: oldFile, content: 'x\n' }),
+    rec.toolResult(old + 300, 'toolu_a', rec.writeResult(oldFile, 'x\n')),
+  ]);
+  fs.utimesSync(file, new Date(old + 1000), new Date(old + 1000));
+  assert.ok(!find(S.createModel().scan(base()), sid), '기본(끔)에서는 보는 기간 밖 세션이 없어야 함');
+  assert.ok(!find(S.createModel().scan({ ...base(), listDays: 14, workspaceDirs: ['/some/other/folder'] }), sid), '다른 폴더 창에서는 안 보임');
+  assert.ok(!find(S.createModel().scan({ ...base(), listDays: 2, workspaceDirs: [project] }), sid), '날 수보다 오래되면 안 보임');
+  const model = S.createModel();
+  const s = find(model.scan({ ...base(), listDays: 14, workspaceDirs: [project] }), sid);
+  assert.ok(s, '14일로 켜면 보여야 함');
+  assert.deepStrictEqual([s.metaOnly, s.title, s.alive, s.changes.length], [true, 'Last week task', false, 0]);
+  assert.ok(Math.abs(s.lastActivity - (old + 300)) < 1500);
+  const wide = find(model.scan({ ...base(), lookbackHours: 200, listDays: 14, workspaceDirs: [project] }), sid);
+  assert.strictEqual(wide.metaOnly, false, '보는 기간에 들어오면 제대로 읽는다');
+  assert.ok(wide.changes.some((c) => c.path === oldFile));
+});
+
+test('프로그램이 돌린 세션(SDK)은 옛 세션 목록에 넣지 않는다(Claude Code 목록과 같게)', () => {
+  const sid = '99999999-9999-4999-8999-999999999999';
+  const old = now - 2 * 24 * 60 * MIN;
+  const touched = path.join(project, 'by-script.js');
+  const file = fx.claudeSession(home, project, sid, [
+    { ...rec.user(project, old - MIN, 'run from a script'), entrypoint: 'sdk-cli' },
+    rec.aiTitle(sid, 'Scripted run'),
+    rec.toolUse(project, old, 'toolu_s', 'Write', { file_path: touched, content: 'x\n' }),
+    rec.toolResult(old + 300, 'toolu_s', rec.writeResult(touched, 'x\n')),
+  ]);
+  fs.utimesSync(file, new Date(old + 1000), new Date(old + 1000));
+  assert.ok(!find(S.createModel().scan({ ...base(), listDays: 14, workspaceDirs: [project] }), sid), '목록에는 없어야 함');
+  const wide = find(S.createModel().scan({ ...base(), lookbackHours: 72, listDays: 14, workspaceDirs: [project] }), sid);
+  assert.ok(wide && wide.changes.some((c) => c.path === touched), '보는 기간 안에 파일을 바꿨으면 그대로 보여 준다');
+});
+

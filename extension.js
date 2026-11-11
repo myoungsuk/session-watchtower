@@ -35,6 +35,7 @@ let timer = null;
 let treeView = null;
 let sessionsView = null;
 let sessionsModel = [];
+let archivedModel = [];
 let ctx = null;
 const diffRegistry = new Map();
 let diffSeq = 0;
@@ -48,6 +49,7 @@ function cfg() {
     includeSubagents: c.get('includeSubagents', true) !== false,
     pollSeconds: Math.max(2, Number(c.get('pollSeconds', 5)) || 5),
     sessionDetails: c.get('sessionDetails', true) !== false,
+    sessionListDays: Math.max(0, Math.min(365, Number(c.get('sessionListDays', 90)) || 0)),
     statusBar: c.get('statusBar', true) !== false,
     includeCodex: c.get('includeCodex', true) !== false,
     attentionDir: expandHome(String(c.get('attentionMarkerDir', '~/.cache/claude-attention') || '')),
@@ -68,6 +70,8 @@ function workerOpts(extra) {
     includeCodex: o.includeCodex,
     attentionDir: o.attentionDir,
     cacheFile: ctx ? path.join(ctx.globalStorageUri.fsPath, 'scan-cache-v2.json') : '',
+    listDays: o.sessionListDays,
+    workspaceDirs: (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath),
     ...extra,
   };
 }
@@ -122,15 +126,50 @@ function stateOf(s) {
     const what = s.waitingFor === 'permission prompt' ? L('needs approval') : s.waitingFor === 'input needed' ? L('needs answer') : L('waiting');
     return { key: 'waiting', label: L('Waiting ({0})', what), short: what, time: sinceShort, text: `${L('Waiting')} · ${what}${since}`, icon: new vscode.ThemeIcon('bell-dot', new vscode.ThemeColor('charts.blue')) };
   }
-  if (s.status === 'idle' && s.statusSince && Date.now() - s.statusSince < DONE_MS) {
-    return { key: 'done', label: L('Just finished'), short: L('Just finished'), time: sinceShort, text: `${L('Just finished')}${since}`, icon: new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.orange')) };
-  }
   if (s.status === 'idle') {
-    return { key: 'idle', label: L('Idle'), short: L('Idle'), time: sinceShort, text: `${L('Idle')}${since}`, icon: new vscode.ThemeIcon('debug-pause') };
+    // 쉰 시간은 마지막 대화부터 센다. 상태가 바뀐 시각은 창을 다시 열 때도 새로 찍혀서,
+    // 6시간 전에 끝난 세션이 "방금 끝남"으로 보였다.
+    const from = Math.min(s.statusSince || Infinity, s.lastActivity || Infinity);
+    const idleFor = Number.isFinite(from) ? fmtFor(from) : '';
+    const idleSince = idleFor ? ' · ' + idleFor : '';
+    if (s.lastActivity && Date.now() - s.lastActivity < DONE_MS) {
+      return { key: 'done', label: L('Just finished'), short: L('Just finished'), time: idleFor, text: `${L('Just finished')}${idleSince}`, icon: new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.orange')) };
+    }
+    return { key: 'idle', label: L('Idle'), short: L('Idle'), time: idleFor, text: `${L('Idle')}${idleSince}`, icon: new vscode.ThemeIcon('debug-pause') };
   }
   return { key: 'alive', label: L('Running'), short: L('Running'), time: '', text: L('Running'), icon: new vscode.ThemeIcon('circle-filled') };
 }
 
+
+// 지금 고치는 파일. 고치는 도구는 대개 1초 안에 끝나 "도구가 도는 순간"만 보면 화면에 잡히지 않는다.
+// 그래서 (가) 아직 끝나지 않은 고치기 도구가 겨냥한 파일(승인 대기 포함)과
+// (나) 작업 중인 세션이 방금(LIVE_MS 안) 바꾼 파일을 함께 "고치는 중"으로 본다.
+const LIVE_MS = 30000;
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+function liveState(s, f) {
+  if (!s.alive || (s.status !== 'busy' && s.status !== 'waiting')) return null;
+  const a = s.activity;
+  if (a && !a.done && a.path === f.path && EDIT_TOOLS.has(a.tool)) return s.status === 'waiting' ? 'approval' : 'editing';
+  return s.status === 'busy' && Date.now() - f.lastTs < LIVE_MS ? 'editing' : null;
+}
+
+// "고치는 중" 표시는 새 기록이 없어도 시간이 지나면 꺼져야 한다 → 가장 먼저 끝나는 시각에 한 번 다시 그린다
+let liveTimer = null;
+function scheduleLiveExpiry() {
+  if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; }
+  const t = Date.now();
+  let next = Infinity;
+  for (const s of model) {
+    if (!s.alive || s.status !== 'busy') continue;
+    for (const f of s.files) {
+      const left = f.lastTs + LIVE_MS - t;
+      if (left > 0 && left < next) next = left;
+    }
+  }
+  if (next === Infinity) return;
+  liveTimer = setTimeout(() => { liveTimer = null; provider.fire(); scheduleLiveExpiry(); }, next + 200);
+  if (liveTimer.unref) liveTimer.unref();
+}
 
 // "지금 하는 일": 마지막 도구 호출을 쉬운 말로(진행 중일 때만 의미가 있음)
 function activityText(a) {
@@ -201,8 +240,11 @@ function rebuild() {
   const o = cfg();
   const out = [];
   existsMemo = new Map();
+  const archive = loadArchive();
   for (const s of raw) {
     if (aliveOnly && !s.alive) continue;
+    // 직접 보관한 세션만 숨긴다. 오래돼서 보관함에 간 세션은 보는 기간 안에 바꾼 파일이 있으면 계속 보여 준다
+    if (archiveReason(s, archive, 0) === 'manual') continue;
     const files = new Map();
     const unresolved = [];
     for (const c of s.changes) {
@@ -245,6 +287,7 @@ function rebuild() {
   }
   rebuildSessions();
   provider.fire();
+  scheduleLiveExpiry();
 }
 
 // 이 폴더 세션과 다른 폴더 묶음(진행 중 묶음 먼저, 최근 활동 순)
@@ -257,10 +300,86 @@ function splitByFolder(list) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(s);
   }
-  const recent = (items) => Math.max(...items.map((s) => Math.max(s.lastActivity || 0, s.statusSince || 0)));
+  const recent = (items) => Math.max(...items.map((s) => s.lastActivity || 0));
   const alive = (items) => items.some((s) => s.alive);
   const sorted = [...groups.entries()].sort((a, b) => Number(alive(b[1])) - Number(alive(a[1])) || recent(b[1]) - recent(a[1]));
   return { mine, groups: sorted };
+}
+
+// ---------- 보관함 ----------
+// Claude Code 세션 목록처럼 "목록"과 "보관함" 두 칸으로 나눈다.
+// - 자동: Claude Code 설정(claudeCode.archiveInactiveSessions, 기본 14일)만큼 대화가 없던 세션은 보관함에 보인다.
+// - 직접: 보관 단추로 넣은 세션. 보관한 뒤 새 대화가 생기면 저절로 목록으로 돌아온다.
+// Claude Code에서 직접 보관하거나 꺼낸 목록은 다른 확장이 읽을 수 없어 그 부분만은 맞출 수 없다.
+// 파일에 두어 같은 컴퓨터의 여러 VS Code 창이 함께 쓴다: { archived: {세션: 보관한 시각}, restored: {세션: 꺼낸 시각} }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const EMPTY_ARCHIVE = { archived: {}, restored: {} };
+let archiveMemo = { mtimeMs: -1, map: EMPTY_ARCHIVE };
+
+// Claude Code가 세션을 자동으로 보관하는 날 수(0 = 안 함). Claude Code 설정을 그대로 따른다.
+function autoArchiveDays() {
+  const v = Number(vscode.workspace.getConfiguration('claudeCode').get('archiveInactiveSessions', 14));
+  return Number.isFinite(v) && v >= 0 ? v : 14;
+}
+
+function normalizeArchive(data) {
+  const obj = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? x : {});
+  const d = obj(data);
+  return { archived: { ...obj(d.archived) }, restored: { ...obj(d.restored) } };
+}
+
+function archiveFile() {
+  return ctx ? path.join(ctx.globalStorageUri.fsPath, 'archived-sessions.json') : '';
+}
+
+function loadArchive() {
+  const f = archiveFile();
+  if (!f) return EMPTY_ARCHIVE;
+  try {
+    const st = fs.statSync(f);
+    if (st.mtimeMs !== archiveMemo.mtimeMs) {
+      archiveMemo = { mtimeMs: st.mtimeMs, map: normalizeArchive(JSON.parse(fs.readFileSync(f, 'utf8'))) };
+    }
+  } catch {
+    archiveMemo = { mtimeMs: -1, map: EMPTY_ARCHIVE };
+  }
+  return archiveMemo.map;
+}
+
+function saveArchive(map) {
+  const f = archiveFile();
+  if (!f) return;
+  try {
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    const tmp = f + '.tmp-' + process.pid;
+    fs.writeFileSync(tmp, JSON.stringify(map));
+    fs.renameSync(tmp, f);
+    archiveMemo = { mtimeMs: fs.statSync(f).mtimeMs, map };
+  } catch (e) {
+    vscode.window.showWarningMessage(L('Could not save the archive: {0}', String((e && e.message) || e)));
+  }
+}
+
+// 보관함에 보일 까닭: 'manual'(직접 보관) · 'auto'(오래 대화가 없음) · ''(목록에 보임)
+// 지금 일하거나 기다리는 세션은 숨기지 않는다. 열려 있는 세션은 오래됐어도 자동으로 보관하지 않는다(Claude Code와 같음).
+function archiveReason(s, store, days) {
+  if (s.alive && (s.status === 'busy' || s.status === 'waiting')) return '';
+  const at = store.archived[s.sid];
+  if (at && !(s.lastActivity > at + 5000)) return 'manual';
+  if (s.alive || !(days > 0)) return '';
+  const last = Math.max(s.lastActivity || 0, store.restored[s.sid] || 0);
+  return last && Date.now() - last > days * DAY_MS ? 'auto' : '';
+}
+
+function setArchived(arg, on) {
+  const sid = sidOf(arg);
+  if (!sid) return;
+  const store = normalizeArchive(loadArchive());
+  if (on) { store.archived[sid] = Date.now(); delete store.restored[sid]; }
+  else { delete store.archived[sid]; store.restored[sid] = Date.now(); } // 꺼낸 시각부터 다시 날 수를 센다
+  saveArchive(store);
+  rebuild();
 }
 
 function folderKey(s) {
@@ -293,10 +412,23 @@ function countStates(list) {
 }
 
 function rebuildSessions() {
-  const recent = (s) => Math.max(s.lastActivity || 0, s.statusSince || 0);
-  sessionsModel = [...raw].sort((a, b) => (a.alive === b.alive ? 0 : a.alive ? -1 : 1) || recent(b) - recent(a));
-  const n = countStates(raw.filter(inWorkspace));
-  const all = countStates(raw);
+  // Claude 세션 목록과 같은 순서: 마지막 대화가 최근인 것부터
+  const archive = loadArchive();
+  const sorted = [...raw].sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
+  const days = autoArchiveDays();
+  // 다른 폴더 세션은 실행 중이거나 보는 기간 안에 대화·변경이 있을 때만 보여 준다.
+  // (대화는 며칠 전에 끝났는데 기록 파일만 오늘 건드려진 세션이 끼어들지 않게)
+  const since = Date.now() - cfg().lookbackHours * 3600000;
+  const withFiles = new Set(model.filter((m) => m.files.length || m.unresolved.length).map((m) => m.sid));
+  const listed = sorted.filter((s) => inWorkspace(s) || s.alive || s.lastActivity >= since || withFiles.has(s.sid));
+  // 날 수로 보관함에 보내는 것은 이 폴더 세션만(Claude Code 목록과 같은 범위). 직접 보관은 어느 폴더든 된다
+  const hidden = new Set(listed.filter((s) => archiveReason(s, archive, inWorkspace(s) ? days : 0)).map((s) => s.sid));
+  sessionsModel = listed.filter((s) => !hidden.has(s.sid));
+  // 다른 폴더 세션도 보관함에 보여 준다(안 보이면 이 창에서 다시 꺼낼 방법이 없다)
+  archivedModel = listed.filter((s) => hidden.has(s.sid));
+  const shown = sessionsModel;
+  const n = countStates(shown.filter(inWorkspace));
+  const all = countStates(shown);
   if (sessionsView) {
     sessionsView.description = L('Working {0} · Waiting {1} · Idle {2}', n.busy, n.waiting, n.idle);
     const otherWaiting = all.waiting - n.waiting;
@@ -385,11 +517,17 @@ class Provider {
       const it = new vscode.TreeItem(path.basename(f.path), N.Collapsed);
       it.id = `f:${s.sid}|${f.path}`;
       it.resourceUri = vscode.Uri.from({ scheme: ITEM_SCHEME, path: f.path, query: f.badge });
-      it.iconPath = vscode.ThemeIcon.File;
+      // 지금 고치는 파일은 파일 종류 그림 대신 세션과 같은 표시(작업 중 초록 회전, 승인 대기 파란 종)
+      const live = liveState(s, f);
+      it.iconPath = live === 'editing' ? new vscode.ThemeIcon('loading~spin', new vscode.ThemeColor('charts.green'))
+        : live === 'approval' ? new vscode.ThemeIcon('bell-dot', new vscode.ThemeColor('charts.blue'))
+        : vscode.ThemeIcon.File;
       it.description = [counts(f.add, f.del), fmtTime(f.lastTs), displayDir(f.path, s)].filter(Boolean).join('  ');
       const kinds = [...f.kinds].map((k) => kindText(k)).join(', ');
       it.tooltip = [
         f.path,
+        live === 'editing' ? L('Being edited now: the session is working and changed this file in the last {0} seconds.', LIVE_MS / 1000) : null,
+        live === 'approval' ? L('Waiting for your approval to edit this file.') : null,
         L('Changed {0} time(s) in this session ({1})', f.changes.length, kinds),
         f.kinds.has('shell') ? L('Includes changes guessed from shell commands.') : null,
         L("Click: compare before this session's first change ↔ current file on disk"),
@@ -457,7 +595,7 @@ function sessionRow(s) {
   const del = m ? m.files.reduce((a, f) => a + (f.del || 0), 0) : 0;
   return {
     sid: s.sid, title: s.title, state: st.key, meta, tip: sessionTooltip(s, st) + '\n' + hint, canOpen, alive: !!s.alive, codex,
-    files: m ? m.files.length : 0, add, del, now: nowText(s, st),
+    files: m ? m.files.length : 0, add, del, now: nowText(s, st), folder: inWorkspace(s) ? '' : s.project || '',
   };
 }
 
@@ -465,6 +603,7 @@ function sessionsPayload() {
   const strings = {
     showChanges: L('Show changed files'), review: L('Review all changes'), newSession: L('New session'), active: L('Active'),
     search: L('Search sessions'), noMatch: L('No matching sessions'), legend: L('What the colors mean'),
+    archive: L('Archive'), unarchive: L('Restore from archive'), archivedTitle: L('Archived'),
     lgSessions: L('Sessions'), lgFiles: L('Changed files'), lgRow: L('Under each session'),
     lgBusy: L('Working'), lgWaiting: L('Waiting for you (approval or answer)'), lgDone: L('Just finished (less than 10 minutes ago)'), lgIdle: L('Idle'), lgOff: L('Off (no Claude process)'),
     lgA: L('Created in this session'), lgM: L('Modified in this session'), lgD: L('Not on disk anymore (deleted)'), lgQ: L('Guessed from shell commands (not certain)'),
@@ -473,12 +612,16 @@ function sessionsPayload() {
     diffTip: L('Last {0} hours: {1} lines added, {2} removed (each edit counted)', cfg().lookbackHours, '{1}', '{2}'),
   };
   if (!loaded) return { message: lastError ? L('Read error') : L('Reading sessions…'), detail: lastError || '', strings };
-  if (!sessionsModel.length) return { message: L('No sessions in the last {0}h', cfg().lookbackHours), strings };
+  if (!sessionsModel.length && !archivedModel.length) return { message: L('No sessions in the last {0}h', cfg().lookbackHours), strings };
   const { mine, groups } = splitByFolder(sessionsModel);
   return {
     strings,
     compact: !cfg().sessionDetails,
     reading: stillReading ? L('Reading more logs…') : '',
+    archived: archivedModel.map(sessionRow),
+    archivedTip: autoArchiveDays() > 0
+      ? L('Sessions with no conversation for {0} day(s) (the Claude Code setting "Archive Inactive Sessions") and sessions you archived here.', autoArchiveDays())
+      : L('Sessions you archived here.'),
     mine: mine.map(sessionRow),
     noneHere: mine.length ? '' : L('No sessions in this folder'),
     groups: groups.map(([key, items]) => ({
@@ -517,6 +660,8 @@ class SessionsWebview {
       else if (m.type === 'reveal' && typeof m.sid === 'string') revealSession(m.sid);
       else if (m.type === 'new') newClaudeSession();
       else if (m.type === 'review' && typeof m.sid === 'string') openSessionChanges(m.sid);
+      else if (m.type === 'archive' && typeof m.sid === 'string') setArchived(m.sid, true);
+      else if (m.type === 'unarchive' && typeof m.sid === 'string') setArchived(m.sid, false);
     });
     view.onDidChangeVisibility(() => { if (view.visible) { requestScan(false); this.post(); } });
     view.onDidDispose(() => { if (this.view === view) { this.view = undefined; sessionsView = null; this.ready = false; } });
@@ -652,17 +797,19 @@ function sessionsHtml(webview) {
     const tip = String(strings.diffTip || '').replace('{1}', add).replace('{2}', del);
     return '<span class="ds" title="' + esc(tip) + '"><span class="a">+' + add + '</span><span class="d">−' + del + '</span><span class="sq">' + sq + '</span></span>';
   }
-  function row(r) {
-    const acts = r.files
-      ? '<button class="act" data-act="review" data-sid="' + esc(r.sid) + '" title="' + esc(strings.review) + '" aria-label="' + esc(strings.review) + '">' + reviewIcon + '</button>'
-        + '<button class="act" data-act="reveal" data-sid="' + esc(r.sid) + '" title="' + esc(strings.showChanges) + '" aria-label="' + esc(strings.showChanges) + '">' + icon + '</button>'
-      : '';
+  const archiveIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M2 3.5h12v3H2z"/><path d="M3 6.5v6h10v-6"/><path d="M6.5 9h3"/></svg>';
+  const restoreIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M3 8.5v4h10v-4"/><path d="M8 10V2.5"/><path d="M5.5 5 8 2.5 10.5 5"/></svg>';
+  function row(r, inArchive) {
+    const btn = (act, label, svg) => '<button class="act" data-act="' + act + '" data-sid="' + esc(r.sid) + '" title="' + esc(label) + '" aria-label="' + esc(label) + '">' + svg + '</button>';
+    const acts = (r.files && !inArchive ? btn('review', strings.review, reviewIcon) + btn('reveal', strings.showChanges, icon) : '')
+      + (inArchive ? btn('unarchive', strings.unarchive, restoreIcon) : btn('archive', strings.archive, archiveIcon));
     const ds = diffstat(r.add || 0, r.del || 0);
     // 둘째 줄: 지금 하는 일(작업 중·기다림일 때)과 변경 규모. 둘 다 없으면 한 줄짜리
     const sub = !(last && last.compact) && (r.now || ds) ? '<div class="sub"><span class="now ' + esc(r.state) + '">' + esc(r.now) + '</span>' + ds + '</div>' : '';
     return '<div class="row' + (r.canOpen ? '' : ' other') + '" role="listitem" tabindex="0" data-sid="' + esc(r.sid) + '" data-open="' + (r.canOpen ? '1' : '') + '" title="' + esc(r.tip) + '">'
       + '<div class="l1"><span class="dot ' + esc(r.state) + '"></span><span class="title">' + esc(r.title) + '</span>'
       + (r.codex ? '<span class="tag">Codex</span>' : '')
+      + (inArchive && r.folder ? '<span class="tag">' + esc(r.folder) + '</span>' : '')
       + '<span class="meta">' + esc(r.meta) + '</span>' + acts + '</div>' + sub + '</div>';
   }
   // 색 범례(? 단추)
@@ -709,7 +856,7 @@ function sessionsHtml(webview) {
     const keep = (r) => (!saved.active || r.alive) && (!needle || String(r.title).toLowerCase().includes(needle));
     const filtering = saved.active || !!needle;
     const mine = (p.mine || []).filter(keep);
-    let h = mine.map(row).join('');
+    let h = mine.map((r) => row(r, false)).join('');
     if (p.noneHere && !filtering) h += '<div class="msg">' + esc(p.noneHere) + '</div>';
     let shown = mine.length;
     for (const g of p.groups || []) {
@@ -719,7 +866,14 @@ function sessionsHtml(webview) {
       const open = needle ? rows.length > 0 : !!saved.open[g.key];
       h += '<details data-key="' + esc(g.key) + '"' + (open ? ' open' : '') + '><summary title="' + esc(g.tip) + '"><span class="chev">›</span>'
         + (g.waiting ? '<span class="bell"></span>' : '') + '<span class="gname">' + esc(g.key) + '</span><span class="gdesc">' + esc(g.desc) + '</span></summary>'
-        + rows.map(row).join('') + '</details>';
+        + rows.map((r) => row(r, false)).join('') + '</details>';
+    }
+    // 보관함: 맨 아래 접힌 묶음. "실행 중만" 필터에서는 숨기고, 검색하면 맞는 것이 있을 때 펼친다
+    const arch = saved.active ? [] : (p.archived || []).filter((r) => !needle || String(r.title).toLowerCase().includes(needle));
+    if (arch.length) {
+      shown += arch.length;
+      h += '<details data-key="__archived"' + ((needle || saved.open.__archived) ? ' open' : '') + '><summary title="' + esc(p.archivedTip || '') + '"><span class="chev">›</span><span class="gname">'
+        + esc(strings.archivedTitle) + '</span><span class="gdesc">' + arch.length + '</span></summary>' + arch.map((r) => row(r, true)).join('') + '</details>';
     }
     if (filtering && !shown) h = '<div class="msg">' + esc(strings.noMatch) + '</div>';
     if (p.reading) h += '<div class="msg">' + esc(p.reading) + '</div>';
@@ -1216,6 +1370,7 @@ function activate(context) {
     statusItem,
     vscode.window.registerWebviewViewProvider(SESSIONS_VIEW, sessionsWebview),
     vscode.commands.registerCommand('claudeSessionChanges.openSessionChanges', (arg) => openSessionChanges(arg)),
+    vscode.commands.registerCommand('claudeSessionChanges.archiveSession', (arg) => setArchived(arg, true)),
     vscode.commands.registerCommand('claudeSessionChanges.revealSession', (arg) => revealSession(arg)),
     vscode.commands.registerCommand('claudeSessionChanges.openClaudeSession', (arg) => openClaudeSession(arg)),
     vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, contentProvider),
@@ -1235,9 +1390,10 @@ function activate(context) {
     vscode.commands.registerCommand('claudeSessionChanges.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
     treeView.onDidChangeVisibility((e) => { if (e.visible) requestScan(false); }),
     vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('claudeCode.archiveInactiveSessions')) rebuild();
       if (!e.affectsConfiguration(CFG)) return;
       startTimer();
-      if (e.affectsConfiguration(CFG + '.lookbackHours') || e.affectsConfiguration(CFG + '.includeCodex') || e.affectsConfiguration(CFG + '.attentionMarkerDir')) requestScan(true);
+      if (['lookbackHours', 'includeCodex', 'attentionMarkerDir', 'sessionListDays'].some((k) => e.affectsConfiguration(CFG + '.' + k))) requestScan(true);
       else { rebuild(); updateStatusBar(); }
     }),
     { dispose: () => { if (timer) clearInterval(timer); } },
@@ -1250,6 +1406,7 @@ function activate(context) {
 // 끌 때 읽은 결과를 한 번 저장하고 스레드를 닫는다
 function deactivate() {
   if (timer) clearInterval(timer);
+  if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; }
   const w = worker;
   worker = null;
   if (!w) return undefined;

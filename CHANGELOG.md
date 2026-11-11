@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.0
+
+- **The Sessions view now lists the same sessions as Claude Code's own list.** This folder's sessions are shown even when nothing is running — before, a session disappeared after a restart until you opened it again. They are sorted by last conversation, newest first.
+- **Archived section.** Sessions with no conversation for longer than Claude Code's *Archive Inactive Sessions* setting are collected in a collapsed *Archived* section, and a new archive button moves a session there by hand (restore brings it back). An archived session returns by itself when it gets a new message. Sessions archived by hand inside Claude Code cannot be detected.
+- **Times are now based on the last conversation**, not on when the log file was last touched. A session that was only reopened no longer shows as *Just finished*.
+- **Files being edited right now** get a green spinner in the Changed files view (a blue bell while an edit waits for your approval).
+- New setting `sessionListDays` (default 90).
+- If the Sessions view says *There is no data provider registered* after updating from 0.6.0, reload the window once.
+
 ## 0.10.0
 
 - **Much faster first read**: large logs are read only from where the selected time range starts, and recent commits are read with one git call per repository instead of one per commit. In our test the first read went from about 4.5 s to 0.7 s (646 MB → 119 MB read, 150 → 10 git calls) with identical results.

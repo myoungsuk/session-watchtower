@@ -12,7 +12,7 @@ const HOME = os.homedir();
 const PROJECTS = path.join(HOME, '.claude', 'projects');
 const REGISTRY = path.join(HOME, '.claude', 'sessions');
 const CODEX_SESSIONS = path.join(HOME, '.codex', 'sessions');
-const CACHE_VERSION = 3; // 3: 도구 호출(lastTool·events) 추가 — 옛 저장 파일은 버리고 한 번 새로 읽음
+const CACHE_VERSION = 4; // 4: 마지막 대화 시각(lastMsgTs)·목록용 요약 읽기 추가 — 옛 저장 파일은 버리고 한 번 새로 읽음
 const CACHE_SAVE_MS = 20000;
 const CODEX_ACTIVE_MS = 90000;
 const CHUNK = 4 * 1024 * 1024;
@@ -50,10 +50,19 @@ function summarizeInput(name, input) {
   }
 }
 
+// 파일을 고치는 도구가 겨냥한 파일의 전체 경로(변경 파일 창의 "지금 고치는 중" 표시에 쓴다)
+function toolFilePath(name, input, cwd) {
+  if (name !== 'Edit' && name !== 'Write' && name !== 'MultiEdit' && name !== 'NotebookEdit') return null;
+  const p = input && (input.file_path || input.notebook_path);
+  if (!p || typeof p !== 'string') return null;
+  return path.isAbsolute(p) ? p : cwd ? path.resolve(cwd, p) : null;
+}
+
 function noteTool(st, tool) {
   st.lastTool = tool;
 }
 const K_TOOLUSEID = B('"tool_use_id":"');
+const K_ENTRY = B('"entrypoint":"');
 const K_CUSTOM = B('"type":"custom-title"');
 const K_AI = B('"type":"ai-title"');
 const K_USER = B('"type":"user"');
@@ -257,6 +266,10 @@ function newFileState(d) {
     lastTool: null,
     scanFrom: null, // 읽기 시작한 바이트 위치(null = 아직 안 읽음, 0 = 처음부터 다 읽음)
     coveredSince: 0, // scanFrom > 0일 때, 이 시각 뒤의 기록은 다 읽었음
+    lastMsgTs: 0, // 마지막 대화 시각(파일이 바뀐 시각과 다르다)
+    titleSearched: false,
+    metaOnly: false, // 목록용 요약만 읽은 상태(변경 기록 없음)
+    programmatic: false, // 프로그램이 돌린 세션(SDK). Claude Code 세션 목록에는 나오지 않는다
   };
 }
 
@@ -335,6 +348,9 @@ function scanHead(st, fd, bytes) {
   const buf = Buffer.allocUnsafe(bytes);
   const n = fs.readSync(fd, buf, 0, bytes, 0);
   if (n <= 0) return 0;
+  // Claude Code는 SDK로 돌린 세션(entrypoint sdk-cli·sdk-ts·sdk-py)을 세션 목록에서 뺀다
+  const ep = buf.indexOf(K_ENTRY);
+  if (ep >= 0 && ep < n) st.programmatic = buf.toString('latin1', ep + K_ENTRY.length, ep + K_ENTRY.length + 4) === 'sdk-';
   let start = 0;
   let idx;
   while ((idx = buf.indexOf(NL, start)) !== -1 && idx < n) {
@@ -342,6 +358,43 @@ function scanHead(st, fd, bytes) {
     start = idx + 1;
   }
   return n;
+}
+
+// 줄에 적힌 기록 시각. 도구 결과 줄은 결과 내용 앞의 것(맨 위 칸)을 쓴다. 미래 시각은 버린다.
+function recordTs(line, ri) {
+  const j = ri >= 0 ? line.lastIndexOf(K_TS, ri) : line.lastIndexOf(K_TS);
+  if (j < 0) return 0;
+  const s = j + K_TS.length;
+  const e = line.indexOf(34, s);
+  if (e < 0 || e - s > 40) return 0;
+  const ts = Date.parse(line.toString('latin1', s, e));
+  return ts && ts <= Date.now() + 60000 ? ts : 0;
+}
+
+// 뒤에서 앞으로 가며 시각이 적힌 마지막 기록을 찾는다(= 마지막 대화 시각)
+function findLastMessageTs(fd, endPos) {
+  const step = 1024 * 1024;
+  let pos = endPos;
+  let read = 0;
+  while (pos > 0 && read < TITLE_BACK_BYTES) {
+    const from = Math.max(0, pos - step);
+    const buf = Buffer.allocUnsafe(pos - from);
+    const n = fs.readSync(fd, buf, 0, pos - from, from);
+    if (n <= 0) break;
+    read += n;
+    extraRead += n;
+    let end = n;
+    for (;;) {
+      const j = buf.lastIndexOf(K_TS, end - 1);
+      if (j < 0) break;
+      const ts = recordTs(buf.subarray(j, Math.min(n, j + 64)), -1);
+      if (ts) return ts;
+      end = j;
+      if (end <= 0) break;
+    }
+    pos = from;
+  }
+  return 0;
 }
 
 // 읽은 구간에 제목이 없을 때만: 뒤에서 앞으로 가며 마지막 제목 기록을 찾는다
@@ -574,6 +627,13 @@ function handleLine(st, line, absOffset, headOnly) {
   const len = line.length;
   if (len < 2) return;
   if (line.subarray(0, 48).indexOf(K_APIREQ) >= 0) return;
+  const ri = line.indexOf(K_RESULT);
+  if (!headOnly) {
+    // 마지막 대화 시각: 시각이 적힌 기록만 센다. 세션이 꺼질 때 붙는 정리 기록(비용·마지막 질문 등)에는 시각이 없어서
+    // 파일이 바뀐 시각을 쓰면 몇 시간 전에 끝난 세션이 "방금"으로 보인다.
+    const ts = recordTs(line, ri);
+    if (ts > (st.lastMsgTs || 0)) st.lastMsgTs = ts;
+  }
 
   if (!st.sub && (line.indexOf(K_CUSTOM) >= 0 || line.indexOf(K_AI) >= 0) && len < 20000) {
     try {
@@ -584,7 +644,7 @@ function handleLine(st, line, absOffset, headOnly) {
     return;
   }
 
-  if (line.indexOf(K_RESULT) >= 0) {
+  if (ri >= 0) {
     if (headOnly) return;
     const id = extractToolUseId(line);
     if (id && st.lastTool && st.lastTool.id === id) st.lastTool.done = true;
@@ -673,7 +733,7 @@ function handleLine(st, line, absOffset, headOnly) {
     const c = o.message && Array.isArray(o.message.content) ? o.message.content : [];
     for (const x of c) {
       if (!x || x.type !== 'tool_use' || !x.id) continue;
-      noteTool(st, { id: x.id, tool: String(x.name || ''), arg: summarizeInput(x.name, x.input), ts, done: false });
+      noteTool(st, { id: x.id, tool: String(x.name || ''), arg: summarizeInput(x.name, x.input), path: toolFilePath(x.name, x.input, o.cwd || st.cwd), ts, done: false });
       if (x.name === 'Bash') {
         const full = String((x.input && x.input.command) || '');
         st.pendingBash.set(x.id, { full, cmd: shortCmd(full), cwd: o.cwd || st.cwd, ts });
@@ -699,6 +759,7 @@ function scanAppended(st, sinceMs, seekMinBytes) {
   let fd;
   try { fd = fs.openSync(st.file, 'r'); } catch { return 0; }
   let read = 0;
+  let headTitle = null;
   extraRead = 0;
   try {
     const stat = fs.fstatSync(fd);
@@ -713,6 +774,10 @@ function scanAppended(st, sinceMs, seekMinBytes) {
       const start = from > 0 ? seekByTime(fd, stat.size, from, seekMinBytes) : 0;
       if (start > 0) {
         read += scanHead(st, fd, Math.min(HEAD_BYTES, start));
+        // 맨 앞의 제목은 옛 것일 수 있다: 따로 두고, 읽는 구간이나 그 앞쪽에서 더 새 제목을 찾는다
+        headTitle = { customTitle: st.customTitle, aiTitle: st.aiTitle };
+        st.customTitle = null;
+        st.aiTitle = null;
         st.offset = start;
         st.coveredSince = from;
       }
@@ -739,10 +804,45 @@ function scanAppended(st, sinceMs, seekMinBytes) {
     st.offset = pos - (carry ? carry.length : 0);
     st.size = stat.size;
     st.mtimeMs = stat.mtimeMs;
-    if (st.scanFrom > 0 && !st.sub && st.agent !== 'codex' && !st.customTitle && !st.aiTitle && !st.titleSearched) {
-      st.titleSearched = true;
-      read += findLastTitle(st, fd, st.scanFrom, stat.size);
+    if (st.scanFrom > 0 && st.agent !== 'codex') {
+      if (!st.sub && !st.customTitle && !st.aiTitle && !st.titleSearched) {
+        st.titleSearched = true;
+        read += findLastTitle(st, fd, st.scanFrom, stat.size);
+        if (headTitle && !st.customTitle && !st.aiTitle) Object.assign(st, headTitle);
+      }
+      // 읽은 구간에 대화가 없으면(오래 쉬던 세션) 그 앞에서 마지막 대화 시각을 찾는다
+      if (!st.lastMsgTs) st.lastMsgTs = findLastMessageTs(fd, st.scanFrom);
     }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return read + extraRead;
+}
+
+// 보는 기간보다 오래된 세션: 목록에 보여 줄 것(제목·첫 질문·마지막 대화 시각)만 읽는다. 변경 기록은 읽지 않는다.
+function scanMeta(st) {
+  let fd;
+  try { fd = fs.openSync(st.file, 'r'); } catch { return 0; }
+  let read = 0;
+  extraRead = 0;
+  try {
+    const stat = fs.fstatSync(fd);
+    Object.assign(st, newFileState(st));
+    read += scanHead(st, fd, Math.min(HEAD_BYTES, stat.size));
+    if (st.agent !== 'codex') {
+      const headTitle = { customTitle: st.customTitle, aiTitle: st.aiTitle };
+      st.customTitle = null;
+      st.aiTitle = null;
+      read += findLastTitle(st, fd, stat.size, stat.size);
+      if (!st.customTitle && !st.aiTitle) Object.assign(st, headTitle);
+      st.lastMsgTs = findLastMessageTs(fd, stat.size);
+    }
+    st.metaOnly = true;
+    st.scanFrom = stat.size;
+    st.offset = stat.size;
+    st.size = stat.size;
+    st.mtimeMs = stat.mtimeMs;
+    st.ino = stat.ino;
   } finally {
     fs.closeSync(fd);
   }
@@ -963,7 +1063,8 @@ function discoverCodex(sinceMs) {
   return out;
 }
 
-function discover(sinceMs, registry, includeCodex) {
+// listSinceMs·projectDirs: 이 폴더의 세션은 보는 기간보다 오래돼도(listSinceMs까지) 목록용으로 찾는다(meta: true)
+function discover(sinceMs, registry, includeCodex, listSinceMs, projectDirs) {
   const out = includeCodex ? discoverCodex(sinceMs) : [];
   let projs = [];
   try { projs = fs.readdirSync(PROJECTS, { withFileTypes: true }); } catch { return out; }
@@ -978,7 +1079,10 @@ function discover(sinceMs, registry, includeCodex) {
       const f = path.join(pd, e.name);
       let st;
       try { st = fs.statSync(f); } catch { continue; }
-      if (st.mtimeMs < sinceMs && !registry.has(sid)) continue;
+      if (st.mtimeMs < sinceMs && !registry.has(sid)) {
+        if (listSinceMs && st.mtimeMs >= listSinceMs && projectDirs && projectDirs.has(p.name)) out.push({ file: f, sid, sub: false, project: p.name, meta: true });
+        continue;
+      }
       out.push({ file: f, sid, sub: false, project: p.name });
       let subs = [];
       try { subs = fs.readdirSync(path.join(pd, sid, 'subagents')); } catch { subs = []; }
@@ -1053,10 +1157,16 @@ function createModel() {
     const out = [];
     for (const [sid, reg] of registry) {
       let lastActivity = 0;
+      let lastWrite = 0;
       let cwd = reg.cwd;
-      for (const st of files.values()) if (st.sid === sid) { lastActivity = Math.max(lastActivity, st.mtimeMs); cwd = st.cwd || cwd; }
-      let s = { sid, alive: true, status: reg.status, waitingFor: reg.waitingFor, statusSince: reg.statusSince, lastActivity, cwd, project: cwd ? path.basename(cwd) : null };
-      s = applyMarker(s, attentionMarker(opts.attentionDir, sid), lastActivity);
+      for (const st of files.values()) {
+        if (st.sid !== sid) continue;
+        lastWrite = Math.max(lastWrite, st.mtimeMs);
+        lastActivity = Math.max(lastActivity, st.lastMsgTs || 0);
+        cwd = st.cwd || cwd;
+      }
+      let s = { sid, alive: true, status: reg.status, waitingFor: reg.waitingFor, statusSince: reg.statusSince, lastActivity: lastActivity || lastWrite, cwd, project: cwd ? path.basename(cwd) : null };
+      s = applyMarker(s, attentionMarker(opts.attentionDir, sid), lastWrite);
       s.title = titleOf(sid) || (reg.nameSource !== 'derived' && reg.name) || sid.slice(0, 8);
       out.push(s);
     }
@@ -1078,10 +1188,15 @@ function createModel() {
     const lookMs = Math.max(1, Number(opts.lookbackHours) || 24) * 3600e3;
     const since = t0 - lookMs;
     const registry = readRegistry();
-    if (opts.force || t0 - lastDisc > DISCOVERY_MS || lookMs !== lastLook) {
-      disc = discover(since, registry, opts.includeCodex !== false);
+    // 세션 목록용: 이 폴더(workspaceDirs)의 세션은 listDays일 전까지 보여 준다(Claude 목록의 자동 보관 기준과 같은 14일이 기본)
+    const listDays = Math.max(0, Number(opts.listDays) || 0);
+    const listSince = listDays ? Math.min(since, t0 - listDays * 86400e3) : 0;
+    const dirs = (Array.isArray(opts.workspaceDirs) ? opts.workspaceDirs : []).map((d) => String(d).replace(/[^a-zA-Z0-9]/g, '-'));
+    const discKey = `${lookMs}|${listDays}|${dirs.join(',')}`;
+    if (opts.force || t0 - lastDisc > DISCOVERY_MS || discKey !== lastLook) {
+      disc = discover(since, registry, opts.includeCodex !== false, listSince, new Set(dirs));
       lastDisc = t0;
-      lastLook = lookMs;
+      lastLook = discKey;
     }
     let bytes = 0;
     let lastProgress = Date.now();
@@ -1090,10 +1205,17 @@ function createModel() {
     for (const d of order) {
       let st = files.get(d.file);
       if (!st) { st = newFileState(d); files.set(d.file, st); }
-      // 보는 기간이 늘어 이미 읽은 구간보다 앞이 필요해지면 그 파일만 다시 읽는다
-      if (st.scanFrom > 0 && since - SEEK_MARGIN_MS < st.coveredSince - 60000) Object.assign(st, newFileState(d));
       let s;
       try { s = fs.statSync(d.file); } catch { continue; }
+      if (d.meta) {
+        // 오래된 세션: 목록용 요약만. 이미 제대로 읽어 둔 파일이면 그대로 쓴다
+        if (st.scanFrom != null && !st.metaOnly) continue;
+        if (!st.metaOnly || s.size !== st.size || s.mtimeMs !== st.mtimeMs) { bytes += scanMeta(st); dirty = true; }
+        continue;
+      }
+      if (st.metaOnly) Object.assign(st, newFileState(d)); // 요약만 읽어 둔 파일이 보는 기간 안으로 들어옴 → 제대로 읽는다
+      // 보는 기간이 늘어 이미 읽은 구간보다 앞이 필요해지면 그 파일만 다시 읽는다
+      if (st.scanFrom > 0 && since - SEEK_MARGIN_MS < st.coveredSince - 60000) Object.assign(st, newFileState(d));
       if (s.size !== st.offset || s.mtimeMs !== st.mtimeMs || (st.ino && s.ino !== st.ino) || st.scanFrom == null) {
         const n = scanAppended(st, since, opts.seekMinBytes);
         bytes += n;
@@ -1107,7 +1229,8 @@ function createModel() {
 
     // 읽기는 끝났고 git 확인이 남았다: 읽는 데 시간이 걸렸으면 지금까지의 결과를 먼저 보여 준다
     if (opts.onProgress && bytes > 0 && Date.now() - t0 > 300) opts.onProgress({ sessions: build(registry, since, t0, opts, true) });
-    const sessions = build(registry, since, t0, opts, false);
+    // 요약만 읽은 옛 세션은 Claude Code 세션 목록에 나오는 것만: 목록 기간 안이고, 프로그램이 돌린 세션이 아닌 것
+    const sessions = build(registry, since, t0, opts, false).filter((s) => !s.metaOnly || (!s.programmatic && (!listSince || s.lastActivity >= listSince)));
     maybeSave(opts, !!opts.flush);
     return { sessions, stats: { ms: Date.now() - t0, files: disc.length, bytes } };
   }
@@ -1129,9 +1252,11 @@ function createModel() {
       const reg = registry.get(sid) || null;
       const projectCwd = main.cwd || (reg && reg.cwd) || null;
       const changes = [];
-      let lastActivity = 0;
+      let lastActivity = 0; // 마지막 대화 시각(Claude 세션 목록이 보여 주는 시간과 같은 뜻)
+      let lastWrite = 0; // 기록 파일이 마지막으로 바뀐 시각
       for (const st of sts) {
-        lastActivity = Math.max(lastActivity, st.mtimeMs);
+        lastWrite = Math.max(lastWrite, st.mtimeMs);
+        lastActivity = Math.max(lastActivity, st.lastMsgTs || 0);
         for (const c of partial ? [] : st.commits) {
           if (c.resolved || c.ts < since) continue;
           c.resolved = true;
@@ -1155,20 +1280,21 @@ function createModel() {
         for (const c of st.changes) if (c.ts >= since) changes.push(c);
       }
       const codex = main.agent === 'codex';
+      if (!lastActivity || codex) lastActivity = lastWrite;
       let title = main.customTitle || main.aiTitle || null;
       let titleSource = main.customTitle ? 'custom' : main.aiTitle ? 'ai' : null;
       if (!title && reg && reg.name && reg.nameSource !== 'derived') { title = reg.name; titleSource = 'registry'; }
       if (!title && main.firstPrompt) { title = main.firstPrompt; titleSource = 'prompt'; }
       if (!title) { title = codex ? 'Codex ' + sid.slice(6, 14) : sid.slice(0, 8); titleSource = 'id'; }
       // Codex는 실행 중 목록이 없어 최근 기록 시각으로만 작업 중을 짐작한다
-      const codexActive = codex && t0 - lastActivity < CODEX_ACTIVE_MS;
+      const codexActive = codex && t0 - lastWrite < CODEX_ACTIVE_MS;
       let state = {
         alive: codex ? codexActive : !!reg,
         status: codex ? (codexActive ? 'busy' : null) : reg ? reg.status : null,
         waitingFor: reg ? reg.waitingFor : null,
         statusSince: codex ? (codexActive ? lastActivity : null) : reg ? reg.statusSince : null,
       };
-      if (!codex) state = applyMarker(state, attentionMarker(opts.attentionDir, sid), lastActivity);
+      if (!codex) state = applyMarker(state, attentionMarker(opts.attentionDir, sid), lastWrite);
       // 지금 하는 일: 본 세션·하위 에이전트 중 가장 최근 도구 호출
       let activity = null;
       for (const st of sts) {
@@ -1181,6 +1307,8 @@ function createModel() {
         project: projectCwd ? path.basename(projectCwd) : main.project,
         cwd: projectCwd,
         lastActivity,
+        metaOnly: !!main.metaOnly,
+        programmatic: !!main.programmatic,
         ...state,
         activity,
         changes,
