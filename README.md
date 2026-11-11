@@ -11,10 +11,10 @@
 ## Features
 
 - **Session status at a glance** — a roomy list in the same colors as Claude Code's session list: green working, blue waiting for your approval or answer, orange just finished, grey idle, hollow off — plus the time since the last conversation. Sessions in the current folder come first; sessions from other folders are grouped and collapsed below. A badge counts sessions that are waiting for you.
-- **The same list as Claude Code, with an Archived section** — this folder's sessions are listed even when nothing is running (for example right after a restart), newest conversation first. Sessions that have been quiet for longer than Claude Code's *Archive Inactive Sessions* setting go to a collapsed **Archived** section, and the archive button on a row moves a session there by hand. An archived session comes back by itself when it gets a new message.
+- **The same list as Claude Code, with an Archived section** — this folder's sessions are listed even when nothing is running (for example right after a restart), newest conversation first. Sessions that have been quiet for longer than Claude Code's *Archive Inactive Sessions* setting go to a collapsed **Archived** section (the clock button on that section lets you pick your own time, for example 1 day), and the archive button on a row moves a session there by hand. An archived session comes back by itself when it gets a new message.
 - **What it is doing now** — under a working or waiting session, a short line such as *Running: npm test* or *Editing README.md*, plus the size of its changes (`+142 −38` with a small green/red bar). The **?** button explains every color. Works in dark and light themes.
 - **Changed files per session** — edits from Claude's Edit/Write tools, shell commands and git commits, with `+added −removed` line counts and times. Click a file to open a diff.
-- **See which file is being edited right now** — a file gets a green spinner while a working session is editing it (changed in the last 30 seconds, or an edit that has not finished), and a blue bell while an edit waits for your approval.
+- **See which file is being edited right now** — a file gets a green spinner while a working session is editing it: changed in the last 30 seconds (including changes a script made on disk), or an edit that has not finished. An edit that waits for your approval gets a blue bell.
 - **Review a whole session** — one click opens every file the session changed in a single multi-file diff. For files changed only with edit tools or commits, the right side is the file as the session left it, so other sessions' later edits don't get mixed in.
 - **Status bar summary** — working · waiting · just finished counts are always visible at the bottom; it turns to a warning color while a session waits for you.
 - **Jump to the conversation** — click a session to open it in Claude Code, or start a new one with **New session**.
@@ -59,8 +59,8 @@ Everything stays on your machine. The extension only reads `~/.claude/projects`,
 - Files written by scripts that Claude Code does not record and that are never committed cannot be detected.
 - Codex has no list of running sessions, so a Codex session counts as working only while its log changed in the last 90 seconds. Codex conversations can't be opened from here.
 - *Just finished* means the last conversation ended less than 10 minutes ago; unlike Claude Code's own "unread" mark it cannot know whether you already looked.
-- Sessions you archived or restored **by hand inside Claude Code** cannot be detected (Claude Code keeps that list private), and neither can its "unread" mark. Everything else in the list follows the same rules, so the two lists can differ by those sessions; use the archive button here for them. Sessions started by scripts through the SDK are left out of the history list, as in Claude Code.
-- Edit tools finish in well under a second, so "being edited right now" is shown for 30 seconds after a change while the session keeps working.
+- Sessions you archived or restored **by hand inside Claude Code** cannot be detected (Claude Code keeps that list private), and neither can its "unread" mark. Everything else in the list follows the same rules, so the two lists can differ by those sessions. If you archive sessions by hand in Claude Code, set `archiveAfter` to a short time such as 1 day (clock button on the Archived section) so finished sessions leave the list here too, or use the archive button here. Sessions started by scripts through the SDK are left out of the history list, as in Claude Code.
+- Edit tools finish in well under a second, so "being edited right now" is shown for 30 seconds after a change while the session keeps working. For changes made by scripts it is based on the file's modification time: only files the session has already changed are watched, and it cannot tell who changed the file.
 - If the Sessions view says *There is no data provider registered* right after updating from 0.6.0, run **Developer: Reload Window** once (that version drew the view differently).
 - The user interface is in English, and switches to Korean automatically when VS Code's display language is Korean.
 
@@ -75,6 +75,7 @@ Everything stays on your machine. The extension only reads `~/.claude/projects`,
 | `claudeSessionChanges.pollSeconds` | 5 | How often to check for new log lines while the view is visible. |
 | `claudeSessionChanges.statusBar` | true | Show the status bar summary. |
 | `claudeSessionChanges.sessionDetails` | true | Show the second line under each session (current step, change size). Turn off for a compact list. |
+| `claudeSessionChanges.archiveAfter` | Same as Claude Code | When a quiet session moves to the Archived section: same as Claude Code's setting, 1 – 30 days, or never. |
 | `claudeSessionChanges.sessionListDays` | 90 | List this folder's sessions from the last N days even when they are not running (0 = only running sessions and sessions with changes in the time range). |
 | `claudeSessionChanges.includeCodex` | true | Also show Codex sessions. |
 | `claudeSessionChanges.attentionMarkerDir` | `~/.cache/claude-attention` | Folder of approval-hook marker files (empty = off). |

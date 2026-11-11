@@ -12,7 +12,8 @@ const { rec } = fx;
 const extDir = path.join(__dirname, '..');
 const stub = require('./helpers/vscode-stub').install({
   extDir, language: 'en', workspace: project,
-  config: { hideScratchpadFiles: false, attentionMarkerDir: markers }, // 시험 폴더가 임시 폴더 아래일 수 있어 숨김을 끈다
+  // 시험 폴더가 임시 폴더 아래일 수 있어 숨김을 끈다. 주기 확인(2초)으로 화면이 스스로 바뀌는지도 본다
+  config: { hideScratchpadFiles: false, attentionMarkerDir: markers, pollSeconds: 2 },
 });
 const ext = require('../extension.js'); // 홈 폴더·가짜 vscode 를 준비한 뒤에 불러야 한다
 
@@ -30,7 +31,8 @@ const fGuess = path.join(project, 'notes.txt');
 const fGone = path.join(project, 'gone.js');
 const fRest = path.join(project, 'rest.js');
 fs.mkdirSync(other, { recursive: true });
-for (const f of [fEdit, fNew, fBash, fGuess, fRest]) fs.writeFileSync(f, 'x\n');
+// 파일은 10분 전에 마지막으로 바뀐 것으로 둔다(방금 만든 파일은 "지금 고치는 중"으로 잡힌다)
+for (const f of [fEdit, fNew, fBash, fGuess, fRest]) { fs.writeFileSync(f, 'x\n'); fs.utimesSync(f, new Date(Date.now() - 600000), new Date(Date.now() - 600000)); }
 
 const twoHunks = {
   files: [{ filePath: fBash, hunks: [
@@ -294,7 +296,17 @@ test('지금 고치는 파일: 작업 중인 세션이 고치는 파일에만 �
   provider().onDidChangeTreeData(() => { fires++; });
   await waitFor(() => fires > 0 && icon('app.js') === 'file', '30초가 지나 표시가 꺼지고 다시 그림', 6000);
 
-  // 쉬는 세션이 방금 바꾼 파일은 돌지 않는다
+  // (다) 대화 기록에는 없지만 디스크에서 방금 바뀐 파일(스크립트로 고친 경우)
+  assert.strictEqual(icon('README.md'), 'file');
+  // 새로 고침을 누르지 않아도 주기 확인만으로 표시가 켜지고 꺼져야 한다(대화 기록은 그대로)
+  fs.writeFileSync(fBash, 'changed by a script\n');
+  await waitFor(() => icon('README.md') === 'loading~spin', '디스크에서 방금 바뀐 파일', 9000);
+  const t29 = new Date(Date.now() - 29000);
+  fs.utimesSync(fBash, t29, t29);
+  await waitFor(() => icon('README.md') === 'file', '바뀐 지 30초가 지나면 꺼짐', 9000);
+
+  // 쉬는 세션이 방금 바꾼 파일은 돌지 않는다(디스크에서 방금 바뀌었어도)
+  fs.writeFileSync(fRest, 'touched\n');
   web.send({ type: 'unarchive', sid: SID_REST });
   add(restFile, [
     rec.toolUse(project, Date.now() - 1500, 't_r2', 'Write', { file_path: fRest, content: 'r2\n' }),
@@ -328,6 +340,15 @@ test('목록과 보관함: 이 폴더의 꺼진 세션도 보이고, 오래 대�
   assert.ok(p.archived.some((r) => r.sid === SID_20D) && !p.mine.some((r) => r.sid === SID_20D), '20일 전 세션은 보관함에만');
   assert.match(p.archivedTip, /14 day/);
   assert.ok(!roots().some((e) => e.t === 'session' && (e.s.sid === SID_2D || e.s.sid === SID_20D)), '바꾼 파일이 없으니 변경 파일 창에는 없음');
+
+  // 이 확장의 보관 기준 설정: Claude Code 설정(기본 14일)과 따로 정할 수 있다
+  stub.changeConfig('archiveAfter', '1');
+  await waitFor(() => web.lastPayload().archived.some((r) => r.sid === SID_2D), '기준 1일');
+  assert.match(web.lastPayload().archivedTip, /^Sessions with no conversation for 1 day\(s\) and sessions/);
+  stub.changeConfig('archiveAfter', 'never');
+  await waitFor(() => web.lastPayload().mine.some((r) => r.sid === SID_20D), '기준 안 함');
+  stub.changeConfig('archiveAfter', 'claude');
+  await waitFor(() => web.lastPayload().archived.some((r) => r.sid === SID_20D) && web.lastPayload().mine.some((r) => r.sid === SID_2D), 'Claude 설정 따름');
 
   // 보관함에서 꺼내면 목록에 남는다(꺼낸 시각부터 다시 센다)
   web.send({ type: 'unarchive', sid: SID_20D });

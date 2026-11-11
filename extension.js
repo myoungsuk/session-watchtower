@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const { Worker } = require('worker_threads');
 const { execFile } = require('child_process');
-const { parsePatch } = require('./scanner');
+const { parsePatch, LIVE_MS } = require('./scanner');
 
 // 화면 글자: 영어 원문 + l10n/bundle.l10n.ko.json(한국어). 날짜·시간 형식만 언어별로 직접 만든다.
 const L = (message, ...args) => vscode.l10n.t(message, ...args);
@@ -50,6 +50,7 @@ function cfg() {
     pollSeconds: Math.max(2, Number(c.get('pollSeconds', 5)) || 5),
     sessionDetails: c.get('sessionDetails', true) !== false,
     sessionListDays: Math.max(0, Math.min(365, Number(c.get('sessionListDays', 90)) || 0)),
+    archiveAfter: String(c.get('archiveAfter', 'claude')),
     statusBar: c.get('statusBar', true) !== false,
     includeCodex: c.get('includeCodex', true) !== false,
     attentionDir: expandHome(String(c.get('attentionMarkerDir', '~/.cache/claude-attention') || '')),
@@ -142,15 +143,16 @@ function stateOf(s) {
 
 
 // 지금 고치는 파일. 고치는 도구는 대개 1초 안에 끝나 "도구가 도는 순간"만 보면 화면에 잡히지 않는다.
-// 그래서 (가) 아직 끝나지 않은 고치기 도구가 겨냥한 파일(승인 대기 포함)과
-// (나) 작업 중인 세션이 방금(LIVE_MS 안) 바꾼 파일을 함께 "고치는 중"으로 본다.
-const LIVE_MS = 30000;
+// 그래서 (가) 아직 끝나지 않은 고치기 도구가 겨냥한 파일(승인 대기 포함),
+// (나) 작업 중인 세션이 방금(LIVE_MS 안) 바꾼 파일,
+// (다) 작업 중인 세션의 목록에 있는 파일 가운데 디스크에서 방금 바뀐 파일(스크립트로 고쳐 기록이 없는 수정)을 "고치는 중"으로 본다.
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 function liveState(s, f) {
   if (!s.alive || (s.status !== 'busy' && s.status !== 'waiting')) return null;
   const a = s.activity;
   if (a && !a.done && a.path === f.path && EDIT_TOOLS.has(a.tool)) return s.status === 'waiting' ? 'approval' : 'editing';
-  return s.status === 'busy' && Date.now() - f.lastTs < LIVE_MS ? 'editing' : null;
+  if (s.status !== 'busy') return null;
+  return Date.now() - f.lastTs < LIVE_MS || (s.liveFiles || []).includes(f.path) ? 'editing' : null;
 }
 
 // "고치는 중" 표시는 새 기록이 없어도 시간이 지나면 꺼져야 한다 → 가장 먼저 끝나는 시각에 한 번 다시 그린다
@@ -317,10 +319,29 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const EMPTY_ARCHIVE = { archived: {}, restored: {} };
 let archiveMemo = { mtimeMs: -1, map: EMPTY_ARCHIVE };
 
-// Claude Code가 세션을 자동으로 보관하는 날 수(0 = 안 함). Claude Code 설정을 그대로 따른다.
+// 대화가 없던 세션을 보관함으로 보내는 날 수(0 = 안 함).
+// 기본은 Claude Code 설정(Archive Inactive Sessions)을 따르고, 이 확장 설정 archiveAfter로 따로 정할 수 있다
+// (Claude Code에서 세션을 직접 보관하는 사람은 그 목록을 읽을 수 없으니 날 수를 짧게 잡아 비슷하게 맞춘다).
+const ARCHIVE_CHOICES = ['claude', '1', '2', '3', '7', '14', '30', 'never'];
+function followsClaudeArchive() {
+  const own = cfg().archiveAfter;
+  return own !== 'never' && !(Number(own) > 0);
+}
 function autoArchiveDays() {
+  const own = cfg().archiveAfter;
+  if (own === 'never') return 0;
+  if (Number(own) > 0) return Number(own);
   const v = Number(vscode.workspace.getConfiguration('claudeCode').get('archiveInactiveSessions', 14));
   return Number.isFinite(v) && v >= 0 ? v : 14;
+}
+
+async function pickArchiveAfter() {
+  const cur = ARCHIVE_CHOICES.includes(cfg().archiveAfter) ? cfg().archiveAfter : 'claude';
+  const label = (v) => (v === 'claude' ? L('Same as Claude Code ("Archive Inactive Sessions")') : v === 'never' ? L('Never (only what I archive myself)') : v === '1' ? L('1 day') : L('{0} days', v));
+  const items = ARCHIVE_CHOICES.map((v) => ({ label: label(v), description: v === cur ? L('current') : '', v }));
+  const pick = await vscode.window.showQuickPick(items, { placeHolder: L('Move a session to Archived after how long without conversation?') });
+  if (!pick) return;
+  await vscode.workspace.getConfiguration(CFG).update('archiveAfter', pick.v, vscode.ConfigurationTarget.Global);
 }
 
 function normalizeArchive(data) {
@@ -526,7 +547,7 @@ class Provider {
       const kinds = [...f.kinds].map((k) => kindText(k)).join(', ');
       it.tooltip = [
         f.path,
-        live === 'editing' ? L('Being edited now: the session is working and changed this file in the last {0} seconds.', LIVE_MS / 1000) : null,
+        live === 'editing' ? L('Being edited now: this file changed in the last {0} seconds while the session is working.', LIVE_MS / 1000) : null,
         live === 'approval' ? L('Waiting for your approval to edit this file.') : null,
         L('Changed {0} time(s) in this session ({1})', f.changes.length, kinds),
         f.kinds.has('shell') ? L('Includes changes guessed from shell commands.') : null,
@@ -603,7 +624,7 @@ function sessionsPayload() {
   const strings = {
     showChanges: L('Show changed files'), review: L('Review all changes'), newSession: L('New session'), active: L('Active'),
     search: L('Search sessions'), noMatch: L('No matching sessions'), legend: L('What the colors mean'),
-    archive: L('Archive'), unarchive: L('Restore from archive'), archivedTitle: L('Archived'),
+    archive: L('Archive'), unarchive: L('Restore from archive'), archivedTitle: L('Archived'), archiveRule: L('Choose when sessions move to Archived'),
     lgSessions: L('Sessions'), lgFiles: L('Changed files'), lgRow: L('Under each session'),
     lgBusy: L('Working'), lgWaiting: L('Waiting for you (approval or answer)'), lgDone: L('Just finished (less than 10 minutes ago)'), lgIdle: L('Idle'), lgOff: L('Off (no Claude process)'),
     lgA: L('Created in this session'), lgM: L('Modified in this session'), lgD: L('Not on disk anymore (deleted)'), lgQ: L('Guessed from shell commands (not certain)'),
@@ -619,9 +640,10 @@ function sessionsPayload() {
     compact: !cfg().sessionDetails,
     reading: stillReading ? L('Reading more logs…') : '',
     archived: archivedModel.map(sessionRow),
-    archivedTip: autoArchiveDays() > 0
-      ? L('Sessions with no conversation for {0} day(s) (the Claude Code setting "Archive Inactive Sessions") and sessions you archived here.', autoArchiveDays())
-      : L('Sessions you archived here.'),
+    archivedTip: autoArchiveDays() <= 0 ? L('Sessions you archived here.')
+      : followsClaudeArchive()
+        ? L('Sessions with no conversation for {0} day(s) (the Claude Code setting "Archive Inactive Sessions") and sessions you archived here.', autoArchiveDays())
+        : L('Sessions with no conversation for {0} day(s) and sessions you archived here.', autoArchiveDays()),
     mine: mine.map(sessionRow),
     noneHere: mine.length ? '' : L('No sessions in this folder'),
     groups: groups.map(([key, items]) => ({
@@ -662,6 +684,7 @@ class SessionsWebview {
       else if (m.type === 'review' && typeof m.sid === 'string') openSessionChanges(m.sid);
       else if (m.type === 'archive' && typeof m.sid === 'string') setArchived(m.sid, true);
       else if (m.type === 'unarchive' && typeof m.sid === 'string') setArchived(m.sid, false);
+      else if (m.type === 'pickArchive') pickArchiveAfter();
     });
     view.onDidChangeVisibility(() => { if (view.visible) { requestScan(false); this.post(); } });
     view.onDidDispose(() => { if (this.view === view) { this.view = undefined; sessionsView = null; this.ready = false; } });
@@ -713,6 +736,8 @@ function sessionsHtml(webview) {
   .row:hover .act, .row:focus-visible .act, .row:has(.act:focus-visible) .act { display: inline-flex; }
   .row:hover .meta, .row:focus-visible .meta, .row:has(.act:focus-visible) .meta { display: none; }
   .act:hover { background: var(--vscode-toolbar-hoverBackground); }
+  .sact { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--vscode-descriptionForeground); cursor: pointer; }
+  .sact:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
   .dot { flex-shrink: 0; box-sizing: border-box; width: 9px; height: 9px; border-radius: 50%; }
   .dot.busy { border: 2px solid var(--vscode-charts-green); border-top-color: transparent; animation: spin 0.9s linear infinite; }
   .dot.waiting { background: var(--vscode-charts-blue); box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-charts-blue) 30%, transparent); }
@@ -801,6 +826,7 @@ function sessionsHtml(webview) {
   }
   const archiveIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M2 3.5h12v3H2z"/><path d="M3 6.5v6h10v-6"/><path d="M6.5 9h3"/></svg>';
   const restoreIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M3 8.5v4h10v-4"/><path d="M8 10V2.5"/><path d="M5.5 5 8 2.5 10.5 5"/></svg>';
+  const gearIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/></svg>';
   function row(r, inArchive) {
     const btn = (act, label, svg) => '<button class="act" data-act="' + act + '" data-sid="' + esc(r.sid) + '" title="' + esc(label) + '" aria-label="' + esc(label) + '">' + svg + '</button>';
     const acts = (r.files && !inArchive ? btn('review', strings.review, reviewIcon) + btn('reveal', strings.showChanges, icon) : '')
@@ -875,7 +901,9 @@ function sessionsHtml(webview) {
     if (arch.length) {
       shown += arch.length;
       h += '<details data-key="__archived"' + ((needle || saved.open.__archived) ? ' open' : '') + '><summary title="' + esc(p.archivedTip || '') + '"><span class="chev">›</span><span class="gname">'
-        + esc(strings.archivedTitle) + '</span><span class="gdesc">' + arch.length + '</span></summary>' + arch.map((r) => row(r, true)).join('') + '</details>';
+        + esc(strings.archivedTitle) + '</span><span class="gdesc">' + arch.length + '</span>'
+        + '<button class="sact" data-act="pickArchive" title="' + esc(strings.archiveRule) + '" aria-label="' + esc(strings.archiveRule) + '">' + gearIcon + '</button></summary>'
+        + arch.map((r) => row(r, true)).join('') + '</details>';
     }
     if (filtering && !shown) h = '<div class="msg">' + esc(strings.noMatch) + '</div>';
     if (p.reading) h += '<div class="msg">' + esc(p.reading) + '</div>';
@@ -883,7 +911,7 @@ function sessionsHtml(webview) {
   }
   root.addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-act]');
-    if (btn) { e.stopPropagation(); vscode.postMessage({ type: btn.dataset.act, sid: btn.dataset.sid }); return; }
+    if (btn) { e.stopPropagation(); e.preventDefault(); vscode.postMessage({ type: btn.dataset.act, sid: btn.dataset.sid }); return; }
     const r = e.target.closest('.row');
     if (r && r.dataset.open) vscode.postMessage({ type: 'open', sid: r.dataset.sid });
   });
@@ -1381,6 +1409,7 @@ function activate(context) {
     vscode.commands.registerCommand('claudeSessionChanges.showAliveOnly', () => setAliveOnly(true)),
     vscode.commands.registerCommand('claudeSessionChanges.showAll', () => setAliveOnly(false)),
     vscode.commands.registerCommand('claudeSessionChanges.pickWindow', pickWindow),
+    vscode.commands.registerCommand('claudeSessionChanges.pickArchiveAfter', pickArchiveAfter),
     vscode.commands.registerCommand('claudeSessionChanges.openFileDiff', (el) => el && el.f && openFileDiff(el)),
     vscode.commands.registerCommand('claudeSessionChanges.openChangeDiff', (el) => el && el.c && openChangeDiff(el)),
     vscode.commands.registerCommand('claudeSessionChanges.openFile', (el) => {

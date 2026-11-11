@@ -25,5 +25,15 @@
   "config.sessionDetails": "Show a second line under each session with its current step and the size of its changes. Turn off for a compact one-line list.",
   "config.sessionListDays": "List this folder's sessions from the last N days in the Sessions view, like Claude Code's own session list, even when they are not running (0 = only running sessions and sessions with changes in the time range). Sessions with no conversation for longer than Claude Code's \"Archive Inactive Sessions\" setting (14 days by default) go to the Archived section. Sessions you archived or restored by hand inside Claude Code cannot be detected; use the Archive button here for those.",
   "config.includeCodex": "Also show Codex sessions from ~/.codex/sessions (edits made with apply_patch).",
-  "config.attentionMarkerDir": "Folder where an approval-notification hook writes <first 12 hex of sha256(session id)>.pending files. Used as an extra 'waiting for you' signal. Leave empty to turn off."
+  "config.attentionMarkerDir": "Folder where an approval-notification hook writes <first 12 hex of sha256(session id)>.pending files. Used as an extra 'waiting for you' signal. Leave empty to turn off.",
+  "command.pickArchiveAfter": "Choose when sessions move to Archived",
+  "config.archiveAfter": "When a session in this folder moves to the Archived section: after this long without conversation. \"Same as Claude Code\" follows Claude Code's Archive Inactive Sessions setting. If you archive sessions by hand in Claude Code (that list cannot be read by other extensions), pick a short time such as 1 day so the two lists look alike.",
+  "config.archiveAfter.claude": "Same as Claude Code",
+  "config.archiveAfter.d1": "1 day",
+  "config.archiveAfter.d2": "2 days",
+  "config.archiveAfter.d3": "3 days",
+  "config.archiveAfter.d7": "7 days",
+  "config.archiveAfter.d14": "14 days",
+  "config.archiveAfter.d30": "30 days",
+  "config.archiveAfter.never": "Never"
 }

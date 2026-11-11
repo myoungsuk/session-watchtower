@@ -275,3 +275,24 @@ test('프로그램이 돌린 세션(SDK)은 옛 세션 목록에 넣지 않는�
   assert.ok(wide && wide.changes.some((c) => c.path === touched), '보는 기간 안에 파일을 바꿨으면 그대로 보여 준다');
 });
 
+test('작업 중인 세션이 고친 파일이 디스크에서 방금 바뀌면 알려 준다(스크립트로 고친 경우)', () => {
+  const s0 = find(S.createModel().scan(base()), SID_A);
+  const target = s0.changes.find((c) => c.kind === 'edit').path;
+  const past = new Date(now - 10 * MIN);
+  for (const p of new Set(s0.changes.map((c) => c.path).filter(Boolean))) { try { fs.utimesSync(p, past, past); } catch { /* 없는 파일 */ } }
+  assert.deepStrictEqual(find(S.createModel().scan(base()), SID_A).liveFiles, [], '10분 전에 바뀐 파일은 해당 없음');
+  fs.utimesSync(target, new Date(), new Date());
+  assert.deepStrictEqual(find(S.createModel().scan(base()), SID_A).liveFiles, [target]);
+  fx.registerSession(home, process.pid, SID_A, { status: 'idle', cwd: project, name: 'demo-a1', nameSource: 'derived' });
+  assert.deepStrictEqual(find(S.createModel().scan(base()), SID_A).liveFiles, [], '쉬는 세션은 해당 없음');
+  fx.registerSession(home, process.pid, SID_A, { status: 'busy', cwd: project, name: 'demo-a1', nameSource: 'derived' });
+});
+
+test('제목도 첫 질문도 없는 옛 세션은 목록에 넣지 않는다', () => {
+  const sid = '10101010-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const old = now - 3 * 24 * 60 * MIN;
+  const file = fx.claudeSession(home, project, sid, [{ ...rec.user(project, old, 'Another Claude session sent a message: hello'), isMeta: true }, { type: 'cost-state', sessionId: sid }]);
+  fs.utimesSync(file, new Date(old + 1000), new Date(old + 1000));
+  assert.ok(!find(S.createModel().scan({ ...base(), listDays: 14, workspaceDirs: [project] }), sid));
+});
+

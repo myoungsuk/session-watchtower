@@ -25,5 +25,15 @@
   "config.sessionDetails": "세션마다 둘째 줄(지금 하는 일, 변경 규모)을 보여 줍니다. 끄면 한 줄짜리 짧은 목록이 됩니다.",
   "config.sessionListDays": "세션 상태 창에 이 폴더의 최근 N일 세션을 Claude Code 세션 목록처럼 보여 줍니다. 실행 중이 아니어도 나옵니다(0 = 실행 중인 세션과 보는 기간 안에 변경이 있는 세션만). Claude Code 설정 \"Archive Inactive Sessions\"(기본 14일)보다 오래 대화가 없던 세션은 보관함에 보입니다. Claude Code 안에서 직접 보관하거나 꺼낸 세션은 알아낼 수 없으니, 그런 세션은 여기 보관 단추로 옮기세요.",
   "config.includeCodex": "~/.codex/sessions의 Codex 세션도 보여 줍니다(apply_patch로 고친 파일).",
-  "config.attentionMarkerDir": "승인 알림 훅이 <sha256(세션 ID) 앞 12자>.pending 파일을 남기는 폴더. '기다림'을 알아내는 보조 신호로 씁니다. 비우면 끕니다."
+  "config.attentionMarkerDir": "승인 알림 훅이 <sha256(세션 ID) 앞 12자>.pending 파일을 남기는 폴더. '기다림'을 알아내는 보조 신호로 씁니다. 비우면 끕니다.",
+  "command.pickArchiveAfter": "보관함으로 보내는 기준 바꾸기",
+  "config.archiveAfter": "이 폴더 세션을 보관함으로 보내는 기준: 이만큼 대화가 없으면 보관함에 보입니다. \"Claude Code와 같게\"는 Claude Code 설정 Archive Inactive Sessions를 따릅니다. Claude Code에서 세션을 직접 보관해 쓰는 경우(그 목록은 다른 확장이 읽을 수 없습니다) 1일처럼 짧게 고르면 두 목록이 비슷해집니다.",
+  "config.archiveAfter.claude": "Claude Code와 같게",
+  "config.archiveAfter.d1": "1일",
+  "config.archiveAfter.d2": "2일",
+  "config.archiveAfter.d3": "3일",
+  "config.archiveAfter.d7": "7일",
+  "config.archiveAfter.d14": "14일",
+  "config.archiveAfter.d30": "30일",
+  "config.archiveAfter.never": "안 함"
 }

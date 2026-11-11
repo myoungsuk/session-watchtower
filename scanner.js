@@ -15,6 +15,8 @@ const CODEX_SESSIONS = path.join(HOME, '.codex', 'sessions');
 const CACHE_VERSION = 4; // 4: 마지막 대화 시각(lastMsgTs)·목록용 요약 읽기 추가 — 옛 저장 파일은 버리고 한 번 새로 읽음
 const CACHE_SAVE_MS = 20000;
 const CODEX_ACTIVE_MS = 90000;
+// "지금 고치는 중"으로 보는 시간: 마지막으로 바뀐 뒤 이만큼
+const LIVE_MS = 30000;
 const CHUNK = 4 * 1024 * 1024;
 const NL = 10;
 const DISCOVERY_MS = 30000;
@@ -56,6 +58,24 @@ function toolFilePath(name, input, cwd) {
   const p = input && (input.file_path || input.notebook_path);
   if (!p || typeof p !== 'string') return null;
   return path.isAbsolute(p) ? p : cwd ? path.resolve(cwd, p) : null;
+}
+
+// 작업 중인 세션이 이번 기간에 고친 파일 가운데, 디스크에서 방금(LIVE_MS 안) 바뀐 것.
+// 스크립트(python·sed 등)로 고치면 Claude Code가 기록을 남기지 않을 때가 많아 대화 기록만으로는 "지금 고치는 중"을 알 수 없다.
+// 그래서 파일이 바뀐 시각을 본다. 누가 고쳤는지는 알 수 없으므로(다른 세션·사람일 수도 있음) 이미 이 세션 목록에 있는 파일만 본다.
+function recentlyTouched(changes, now) {
+  const seen = new Set();
+  const out = [];
+  for (let i = changes.length - 1; i >= 0 && seen.size < 400; i--) {
+    const p = changes[i].path;
+    if (!p || seen.has(p)) continue;
+    seen.add(p);
+    try {
+      const m = fs.statSync(p).mtimeMs;
+      if (m >= now - LIVE_MS && m <= now + 5000) out.push(p);
+    } catch { /* 지워진 파일 */ }
+  }
+  return out.sort();
 }
 
 function noteTool(st, tool) {
@@ -1230,7 +1250,8 @@ function createModel() {
     // 읽기는 끝났고 git 확인이 남았다: 읽는 데 시간이 걸렸으면 지금까지의 결과를 먼저 보여 준다
     if (opts.onProgress && bytes > 0 && Date.now() - t0 > 300) opts.onProgress({ sessions: build(registry, since, t0, opts, true) });
     // 요약만 읽은 옛 세션은 Claude Code 세션 목록에 나오는 것만: 목록 기간 안이고, 프로그램이 돌린 세션이 아닌 것
-    const sessions = build(registry, since, t0, opts, false).filter((s) => !s.metaOnly || (!s.programmatic && (!listSince || s.lastActivity >= listSince)));
+    // 제목도 첫 질문도 없는 세션(다른 세션이 보낸 메시지나 로컬 명령만 있는 것)도 Claude Code처럼 뺀다
+    const sessions = build(registry, since, t0, opts, false).filter((s) => !s.metaOnly || (!s.programmatic && s.titleSource !== 'id' && (!listSince || s.lastActivity >= listSince)));
     maybeSave(opts, !!opts.flush);
     return { sessions, stats: { ms: Date.now() - t0, files: disc.length, bytes } };
   }
@@ -1295,6 +1316,7 @@ function createModel() {
         statusSince: codex ? (codexActive ? lastActivity : null) : reg ? reg.statusSince : null,
       };
       if (!codex) state = applyMarker(state, attentionMarker(opts.attentionDir, sid), lastWrite);
+      const liveFiles = !partial && state.alive && state.status === 'busy' ? recentlyTouched(changes, t0) : [];
       // 지금 하는 일: 본 세션·하위 에이전트 중 가장 최근 도구 호출
       let activity = null;
       for (const st of sts) {
@@ -1311,6 +1333,7 @@ function createModel() {
         programmatic: !!main.programmatic,
         ...state,
         activity,
+        liveFiles,
         changes,
       });
     }
@@ -1329,4 +1352,4 @@ function scanOne(file, agent, sinceMs, seekMinBytes) {
   return st;
 }
 
-module.exports = { createModel, shellTargets, stripHeredocBodies, hunkCounts, isScratch, readRegistry, parsePatch, attentionMarker, scanOne };
+module.exports = { LIVE_MS, createModel, shellTargets, stripHeredocBodies, hunkCounts, isScratch, readRegistry, parsePatch, attentionMarker, scanOne };

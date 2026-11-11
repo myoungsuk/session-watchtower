@@ -2,7 +2,7 @@
   "name": "session-watchtower",
   "displayName": "Session Watchtower for Claude Code",
   "description": "%description%",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "scripts": {
     "test": "node --test test/*.test.js"
   },
@@ -73,6 +73,12 @@
         "title": "%command.pickWindow%",
         "category": "Session Watchtower",
         "icon": "$(history)"
+      },
+      {
+        "command": "claudeSessionChanges.pickArchiveAfter",
+        "title": "%command.pickArchiveAfter%",
+        "category": "Session Watchtower",
+        "icon": "$(archive)"
       },
       {
         "command": "claudeSessionChanges.openSettings",
@@ -190,6 +196,11 @@
           "command": "claudeSessionChanges.refresh",
           "when": "view == claudeSessionChanges.sessions",
           "group": "navigation@1"
+        },
+        {
+          "command": "claudeSessionChanges.pickArchiveAfter",
+          "when": "view == claudeSessionChanges.sessions",
+          "group": "z_settings"
         }
       ],
       "view/item/context": [
@@ -297,6 +308,31 @@
           "minimum": 0,
           "maximum": 365,
           "description": "%config.sessionListDays%"
+        },
+        "claudeSessionChanges.archiveAfter": {
+          "type": "string",
+          "default": "claude",
+          "enum": [
+            "claude",
+            "1",
+            "2",
+            "3",
+            "7",
+            "14",
+            "30",
+            "never"
+          ],
+          "enumItemLabels": [
+            "%config.archiveAfter.claude%",
+            "%config.archiveAfter.d1%",
+            "%config.archiveAfter.d2%",
+            "%config.archiveAfter.d3%",
+            "%config.archiveAfter.d7%",
+            "%config.archiveAfter.d14%",
+            "%config.archiveAfter.d30%",
+            "%config.archiveAfter.never%"
+          ],
+          "description": "%config.archiveAfter%"
         },
         "claudeSessionChanges.includeCodex": {
           "type": "boolean",

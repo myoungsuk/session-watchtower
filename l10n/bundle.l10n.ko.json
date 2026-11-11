@@ -125,8 +125,14 @@
   "Restore from archive": "보관함에서 꺼내기",
   "Archived": "보관함",
   "Could not save the archive: {0}": "보관함을 저장하지 못했습니다: {0}",
-  "Being edited now: the session is working and changed this file in the last {0} seconds.": "지금 고치는 중: 작업 중인 세션이 최근 {0}초 안에 이 파일을 바꿨습니다.",
   "Waiting for your approval to edit this file.": "이 파일을 고쳐도 되는지 승인을 기다리는 중입니다.",
   "Sessions with no conversation for {0} day(s) (the Claude Code setting \"Archive Inactive Sessions\") and sessions you archived here.": "{0}일 넘게 대화가 없던 세션(Claude Code 설정 \"Archive Inactive Sessions\")과 여기서 보관한 세션입니다.",
-  "Sessions you archived here.": "여기서 보관한 세션입니다."
+  "Sessions you archived here.": "여기서 보관한 세션입니다.",
+  "Being edited now: this file changed in the last {0} seconds while the session is working.": "지금 고치는 중: 세션이 작업하는 동안 최근 {0}초 안에 이 파일이 바뀌었습니다.",
+  "Same as Claude Code (\"Archive Inactive Sessions\")": "Claude Code와 같게 (\"Archive Inactive Sessions\" 설정)",
+  "Never (only what I archive myself)": "안 함 (직접 보관한 것만)",
+  "1 day": "1일",
+  "Move a session to Archived after how long without conversation?": "대화가 없은 지 얼마나 지나면 보관함으로 보낼까요?",
+  "Sessions with no conversation for {0} day(s) and sessions you archived here.": "{0}일 넘게 대화가 없던 세션과 여기서 보관한 세션입니다.",
+  "Choose when sessions move to Archived": "보관함으로 보내는 기준 바꾸기"
 }
