@@ -1,0 +1,22 @@
+{
+  "description": "Claude Code 세션마다 작업 중·멈춤·쉬는 중 상태와, 그 세션이 바꾼 파일을 한 창에서 봅니다. 읽기 전용.",
+  "view.sessions": "세션 상태",
+  "view.changes": "세션별 변경 파일",
+  "command.refresh": "새로 고침",
+  "command.showAliveOnly": "진행 중 세션만 보기",
+  "command.showAll": "모든 세션 보기",
+  "command.pickWindow": "보는 기간 바꾸기",
+  "command.openSettings": "설정 열기",
+  "command.openFileDiff": "세션 첫 변경 전과 비교",
+  "command.openChangeDiff": "이 변경 보기",
+  "command.openFile": "파일 열기",
+  "command.copyPath": "경로 복사",
+  "command.copySessionId": "세션 ID 복사",
+  "command.revealSession": "변경 파일 보기",
+  "command.openClaudeSession": "Claude 대화 열기",
+  "config.lookbackHours": "몇 시간 안의 변경을 보여 줄지. 진행 중인 세션은 이보다 오래돼도 목록에 나옵니다.",
+  "config.showShellGuesses": "셸 명령 글자(>, >>, tee, sed -i, cp, mv 등)에서 추정한 파일도 보여 줍니다. 노란 S 표시로 구분합니다.",
+  "config.hideScratchpadFiles": "/tmp/claude-*/…/scratchpad 아래 임시 파일을 숨깁니다. 그 안의 git worktree 파일은 계속 보여 줍니다.",
+  "config.includeSubagents": "하위 에이전트가 바꾼 파일도 부모 세션 아래에 보여 줍니다.",
+  "config.pollSeconds": "창이 열려 있을 때 대화 기록을 다시 확인하는 간격(초). 새로 추가된 부분만 읽습니다."
+}

@@ -1,0 +1,284 @@
+{
+  "name": "session-watchtower",
+  "displayName": "Session Watchtower for Claude Code",
+  "description": "%description%",
+  "version": "0.7.1",
+  "publisher": "kms-labs",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onView:claudeSessionChanges.sessions",
+    "onView:claudeSessionChanges.tree"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "claudeSessionChanges",
+          "title": "Session Watchtower",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "claudeSessionChanges": [
+        {
+          "id": "claudeSessionChanges.sessions",
+          "name": "%view.sessions%",
+          "icon": "media/icon.svg",
+          "type": "webview"
+        },
+        {
+          "id": "claudeSessionChanges.tree",
+          "name": "%view.changes%",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "claudeSessionChanges.refresh",
+        "title": "%command.refresh%",
+        "category": "Session Watchtower",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "claudeSessionChanges.showAliveOnly",
+        "title": "%command.showAliveOnly%",
+        "category": "Session Watchtower",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "claudeSessionChanges.showAll",
+        "title": "%command.showAll%",
+        "category": "Session Watchtower",
+        "icon": "$(filter-filled)"
+      },
+      {
+        "command": "claudeSessionChanges.pickWindow",
+        "title": "%command.pickWindow%",
+        "category": "Session Watchtower",
+        "icon": "$(history)"
+      },
+      {
+        "command": "claudeSessionChanges.openSettings",
+        "title": "%command.openSettings%",
+        "category": "Session Watchtower"
+      },
+      {
+        "command": "claudeSessionChanges.openFileDiff",
+        "title": "%command.openFileDiff%"
+      },
+      {
+        "command": "claudeSessionChanges.openChangeDiff",
+        "title": "%command.openChangeDiff%"
+      },
+      {
+        "command": "claudeSessionChanges.openFile",
+        "title": "%command.openFile%",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "claudeSessionChanges.copyPath",
+        "title": "%command.copyPath%"
+      },
+      {
+        "command": "claudeSessionChanges.copySessionId",
+        "title": "%command.copySessionId%"
+      },
+      {
+        "command": "claudeSessionChanges.revealSession",
+        "title": "%command.revealSession%",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "claudeSessionChanges.openClaudeSession",
+        "title": "%command.openClaudeSession%",
+        "icon": "$(comment-discussion)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "claudeSessionChanges.openFileDiff",
+          "when": "false"
+        },
+        {
+          "command": "claudeSessionChanges.openChangeDiff",
+          "when": "false"
+        },
+        {
+          "command": "claudeSessionChanges.openFile",
+          "when": "false"
+        },
+        {
+          "command": "claudeSessionChanges.copyPath",
+          "when": "false"
+        },
+        {
+          "command": "claudeSessionChanges.copySessionId",
+          "when": "false"
+        },
+        {
+          "command": "claudeSessionChanges.revealSession",
+          "when": "false"
+        },
+        {
+          "command": "claudeSessionChanges.openClaudeSession",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "claudeSessionChanges.showAliveOnly",
+          "when": "view == claudeSessionChanges.tree && !claudeSessionChanges.aliveOnly",
+          "group": "navigation@1"
+        },
+        {
+          "command": "claudeSessionChanges.showAll",
+          "when": "view == claudeSessionChanges.tree && claudeSessionChanges.aliveOnly",
+          "group": "navigation@1"
+        },
+        {
+          "command": "claudeSessionChanges.pickWindow",
+          "when": "view == claudeSessionChanges.tree",
+          "group": "navigation@2"
+        },
+        {
+          "command": "claudeSessionChanges.refresh",
+          "when": "view == claudeSessionChanges.tree",
+          "group": "navigation@3"
+        },
+        {
+          "command": "claudeSessionChanges.openSettings",
+          "when": "view == claudeSessionChanges.tree",
+          "group": "z_settings"
+        },
+        {
+          "command": "claudeSessionChanges.refresh",
+          "when": "view == claudeSessionChanges.sessions",
+          "group": "navigation@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "claudeSessionChanges.openFile",
+          "when": "view == claudeSessionChanges.tree && viewItem == file",
+          "group": "inline"
+        },
+        {
+          "command": "claudeSessionChanges.openFile",
+          "when": "view == claudeSessionChanges.tree && viewItem == file",
+          "group": "1_open@1"
+        },
+        {
+          "command": "claudeSessionChanges.openFileDiff",
+          "when": "view == claudeSessionChanges.tree && viewItem == file",
+          "group": "1_open@2"
+        },
+        {
+          "command": "claudeSessionChanges.copyPath",
+          "when": "view == claudeSessionChanges.tree && viewItem == file",
+          "group": "2_copy@1"
+        },
+        {
+          "command": "claudeSessionChanges.copySessionId",
+          "when": "view == claudeSessionChanges.tree && viewItem == session",
+          "group": "2_copy@1"
+        },
+        {
+          "command": "claudeSessionChanges.openClaudeSession",
+          "when": "view == claudeSessionChanges.tree && viewItem == session",
+          "group": "inline"
+        },
+        {
+          "command": "claudeSessionChanges.openClaudeSession",
+          "when": "view == claudeSessionChanges.tree && viewItem == session",
+          "group": "1_open@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Session Watchtower",
+      "properties": {
+        "claudeSessionChanges.lookbackHours": {
+          "type": "number",
+          "default": 24,
+          "minimum": 1,
+          "maximum": 720,
+          "description": "%config.lookbackHours%"
+        },
+        "claudeSessionChanges.showShellGuesses": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.showShellGuesses%"
+        },
+        "claudeSessionChanges.hideScratchpadFiles": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.hideScratchpadFiles%"
+        },
+        "claudeSessionChanges.includeSubagents": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.includeSubagents%"
+        },
+        "claudeSessionChanges.pollSeconds": {
+          "type": "number",
+          "default": 5,
+          "minimum": 2,
+          "description": "%config.pollSeconds%"
+        }
+      }
+    }
+  },
+  "icon": "media/logo.png",
+  "galleryBanner": {
+    "color": "#172A46",
+    "theme": "dark"
+  },
+  "keywords": [
+    "claude",
+    "claude code",
+    "session",
+    "changed files",
+    "diff",
+    "status",
+    "agent"
+  ],
+  "files": [
+    "extension.js",
+    "scanner.js",
+    "worker.js",
+    "media/icon.svg",
+    "media/logo.png",
+    "l10n/**",
+    "package.nls.json",
+    "package.nls.ko.json",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "l10n": "./l10n",
+  "author": {
+    "name": "KMS Labs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/myoungsuk/session-watchtower.git"
+  },
+  "bugs": {
+    "url": "https://github.com/myoungsuk/session-watchtower/issues"
+  },
+  "homepage": "https://github.com/myoungsuk/session-watchtower#readme"
+}
