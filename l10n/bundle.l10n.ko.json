@@ -117,6 +117,6 @@
   "Waiting for you (approval or answer)": "기다림 (승인 또는 답)",
   "Just finished (less than 10 minutes ago)": "방금 끝남 (10분 안)",
   "What it is doing now": "지금 하는 일",
-  "Lines added / removed in the files it changed": "바꾼 파일에서 더한 줄 / 지운 줄",
-  "{0} lines added, {1} removed": "{0}줄 추가, {1}줄 삭제"
+  "Last {0} hours: {1} lines added, {2} removed (each edit counted)": "최근 {0}시간 동안 {1}줄 추가, {2}줄 삭제 (고칠 때마다 더한 합계)",
+  "Lines added / removed within the time range of the Changed files view": "변경 파일 창의 보는 기간 안에서 더한 줄 / 지운 줄"
 }

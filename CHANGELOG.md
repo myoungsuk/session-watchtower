@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.1
+
+- The change-size tooltip now says what it counts: lines added and removed within the time range of the Changed files view, with every edit counted.
+
 ## 0.9.0
 
 - **What it is doing now**: working and waiting sessions show their current step (*Running: …*, *Editing …*, *Thinking…*) on a second line; also in tooltips and the status bar tooltip.

@@ -463,8 +463,9 @@ function sessionsPayload() {
     lgSessions: L('Sessions'), lgFiles: L('Changed files'), lgRow: L('Under each session'),
     lgBusy: L('Working'), lgWaiting: L('Waiting for you (approval or answer)'), lgDone: L('Just finished (less than 10 minutes ago)'), lgIdle: L('Idle'), lgOff: L('Off (no Claude process)'),
     lgA: L('Created in this session'), lgM: L('Modified in this session'), lgD: L('Not on disk anymore (deleted)'), lgQ: L('Guessed from shell commands (not certain)'),
-    lgNow: L('What it is doing now'), lgDiff: L('Lines added / removed in the files it changed'),
-    diffTip: L('{0} lines added, {1} removed'),
+    lgNow: L('What it is doing now'), lgDiff: L('Lines added / removed within the time range of the Changed files view'),
+    // 변경 규모는 변경 파일 창의 "보는 기간" 안에서, 고칠 때마다 더한 합계(같은 줄을 여러 번 고치면 여러 번 셈)
+    diffTip: L('Last {0} hours: {1} lines added, {2} removed (each edit counted)', cfg().lookbackHours, '{1}', '{2}'),
   };
   if (!loaded) return { message: lastError ? L('Read error') : L('Reading sessions…'), detail: lastError || '', strings };
   if (!sessionsModel.length) return { message: L('No sessions in the last {0}h', cfg().lookbackHours), strings };
@@ -641,7 +642,7 @@ function sessionsHtml(webview) {
     const red = Math.min(5 - green, Math.round((5 * del) / tot));
     let sq = '';
     for (let i = 0; i < 5; i++) sq += '<i class="' + (i < green ? 'a' : i < green + red ? 'd' : '') + '"></i>';
-    const tip = String(strings.diffTip || '').replace('{0}', add).replace('{1}', del);
+    const tip = String(strings.diffTip || '').replace('{1}', add).replace('{2}', del);
     return '<span class="ds" title="' + esc(tip) + '"><span class="a">+' + add + '</span><span class="d">−' + del + '</span><span class="sq">' + sq + '</span></span>';
   }
   function row(r) {
