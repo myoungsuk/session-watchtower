@@ -12,7 +12,7 @@ const HOME = os.homedir();
 const PROJECTS = path.join(HOME, '.claude', 'projects');
 const REGISTRY = path.join(HOME, '.claude', 'sessions');
 const CODEX_SESSIONS = path.join(HOME, '.codex', 'sessions');
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3; // 3: 도구 호출(lastTool·events) 추가 — 옛 저장 파일은 버리고 한 번 새로 읽음
 const CACHE_SAVE_MS = 20000;
 const CODEX_ACTIVE_MS = 90000;
 const CHUNK = 4 * 1024 * 1024;
@@ -26,6 +26,33 @@ const K_FILEPATH = B('"filePath"');
 const K_BASHDIFF = B('"bashEditDiff"');
 const K_GITOP = B('"gitOperation"');
 const K_BASHUSE = B('"name":"Bash"');
+const K_TOOLUSE = B('"type":"tool_use"');
+const K_ASSISTANT = B('"type":"assistant"');
+// Claude Code가 남기는 API 요청 사본(api-request·api-request-blob)에는 이전 대화가 통째로 다시 들어 있어
+// 도구 호출을 두 번 세거나 끝난 도구를 "진행 중"으로 되돌린다 → 줄 머리에서 보고 건너뛴다
+const K_APIREQ = B('"type":"api-request');
+
+// "지금 하는 일" 한 줄에 쓸 도구 입력 요약(파일 이름·명령 설명 등 짧게)
+function summarizeInput(name, input) {
+  const i = input && typeof input === 'object' ? input : {};
+  const one = (s) => String(s || '').split('\n')[0].replace(/\s+/g, ' ').trim().slice(0, 80);
+  const base = (p) => (p ? path.basename(String(p)) : '');
+  switch (name) {
+    case 'Bash': return one(i.description || i.command);
+    case 'Edit': case 'Write': case 'MultiEdit': case 'Read': return base(i.file_path);
+    case 'NotebookEdit': return base(i.notebook_path || i.file_path);
+    case 'Grep': case 'Glob': return one(i.pattern);
+    case 'Agent': case 'Task': return one(i.description || i.subagent_type);
+    case 'WebSearch': return one(i.query);
+    case 'WebFetch': try { return new URL(String(i.url)).host; } catch { return ''; }
+    case 'Skill': return one(i.skill);
+    default: return '';
+  }
+}
+
+function noteTool(st, tool) {
+  st.lastTool = tool;
+}
 const K_TOOLUSEID = B('"tool_use_id":"');
 const K_CUSTOM = B('"type":"custom-title"');
 const K_AI = B('"type":"ai-title"');
@@ -227,6 +254,7 @@ function newFileState(d) {
     commitWins: [],
     seenSha: new Set(),
     userChecked: 0,
+    lastTool: null,
   };
 }
 
@@ -400,7 +428,9 @@ function handleCodexLine(st, line, absOffset) {
   if (p.name === 'apply_patch') {
     const text = codexPatchText(p);
     if (!text) return;
-    parsePatch(text, st.curCwd || st.cwd).forEach((f, i) => {
+    const parts = parsePatch(text, st.curCwd || st.cwd);
+    noteTool(st, { id: null, tool: 'apply_patch', arg: parts[0] ? path.basename(parts[0].path) : '', ts, done: true });
+    parts.forEach((f, i) => {
       pushChange(st, {
         kind: 'cxedit', path: f.path, ts, add: f.add, del: f.del, created: f.op === 'Add', deleted: f.op === 'Delete',
         offset: absOffset, length: len, idx: i,
@@ -410,6 +440,7 @@ function handleCodexLine(st, line, absOffset) {
   }
   const ex = codexCommand(p);
   if (ex && ex.cmd) {
+    noteTool(st, { id: null, tool: 'exec', arg: String(ex.cmd).split('\n')[0].replace(/\s+/g, ' ').trim().slice(0, 80), ts, done: false });
     const cwd = ex.cwd || st.curCwd || st.cwd;
     for (const t of shellTargets(ex.cmd, cwd)) {
       let s;
@@ -424,6 +455,7 @@ function handleLine(st, line, absOffset) {
   if (st.agent === 'codex') return handleCodexLine(st, line, absOffset);
   const len = line.length;
   if (len < 2) return;
+  if (line.subarray(0, 48).indexOf(K_APIREQ) >= 0) return;
 
   if (!st.sub && (line.indexOf(K_CUSTOM) >= 0 || line.indexOf(K_AI) >= 0) && len < 20000) {
     try {
@@ -436,6 +468,7 @@ function handleLine(st, line, absOffset) {
 
   if (line.indexOf(K_RESULT) >= 0) {
     const id = extractToolUseId(line);
+    if (id && st.lastTool && st.lastTool.id === id) st.lastTool.done = true;
     const bash = id ? st.pendingBash.get(id) : null;
     if (bash) {
       st.pendingBash.delete(id);
@@ -509,15 +542,20 @@ function handleLine(st, line, absOffset) {
     return;
   }
 
-  if (line.indexOf(K_BASHUSE) >= 0) {
+  // 도구 호출 줄: 지금 하는 일(마지막 도구)·활동 흐름(호출 시각)·셸 명령 대기 목록
+  if (line.indexOf(K_TOOLUSE) >= 0 && line.indexOf(K_ASSISTANT) >= 0 && (line.indexOf(K_BASHUSE) >= 0 || len < 400000)) {
     let o;
     try { o = JSON.parse(line.toString('utf8')); } catch { return; }
+    if (o.type !== 'assistant') return;
     if (o.cwd && !st.cwd) st.cwd = o.cwd;
+    const ts = Date.parse(o.timestamp) || st.mtimeMs;
     const c = o.message && Array.isArray(o.message.content) ? o.message.content : [];
     for (const x of c) {
-      if (x && x.type === 'tool_use' && x.name === 'Bash' && x.id) {
+      if (!x || x.type !== 'tool_use' || !x.id) continue;
+      noteTool(st, { id: x.id, tool: String(x.name || ''), arg: summarizeInput(x.name, x.input), ts, done: false });
+      if (x.name === 'Bash') {
         const full = String((x.input && x.input.command) || '');
-        st.pendingBash.set(x.id, { full, cmd: shortCmd(full), cwd: o.cwd || st.cwd, ts: Date.parse(o.timestamp) || st.mtimeMs });
+        st.pendingBash.set(x.id, { full, cmd: shortCmd(full), cwd: o.cwd || st.cwd, ts });
       }
     }
     return;
@@ -921,6 +959,11 @@ function createModel() {
         statusSince: codex ? (codexActive ? lastActivity : null) : reg ? reg.statusSince : null,
       };
       if (!codex) state = applyMarker(state, attentionMarker(opts.attentionDir, sid), lastActivity);
+      // 지금 하는 일: 본 세션·하위 에이전트 중 가장 최근 도구 호출
+      let activity = null;
+      for (const st of sts) {
+        if (st.lastTool && (!activity || st.lastTool.ts > activity.ts)) activity = st.lastTool;
+      }
       sessions.push({
         sid, title, titleSource,
         agent: main.agent || 'claude',
@@ -929,6 +972,7 @@ function createModel() {
         cwd: projectCwd,
         lastActivity,
         ...state,
+        activity,
         changes,
       });
     }

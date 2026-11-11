@@ -1,5 +1,5 @@
 {
-  "description": "Claude Code 세션마다 작업 중·멈춤·쉬는 중 상태와, 그 세션이 바꾼 파일을 한 창에서 봅니다. 읽기 전용.",
+  "description": "Claude Code 세션마다 작업 중·멈춤·쉬는 중 상태와, 그 세션이 바꾼 파일을 한 창에서 봅니다. Codex 세션도 함께 보여 줍니다. 읽기 전용.",
   "view.sessions": "세션 상태",
   "view.changes": "세션별 변경 파일",
   "command.refresh": "새로 고침",

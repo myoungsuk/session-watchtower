@@ -11,6 +11,7 @@
 ## Features
 
 - **Session status at a glance** — a roomy list in the same colors as Claude Code's session list: green working, blue waiting for your approval or answer, orange just finished, grey idle, hollow off — plus how long it has been in that state. Sessions in the current folder come first; sessions from other folders are grouped and collapsed below. A badge counts sessions that are waiting for you.
+- **What it is doing now** — under a working or waiting session, a short line such as *Running: npm test* or *Editing README.md*, plus the size of its changes (`+142 −38` with a small green/red bar). The **?** button explains every color. Works in dark and light themes.
 - **Changed files per session** — edits from Claude's Edit/Write tools, shell commands and git commits, with `+added −removed` line counts and times. Click a file to open a diff.
 - **Review a whole session** — one click opens every file the session changed in a single multi-file diff. For files changed only with edit tools or commits, the right side is the file as the session left it, so other sessions' later edits don't get mixed in.
 - **Status bar summary** — working · waiting · just finished counts are always visible at the bottom; it turns to a warning color while a session waits for you.

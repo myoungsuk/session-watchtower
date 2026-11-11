@@ -1,5 +1,5 @@
 {
-  "description": "See every Claude Code session at a glance — working, waiting or idle — and exactly which files each one changed. Read-only.",
+  "description": "See every Claude Code session at a glance — working, waiting or idle — and exactly which files each one changed. Also shows Codex sessions. Read-only.",
   "view.sessions": "Sessions",
   "view.changes": "Changed files",
   "command.refresh": "Refresh",

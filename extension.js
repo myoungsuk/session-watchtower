@@ -130,10 +130,35 @@ function stateOf(s) {
 }
 
 
+// "지금 하는 일": 마지막 도구 호출을 쉬운 말로(진행 중일 때만 의미가 있음)
+function activityText(a) {
+  if (!a || !a.tool) return '';
+  const arg = a.arg || '';
+  switch (a.tool) {
+    case 'Bash': case 'exec': return arg ? L('Running: {0}', arg) : L('Running a command');
+    case 'Edit': case 'Write': case 'MultiEdit': case 'NotebookEdit': case 'apply_patch': return arg ? L('Editing {0}', arg) : L('Editing files');
+    case 'Read': return arg ? L('Reading {0}', arg) : L('Reading files');
+    case 'Grep': case 'Glob': return arg ? L('Searching {0}', arg) : L('Searching');
+    case 'Agent': case 'Task': return arg ? L('Subagent: {0}', arg) : L('Running a subagent');
+    case 'WebSearch': return arg ? L('Web search: {0}', arg) : L('Searching the web');
+    case 'WebFetch': return arg ? L('Opening {0}', arg) : L('Opening a web page');
+    default: return arg ? `${a.tool}: ${arg}` : a.tool;
+  }
+}
+
+// 작업 중이면 진행 중인 도구, 도구가 끝났으면 "생각 중", 기다림이면 기다리는 도구
+function nowText(s, st) {
+  if (st.key !== 'busy' && st.key !== 'waiting') return '';
+  if (s.activity && !s.activity.done) return activityText(s.activity);
+  return st.key === 'busy' ? L('Thinking…') : '';
+}
+
 function sessionTooltip(s, st) {
+  const now = nowText(s, st);
   return [
     s.title,
     L('Status: {0}', st.label) + (s.statusSince ? ' ' + L('(since {0})', fmtTime(s.statusSince, true)) : ''),
+    now ? L('Now: {0}', now) : null,
     s.address ? L('Address: {0}', s.address) : null,
     s.cwd ? L('Folder: {0}', s.cwd) : null,
     L('Last log: {0}', fmtTime(s.lastActivity, true)),
@@ -423,11 +448,24 @@ function sessionRow(s) {
   // 제목이 잘리지 않게 오른쪽에는 시간만(상태는 점 색). 사용자가 해야 할 일이 있는 "기다림"만 글자도 붙인다.
   const meta = st.key === 'waiting' ? [st.short, st.time].filter(Boolean).join(' · ') : st.time;
   const m = model.find((x) => x.sid === s.sid);
-  return { sid: s.sid, title: s.title, state: st.key, meta, tip: sessionTooltip(s, st) + '\n' + hint, canOpen, alive: !!s.alive, codex, files: m ? m.files.length : 0 };
+  const add = m ? m.files.reduce((a, f) => a + (f.add || 0), 0) : 0;
+  const del = m ? m.files.reduce((a, f) => a + (f.del || 0), 0) : 0;
+  return {
+    sid: s.sid, title: s.title, state: st.key, meta, tip: sessionTooltip(s, st) + '\n' + hint, canOpen, alive: !!s.alive, codex,
+    files: m ? m.files.length : 0, add, del, now: nowText(s, st),
+  };
 }
 
 function sessionsPayload() {
-  const strings = { showChanges: L('Show changed files'), review: L('Review all changes'), newSession: L('New session'), active: L('Active'), search: L('Search sessions'), noMatch: L('No matching sessions') };
+  const strings = {
+    showChanges: L('Show changed files'), review: L('Review all changes'), newSession: L('New session'), active: L('Active'),
+    search: L('Search sessions'), noMatch: L('No matching sessions'), legend: L('What the colors mean'),
+    lgSessions: L('Sessions'), lgFiles: L('Changed files'), lgRow: L('Under each session'),
+    lgBusy: L('Working'), lgWaiting: L('Waiting for you (approval or answer)'), lgDone: L('Just finished (less than 10 minutes ago)'), lgIdle: L('Idle'), lgOff: L('Off (no Claude process)'),
+    lgA: L('Created in this session'), lgM: L('Modified in this session'), lgD: L('Not on disk anymore (deleted)'), lgQ: L('Guessed from shell commands (not certain)'),
+    lgNow: L('What it is doing now'), lgDiff: L('Lines added / removed in the files it changed'),
+    diffTip: L('{0} lines added, {1} removed'),
+  };
   if (!loaded) return { message: lastError ? L('Read error') : L('Reading sessions…'), detail: lastError || '', strings };
   if (!sessionsModel.length) return { message: L('No sessions in the last {0}h', cfg().lookbackHours), strings };
   const { mine, groups } = splitByFolder(sessionsModel);
@@ -493,7 +531,25 @@ function sessionsHtml(webview) {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
   body { margin: 0; padding: 4px 0; font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: transparent; }
-  .row { display: flex; align-items: center; gap: 10px; min-height: 30px; padding: 0 8px 0 16px; cursor: pointer; font-size: 13.5px; outline: none; }
+  .row { display: block; padding: 0 8px 0 16px; cursor: pointer; outline: none; }
+  .l1 { display: flex; align-items: center; gap: 10px; min-height: 30px; font-size: 13.5px; }
+  .sub { display: flex; align-items: center; gap: 8px; margin: -6px 0 0 19px; padding-bottom: 6px; min-height: 15px; font-size: 11.5px; color: var(--vscode-descriptionForeground); }
+  .now { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .now.busy { color: var(--vscode-charts-green); }
+  .now.waiting { color: var(--vscode-charts-blue); }
+  .ds { flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+  .ds .a { color: var(--vscode-gitDecoration-addedResourceForeground); }
+  .ds .d { color: var(--vscode-gitDecoration-deletedResourceForeground); }
+  .sq { display: inline-flex; gap: 1px; }
+  .sq i { display: inline-block; width: 6px; height: 6px; border-radius: 1px; background: var(--vscode-descriptionForeground); opacity: 0.3; }
+  .sq i.a { background: var(--vscode-gitDecoration-addedResourceForeground); opacity: 1; }
+  .sq i.d { background: var(--vscode-gitDecoration-deletedResourceForeground); opacity: 1; }
+  .legend { display: none; margin: 0 10px 8px; padding: 8px 10px; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35))); border-radius: 4px; font-size: 12px; }
+  .legend.show { display: block; }
+  .legend h4 { margin: 6px 0 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--vscode-descriptionForeground); }
+  .legend h4:first-child { margin-top: 0; }
+  .lg { display: flex; align-items: center; gap: 8px; min-height: 20px; }
+  .lg .k { width: 16px; display: inline-flex; justify-content: center; flex-shrink: 0; font-weight: 600; }
   .row:hover { background: var(--vscode-list-hoverBackground); }
   .row:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
   .row.other { cursor: default; }
@@ -542,8 +598,10 @@ function sessionsHtml(webview) {
   <span class="spacer"></span>
   <button class="btn" id="btnActive" aria-pressed="false"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1 3 9h4.2L6.5 15 13 7H8.8z"/></svg><span id="lblActive"></span></button>
   <button class="btn" id="btnSearch"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/></svg></button>
+  <button class="btn" id="btnLegend" aria-pressed="false"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="6.2"/><path d="M6.3 6.2a1.8 1.8 0 1 1 2.5 1.7c-.5.2-.8.6-.8 1.1v.5"/><circle cx="8" cy="11.6" r=".4" fill="currentColor"/></svg></button>
 </div>
 <div class="search" id="searchBox"><input id="q" type="text" autocomplete="off" spellcheck="false"></div>
+<div class="legend" id="legend"></div>
 <div id="root" role="list"></div>
 <script nonce="${n}">
 (function () {
@@ -575,19 +633,61 @@ function sessionsHtml(webview) {
   q.addEventListener('input', () => { saved.q = q.value; save(); if (last) render(last); });
   q.addEventListener('keydown', (e) => { if (e.key === 'Escape') { q.value = ''; saved.q = ''; saved.searchOpen = false; box.classList.remove('show'); save(); if (last) render(last); } });
   const reviewIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M4.5 1.5h5l2.5 2.5v6.5h-7.5z"/><path d="M2.5 4v10.5h7"/><path d="M6.5 6h3.5M6.5 8.3h3.5"/></svg>';
+  // 변경 규모: +줄 −줄과 다섯 칸 막대(초록=추가, 빨강=삭제 비율)
+  function diffstat(add, del) {
+    if (!add && !del) return '';
+    const tot = add + del;
+    const green = Math.round((5 * add) / tot);
+    const red = Math.min(5 - green, Math.round((5 * del) / tot));
+    let sq = '';
+    for (let i = 0; i < 5; i++) sq += '<i class="' + (i < green ? 'a' : i < green + red ? 'd' : '') + '"></i>';
+    const tip = String(strings.diffTip || '').replace('{0}', add).replace('{1}', del);
+    return '<span class="ds" title="' + esc(tip) + '"><span class="a">+' + add + '</span><span class="d">−' + del + '</span><span class="sq">' + sq + '</span></span>';
+  }
   function row(r) {
     const acts = r.files
       ? '<button class="act" data-act="review" data-sid="' + esc(r.sid) + '" title="' + esc(strings.review) + '" aria-label="' + esc(strings.review) + '">' + reviewIcon + '</button>'
         + '<button class="act" data-act="reveal" data-sid="' + esc(r.sid) + '" title="' + esc(strings.showChanges) + '" aria-label="' + esc(strings.showChanges) + '">' + icon + '</button>'
       : '';
+    const ds = diffstat(r.add || 0, r.del || 0);
+    // 둘째 줄: 지금 하는 일(작업 중·기다림일 때)과 변경 규모. 둘 다 없으면 한 줄짜리
+    const sub = r.now || ds ? '<div class="sub"><span class="now ' + esc(r.state) + '">' + esc(r.now) + '</span>' + ds + '</div>' : '';
     return '<div class="row' + (r.canOpen ? '' : ' other') + '" role="listitem" tabindex="0" data-sid="' + esc(r.sid) + '" data-open="' + (r.canOpen ? '1' : '') + '" title="' + esc(r.tip) + '">'
-      + '<span class="dot ' + esc(r.state) + '"></span><span class="title">' + esc(r.title) + '</span>'
+      + '<div class="l1"><span class="dot ' + esc(r.state) + '"></span><span class="title">' + esc(r.title) + '</span>'
       + (r.codex ? '<span class="tag">Codex</span>' : '')
-      + '<span class="meta">' + esc(r.meta) + '</span>' + acts + '</div>';
+      + '<span class="meta">' + esc(r.meta) + '</span>' + acts + '</div>' + sub + '</div>';
+  }
+  // 색 범례(? 단추)
+  const legendBox = document.getElementById('legend');
+  const btnLegend = document.getElementById('btnLegend');
+  if (saved.legendOpen) legendBox.classList.add('show');
+  btnLegend.addEventListener('click', () => {
+    saved.legendOpen = !legendBox.classList.contains('show');
+    legendBox.classList.toggle('show', saved.legendOpen);
+    btnLegend.classList.toggle('on', saved.legendOpen);
+    btnLegend.setAttribute('aria-pressed', String(saved.legendOpen));
+    save();
+  });
+  function renderLegend() {
+    const s = strings;
+    const lg = (k, text) => '<div class="lg"><span class="k">' + k + '</span><span>' + esc(text) + '</span></div>';
+    const mark = (ch, v) => '<span style="color:var(--vscode-gitDecoration-' + v + ')">' + ch + '</span>';
+    legendBox.innerHTML = '<h4>' + esc(s.lgSessions) + '</h4>'
+      + lg('<span class="dot busy"></span>', s.lgBusy) + lg('<span class="dot waiting"></span>', s.lgWaiting) + lg('<span class="dot done"></span>', s.lgDone)
+      + lg('<span class="dot idle"></span>', s.lgIdle) + lg('<span class="dot off"></span>', s.lgOff)
+      + '<h4>' + esc(s.lgRow) + '</h4>'
+      + lg('<span style="color:var(--vscode-charts-green)">&#9656;</span>', s.lgNow) + lg('<span class="sq"><i class="a"></i><i class="d"></i></span>', s.lgDiff)
+      + '<h4>' + esc(s.lgFiles) + '</h4>'
+      + lg(mark('A', 'addedResourceForeground'), s.lgA) + lg(mark('M', 'modifiedResourceForeground'), s.lgM)
+      + lg(mark('D', 'deletedResourceForeground'), s.lgD) + lg(mark('?', 'ignoredResourceForeground'), s.lgQ);
+    btnLegend.title = s.legend || '';
+    btnLegend.setAttribute('aria-label', s.legend || '');
+    btnLegend.classList.toggle('on', !!saved.legendOpen);
   }
   function render(p) {
     last = p;
     strings = p.strings || {};
+    renderLegend();
     document.getElementById('lblNew').textContent = strings.newSession || '';
     btnSearch.title = strings.search || '';
     btnSearch.setAttribute('aria-label', strings.search || '');
@@ -1045,7 +1145,8 @@ function updateStatusBar() {
   md.appendMarkdown('**Session Watchtower**\n\n');
   const line = (icon, label, list) => {
     if (!list.length) return;
-    const names = list.slice(0, 8).map((s) => (s.title || s.sid.slice(0, 8)).replace(/[\\`*_[\]<>|]/g, ' ')).join(', ');
+    const clean = (t) => String(t || '').replace(/[\\`*_[\]<>|]/g, ' ');
+    const names = list.slice(0, 8).map((s) => clean(s.title || s.sid.slice(0, 8)) + (s.activity && !s.activity.done ? ' — ' + clean(activityText(s.activity)) : '')).join(', ');
     md.appendMarkdown(`$(${icon}) **${label}** (${list.length}): ${names}${list.length > 8 ? ' …' : ''}\n\n`);
   };
   line('bell-dot', L('Waiting'), groups.waiting);

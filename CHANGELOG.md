@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.0
+
+- **What it is doing now**: working and waiting sessions show their current step (*Running: …*, *Editing …*, *Thinking…*) on a second line; also in tooltips and the status bar tooltip.
+- **Change size** per session: `+added −removed` and a five-square green/red bar.
+- **Color legend** behind a new **?** button in the Sessions view.
+- Checked in light themes.
+- Description and keywords now mention Codex.
+- Fixed: Claude Code's API request copies in the log were read as new tool calls, which made finished steps look unfinished and slowed the first read.
+
 ## 0.8.0
 
 - **Review all changes**: one click opens every file a session changed in a multi-file diff. Edit-tool and commit-only files now compare against the file as the session left it, so other sessions' later edits don't get mixed in.

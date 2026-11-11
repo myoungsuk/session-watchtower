@@ -7,7 +7,7 @@ const model = createModel();
 let lastSig = '';
 
 function signature(sessions) {
-  return sessions.map((s) => `${s.sid}:${s.lastActivity}:${s.changes.length}:${s.status}:${s.waitingFor}:${s.statusSince}:${s.alive}:${s.title}`).join('|');
+  return sessions.map((s) => `${s.sid}:${s.lastActivity}:${s.changes.length}:${s.status}:${s.waitingFor}:${s.statusSince}:${s.alive}:${s.title}:${s.activity ? s.activity.ts + (s.activity.done ? 'd' : 'p') : ''}`).join('|');
 }
 
 parentPort.on('message', (msg) => {
