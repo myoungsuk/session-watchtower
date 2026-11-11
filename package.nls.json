@@ -14,9 +14,13 @@
   "command.copySessionId": "Copy session ID",
   "command.revealSession": "Show changed files",
   "command.openClaudeSession": "Open Claude conversation",
+  "command.openSessionChanges": "Review all changes of this session",
   "config.lookbackHours": "How many hours of changes to show. Running sessions are always listed.",
-  "config.showShellGuesses": "Also show files guessed from shell commands (>, >>, tee, sed -i, cp, mv …), marked with a yellow S.",
+  "config.showShellGuesses": "Also show files guessed from shell commands (>, >>, tee, sed -i, cp, mv …), marked with a grey ?.",
   "config.hideScratchpadFiles": "Hide Claude's throwaway scratchpad files under /tmp/claude-*. Git worktrees inside the scratchpad stay visible.",
   "config.includeSubagents": "Show files changed by subagents under their parent session.",
-  "config.pollSeconds": "How often (seconds) to check for new log lines while the view is visible. Only newly appended lines are read."
+  "config.pollSeconds": "How often (seconds) to check for new log lines while the view is visible. Only newly appended lines are read.",
+  "config.statusBar": "Show a status bar summary (working · waiting · just finished). Clicking it opens the Sessions view.",
+  "config.includeCodex": "Also show Codex sessions from ~/.codex/sessions (edits made with apply_patch).",
+  "config.attentionMarkerDir": "Folder where an approval-notification hook writes <first 12 hex of sha256(session id)>.pending files. Used as an extra 'waiting for you' signal. Leave empty to turn off."
 }

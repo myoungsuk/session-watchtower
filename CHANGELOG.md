@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0
+
+- **Review all changes**: one click opens every file a session changed in a multi-file diff. Edit-tool and commit-only files now compare against the file as the session left it, so other sessions' later edits don't get mixed in.
+- **Status bar summary** of working · waiting · just finished sessions, with a warning color while a session waits for you.
+- **Codex sessions** (`~/.codex/sessions`, `apply_patch` edits) shown with a *Codex* tag.
+- Extra "waiting for you" signal from approval-hook marker files (`attentionMarkerDir`).
+- Read cache: reopening VS Code no longer re-reads all logs (about 4 s → under 0.1 s in our test).
+- File colors now follow git: green `A` created, yellow `M` modified, red `D` deleted, grey `?` guessed. The purple `C` and yellow `S` marks are gone.
+- Fixed: diffs split into several hunks could show "Could not read the content".
+
 ## 0.7.1
 
 - Sessions view toolbar: **New session**, **Active** (show running sessions only) and search by title.

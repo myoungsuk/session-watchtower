@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const { Worker } = require('worker_threads');
 const { execFile } = require('child_process');
+const { parsePatch } = require('./scanner');
 
 // 화면 글자: 영어 원문 + l10n/bundle.l10n.ko.json(한국어). 날짜·시간 형식만 언어별로 직접 만든다.
 const L = (message, ...args) => vscode.l10n.t(message, ...args);
@@ -45,6 +46,27 @@ function cfg() {
     hideScratchpadFiles: c.get('hideScratchpadFiles', true) !== false,
     includeSubagents: c.get('includeSubagents', true) !== false,
     pollSeconds: Math.max(2, Number(c.get('pollSeconds', 5)) || 5),
+    statusBar: c.get('statusBar', true) !== false,
+    includeCodex: c.get('includeCodex', true) !== false,
+    attentionDir: expandHome(String(c.get('attentionMarkerDir', '~/.cache/claude-attention') || '')),
+  };
+}
+
+function expandHome(p) {
+  if (!p) return '';
+  if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) return path.join(HOME, p.slice(1));
+  return p;
+}
+
+// 읽기 스레드에 넘기는 설정(읽은 결과 저장 파일은 VS Code가 이 확장에 주는 전용 폴더)
+function workerOpts(extra) {
+  const o = cfg();
+  return {
+    lookbackHours: o.lookbackHours,
+    includeCodex: o.includeCodex,
+    attentionDir: o.attentionDir,
+    cacheFile: ctx ? path.join(ctx.globalStorageUri.fsPath, 'scan-cache-v2.json') : '',
+    ...extra,
   };
 }
 
@@ -136,15 +158,22 @@ function counts(add, del) {
   return add || del ? `+${add} −${del}` : '';
 }
 
-const kindText = (k) => ({ edit: L('edit tool'), bash: L('shell command'), shell: L('shell command (guessed)'), commit: L('commit') })[k] || k;
+const kindText = (k) => ({ edit: L('edit tool'), bash: L('shell command'), shell: L('shell command (guessed)'), commit: L('commit'), cxedit: L('Codex edit') })[k] || k;
 
 // ---------- 모델 → 화면 묶음 ----------
 
 let model = [];
+let existsMemo = new Map();
+
+function existsCached(p) {
+  if (!existsMemo.has(p)) existsMemo.set(p, fs.existsSync(p));
+  return existsMemo.get(p);
+}
 
 function rebuild() {
   const o = cfg();
   const out = [];
+  existsMemo = new Map();
   for (const s of raw) {
     if (aliveOnly && !s.alive) continue;
     const files = new Map();
@@ -166,12 +195,16 @@ function rebuild() {
     const list = [...files.values()];
     for (const f of list) {
       f.changes.sort((a, b) => b.ts - a.ts);
-      const exact = f.changes.filter((c) => c.kind === 'edit' || c.kind === 'bash');
+      const exact = f.changes.filter((c) => c.kind === 'edit' || c.kind === 'bash' || c.kind === 'cxedit');
       const src = exact.length ? exact : f.changes.filter((c) => c.kind === 'commit');
       for (const c of src) { f.add += c.add || 0; f.del += c.del || 0; }
       const oldest = f.changes[f.changes.length - 1];
+      const newest = f.changes[0];
       f.created = !!(oldest && oldest.created);
-      f.badge = f.created ? 'A' : (f.kinds.has('edit') || f.kinds.has('bash')) ? 'M' : f.kinds.has('commit') ? 'C' : 'S';
+      // 색은 git 관례대로 "무엇이 바뀌었나"만: A 새 파일(초록) · M 수정(노랑) · D 지금 없음(빨강) · ? 셸 글자 추정(회색, 확실하지 않음)
+      f.deleted = !!(newest && newest.deleted) || !existsCached(f.path);
+      const sure = f.kinds.has('edit') || f.kinds.has('bash') || f.kinds.has('cxedit') || f.kinds.has('commit');
+      f.badge = f.deleted ? 'D' : !sure ? '?' : f.created ? 'A' : 'M';
     }
     list.sort((a, b) => b.lastTs - a.lastTs);
     if (!list.length && !unresolved.length && !s.alive) continue;
@@ -311,10 +344,10 @@ class Provider {
       const it = new vscode.TreeItem(s.title, s.alive && s.files.length ? N.Expanded : N.Collapsed);
       it.id = 's:' + s.sid;
       const st = stateOf(s);
-      it.description = [st.text, L('{0} files', s.files.length)].join(' · ');
+      it.description = [s.agent === 'codex' ? 'Codex' : '', st.text, L('{0} files', s.files.length)].filter(Boolean).join(' · ');
       it.iconPath = st.icon;
       it.tooltip = sessionTooltip(s, st);
-      it.contextValue = 'session';
+      it.contextValue = s.files.length ? 'session' : 'sessionEmpty';
       return it;
     }
     if (el.t === 'file') {
@@ -349,7 +382,10 @@ class Provider {
         icon = new vscode.ThemeIcon('terminal');
       } else if (c.kind === 'shell') {
         desc = L('shell command (guessed)');
-        icon = new vscode.ThemeIcon('terminal', new vscode.ThemeColor('charts.yellow'));
+        icon = new vscode.ThemeIcon('terminal', new vscode.ThemeColor('disabledForeground'));
+      } else if (c.kind === 'cxedit') {
+        desc = [counts(c.add, c.del), c.created ? L('created') : c.deleted ? L('deleted') : L('Codex edit')].filter(Boolean).join(' · ');
+        icon = new vscode.ThemeIcon('edit');
       } else {
         desc = [counts(c.add, c.del), L('commit {0}', String(c.sha || '').slice(0, 8)), c.msg].filter(Boolean).join(' · ');
         icon = new vscode.ThemeIcon('git-commit');
@@ -377,17 +413,21 @@ const provider = new Provider();
 // 맨 위 "세션 상태" 창: 트리 대신 웹뷰로 그려 Claude 세션 목록처럼 큰 줄로 보여 준다.
 function sessionRow(s) {
   const st = stateOf(s);
-  const canOpen = inWorkspace(s);
-  const hint = canOpen
-    ? L('Click: open the Claude conversation · Button on the right: show changed files')
-    : L('Session from another folder ({0}): open it from a VS Code window with that folder · Button on the right: show changed files', s.project);
+  const codex = s.agent === 'codex';
+  const canOpen = !codex && inWorkspace(s);
+  const hint = codex
+    ? L('Codex session: open it from Codex · Buttons on the right: changed files / review all changes')
+    : canOpen
+      ? L('Click: open the Claude conversation · Buttons on the right: changed files / review all changes')
+      : L('Session from another folder ({0}): open it from a VS Code window with that folder · Buttons on the right: changed files / review all changes', s.project);
   // 제목이 잘리지 않게 오른쪽에는 시간만(상태는 점 색). 사용자가 해야 할 일이 있는 "기다림"만 글자도 붙인다.
   const meta = st.key === 'waiting' ? [st.short, st.time].filter(Boolean).join(' · ') : st.time;
-  return { sid: s.sid, title: s.title, state: st.key, meta, tip: sessionTooltip(s, st) + '\n' + hint, canOpen, alive: !!s.alive };
+  const m = model.find((x) => x.sid === s.sid);
+  return { sid: s.sid, title: s.title, state: st.key, meta, tip: sessionTooltip(s, st) + '\n' + hint, canOpen, alive: !!s.alive, codex, files: m ? m.files.length : 0 };
 }
 
 function sessionsPayload() {
-  const strings = { showChanges: L('Show changed files'), newSession: L('New session'), active: L('Active'), search: L('Search sessions'), noMatch: L('No matching sessions') };
+  const strings = { showChanges: L('Show changed files'), review: L('Review all changes'), newSession: L('New session'), active: L('Active'), search: L('Search sessions'), noMatch: L('No matching sessions') };
   if (!loaded) return { message: lastError ? L('Read error') : L('Reading sessions…'), detail: lastError || '', strings };
   if (!sessionsModel.length) return { message: L('No sessions in the last {0}h', cfg().lookbackHours), strings };
   const { mine, groups } = splitByFolder(sessionsModel);
@@ -430,6 +470,7 @@ class SessionsWebview {
       else if (m.type === 'open' && typeof m.sid === 'string') openClaudeSession(m.sid);
       else if (m.type === 'reveal' && typeof m.sid === 'string') revealSession(m.sid);
       else if (m.type === 'new') newClaudeSession();
+      else if (m.type === 'review' && typeof m.sid === 'string') openSessionChanges(m.sid);
     });
     view.onDidChangeVisibility(() => { if (view.visible) { requestScan(false); this.post(); } });
     view.onDidDispose(() => { if (this.view === view) { this.view = undefined; sessionsView = null; this.ready = false; } });
@@ -478,6 +519,8 @@ function sessionsHtml(webview) {
   .bell { width: 8px; height: 8px; border-radius: 50%; background: var(--vscode-charts-blue); flex-shrink: 0; }
   details .row { padding-left: 30px; }
   .msg { padding: 8px 16px; color: var(--vscode-descriptionForeground); font-size: 12.5px; }
+  .tag { flex-shrink: 0; font-size: 10.5px; line-height: 15px; padding: 0 5px; border-radius: 3px; color: var(--vscode-badge-foreground); background: var(--vscode-badge-background); }
+  .row .act + .act { margin-left: -6px; }
   .bar { display: flex; align-items: center; gap: 2px; padding: 2px 8px 6px 8px; }
   .btn { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border: 0; border-radius: 4px; background: transparent; color: var(--vscode-foreground); font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
   .btn:hover { background: var(--vscode-toolbar-hoverBackground); }
@@ -531,10 +574,16 @@ function sessionsHtml(webview) {
   });
   q.addEventListener('input', () => { saved.q = q.value; save(); if (last) render(last); });
   q.addEventListener('keydown', (e) => { if (e.key === 'Escape') { q.value = ''; saved.q = ''; saved.searchOpen = false; box.classList.remove('show'); save(); if (last) render(last); } });
+  const reviewIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M4.5 1.5h5l2.5 2.5v6.5h-7.5z"/><path d="M2.5 4v10.5h7"/><path d="M6.5 6h3.5M6.5 8.3h3.5"/></svg>';
   function row(r) {
+    const acts = r.files
+      ? '<button class="act" data-act="review" data-sid="' + esc(r.sid) + '" title="' + esc(strings.review) + '" aria-label="' + esc(strings.review) + '">' + reviewIcon + '</button>'
+        + '<button class="act" data-act="reveal" data-sid="' + esc(r.sid) + '" title="' + esc(strings.showChanges) + '" aria-label="' + esc(strings.showChanges) + '">' + icon + '</button>'
+      : '';
     return '<div class="row' + (r.canOpen ? '' : ' other') + '" role="listitem" tabindex="0" data-sid="' + esc(r.sid) + '" data-open="' + (r.canOpen ? '1' : '') + '" title="' + esc(r.tip) + '">'
-      + '<span class="dot ' + esc(r.state) + '"></span><span class="title">' + esc(r.title) + '</span><span class="meta">' + esc(r.meta) + '</span>'
-      + '<button class="act" data-act="reveal" data-sid="' + esc(r.sid) + '" title="' + esc(strings.showChanges) + '" aria-label="' + esc(strings.showChanges) + '">' + icon + '</button></div>';
+      + '<span class="dot ' + esc(r.state) + '"></span><span class="title">' + esc(r.title) + '</span>'
+      + (r.codex ? '<span class="tag">Codex</span>' : '')
+      + '<span class="meta">' + esc(r.meta) + '</span>' + acts + '</div>';
   }
   function render(p) {
     last = p;
@@ -607,6 +656,9 @@ async function openClaudeSession(arg) {
   const sid = sidOf(arg);
   if (!sid) return;
   const s = raw.find((x) => x.sid === sid) || { sid, title: sid.slice(0, 8) };
+  if (s.agent === 'codex' || sid.startsWith('codex:')) {
+    return vscode.window.showInformationMessage(L('"{0}" is a Codex session. Open it from Codex.', s.title));
+  }
   if (!inWorkspace(s)) {
     return vscode.window.showInformationMessage(L('"{0}" is a session from another folder ({1}). Open it from the Claude list in a VS Code window with that folder open.', s.title, s.project || s.cwd));
   }
@@ -675,22 +727,42 @@ function applyEdit(orig, oldS, newS, all) {
 }
 
 function hunksToSides(hunks) {
-  const L = [];
-  const R = [];
+  // 주의: 번역 함수 L과 이름이 겹치지 않게 lefts/rights로 쓴다
+  const lefts = [];
+  const rights = [];
   (Array.isArray(hunks) ? hunks : []).forEach((h, i) => {
     if (i > 0 || (h && h.oldStart > 1)) {
       const sep = `⋯ ${L('(near line {0})', h.oldStart)} ⋯`;
-      L.push(sep);
-      R.push(sep);
+      lefts.push(sep);
+      rights.push(sep);
     }
     for (const l of (h && h.lines) || []) {
       if (typeof l !== 'string') continue;
       const p = l[0];
       const t = l.slice(1);
-      if (p === ' ') { L.push(t); R.push(t); } else if (p === '-') L.push(t); else if (p === '+') R.push(t);
+      if (p === ' ') { lefts.push(t); rights.push(t); } else if (p === '-') lefts.push(t); else if (p === '+') rights.push(t);
     }
   });
-  return { left: L.join('\n'), right: R.join('\n'), partial: true };
+  return { left: lefts.join('\n'), right: rights.join('\n'), partial: true };
+}
+
+// Codex apply_patch 한 파일 부분 → 비교 양쪽(@@는 구간 나눔)
+async function sidesForCodex(c) {
+  const o = await readRecord(c.file, c.offset, c.length);
+  const p = (o && o.payload) || {};
+  let text = typeof p.input === 'string' ? p.input : '';
+  if (!text && typeof p.arguments === 'string') { try { const a = JSON.parse(p.arguments); text = a.input || a.patch || ''; } catch { text = ''; } }
+  const part = parsePatch(text, '')[c.idx];
+  if (!part) return { left: '', right: '', partial: true };
+  if (part.op === 'Delete') return { left: L('(This file was deleted.)'), right: '', partial: true };
+  const lefts = [];
+  const rights = [];
+  for (const l of part.lines) {
+    if (l.startsWith('@@')) { const sep = '⋯'; if (lefts.length || rights.length) { lefts.push(sep); rights.push(sep); } continue; }
+    const t = l.slice(1);
+    if (l[0] === '+') rights.push(t); else if (l[0] === '-') lefts.push(t); else { lefts.push(t); rights.push(t); }
+  }
+  return { left: lefts.join('\n'), right: rights.join('\n'), partial: part.op !== 'Add' };
 }
 
 async function sidesForEdit(c) {
@@ -753,8 +825,42 @@ const contentProvider = {
 function loaderFor(c) {
   if (c.kind === 'edit') return () => sidesForEdit(c);
   if (c.kind === 'bash') return () => sidesForBash(c);
+  if (c.kind === 'cxedit') return () => sidesForCodex(c);
   if (c.kind === 'commit' && c.top) return () => sidesForCommit(c);
   return null;
+}
+
+// 파일 하나의 "이 세션이 한 변경" 양쪽.
+// 왼쪽: 세션이 처음 건드리기 전(편집 기록의 원본 → 커밋 직전 → 그 앞 커밋 순으로 찾음)
+// 오른쪽: 편집 도구·커밋으로만 바꿨으면 세션의 마지막 변경 직후(다른 세션 변경이 덜 섞임), 아니면 지금 디스크
+async function fileSides(f) {
+  const changes = [...f.changes].sort((a, b) => a.ts - b.ts);
+  const oldest = changes[0];
+  const newest = changes[changes.length - 1];
+  const exists = fs.existsSync(f.path);
+  let left = null;
+  let leftLabel = L('before session');
+  if (oldest.created) { left = ''; leftLabel = L('new file'); }
+  else if (oldest.kind === 'edit') {
+    try { const s = await sidesForEdit(oldest); if (!s.partial) left = s.left; } catch { left = null; }
+  } else if (oldest.kind === 'commit' && oldest.top) {
+    const t = await git(['show', `${oldest.sha}^:${oldest.rel}`], oldest.top);
+    left = t === null ? '' : t;
+  }
+  if (left === null && exists) {
+    const t = await commitTextBefore(f.path, oldest.ts);
+    if (t !== null) { left = t; leftLabel = L('last commit before session'); }
+  }
+  let right = null;
+  let rightLabel = L('now');
+  if (changes.every((c) => c.kind === 'edit')) {
+    try { const s = await sidesForEdit(newest); if (!s.partial) { right = s.right; rightLabel = L('end of session'); } } catch { right = null; }
+  } else if (changes.every((c) => c.kind === 'commit') && newest.top) {
+    const t = await git(['show', `${newest.sha}:${newest.rel}`], newest.top);
+    right = t === null ? '' : t;
+    rightLabel = L('end of session');
+  }
+  return { left, right, exists, title: `${leftLabel} ↔ ${rightLabel}` };
 }
 
 async function openChangeDiff(el) {
@@ -767,39 +873,59 @@ async function openChangeDiff(el) {
   await vscode.commands.executeCommand('vscode.diff', u.left, u.right, `${name} (${label})`, { preview: true });
 }
 
+// 비교 화면 한 쌍의 주소(왼쪽은 항상 가상 문서, 오른쪽은 세션 끝 내용 또는 지금 디스크 파일)
+async function diffPair(f) {
+  const name = path.basename(f.path);
+  const sd = await fileSides(f);
+  if (sd.left === null) {
+    const latest = f.changes.find((c) => loaderFor(c));
+    if (!latest) return null;
+    const u = registerDiff({ load: loaderFor(latest) }, name);
+    return { left: u.left, right: u.right, title: `${kindText(latest.kind)} ${fmtTime(latest.ts, true)}` };
+  }
+  const u = registerDiff({ load: async () => ({ left: sd.left, right: sd.right === null ? '' : sd.right }) }, name);
+  const right = sd.right !== null ? u.right : sd.exists ? vscode.Uri.file(f.path) : u.right;
+  return { left: u.left, right, title: sd.title };
+}
+
 async function openFileDiff(el) {
   const { f } = el;
   const name = path.basename(f.path);
-  const exists = fs.existsSync(f.path);
-  const oldest = f.changes[f.changes.length - 1];
-  let left = null;
-  let title = L("before session's first change ↔ now");
-  if (oldest.created) {
-    left = '';
-    title = L('new file ↔ now');
-  } else if (oldest.kind === 'edit') {
-    try {
-      const s = await sidesForEdit(oldest);
-      if (!s.partial) left = s.left;
-    } catch { left = null; }
-  } else if (oldest.kind === 'commit' && oldest.top) {
-    const t = await git(['show', `${oldest.sha}^:${oldest.rel}`], oldest.top);
-    left = t === null ? '' : t;
-  }
-  if (left === null && exists) {
-    const t = await commitTextBefore(f.path, oldest.ts);
-    if (t !== null) { left = t; title = L("last commit before session's first change ↔ now"); }
-  }
-  if (left === null) {
-    const latest = f.changes.find((c) => loaderFor(c));
-    if (latest) return openChangeDiff({ ...el, t: 'change', c: latest });
-    if (exists) return vscode.window.showTextDocument(vscode.Uri.file(f.path), { preview: true });
+  const pair = await diffPair(f);
+  if (!pair) {
+    if (fs.existsSync(f.path)) return vscode.window.showTextDocument(vscode.Uri.file(f.path), { preview: true });
     return vscode.window.showInformationMessage(L('{0}: nothing to compare (the file no longer exists).', name));
   }
-  const leftText = left;
-  const u = registerDiff({ load: async () => ({ left: leftText, right: '' }) }, name);
-  const right = exists ? vscode.Uri.file(f.path) : u.right;
-  await vscode.commands.executeCommand('vscode.diff', u.left, right, `${name} (${title})`, { preview: true });
+  await vscode.commands.executeCommand('vscode.diff', pair.left, pair.right, `${name} (${pair.title})`, { preview: true });
+}
+
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  async function run() { while (next < items.length) { const i = next++; try { out[i] = await fn(items[i]); } catch { out[i] = null; } } }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run));
+  return out;
+}
+
+// 세션 하나가 바꾼 파일 전부를 VS Code의 여러 파일 비교 창 하나로 연다
+async function openSessionChanges(arg) {
+  const sid = sidOf(arg);
+  const s = model.find((x) => x.sid === sid);
+  if (!s || !s.files.length) {
+    return vscode.window.showInformationMessage(L('This session has no changed files in the last {0}h.', cfg().lookbackHours));
+  }
+  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: L('Preparing the changes of "{0}"…', s.title) }, async () => {
+    const pairs = await mapLimit(s.files, 6, (f) => diffPair(f));
+    const resources = [];
+    s.files.forEach((f, i) => { if (pairs[i]) resources.push([vscode.Uri.file(f.path), pairs[i].left, pairs[i].right]); });
+    if (!resources.length) return vscode.window.showInformationMessage(L('{0}: nothing to compare (the file no longer exists).', s.title));
+    try {
+      await vscode.commands.executeCommand('vscode.changes', L('{0} — changed files', s.title), resources);
+    } catch {
+      // 여러 파일 비교 창이 없는 VS Code면 첫 파일만
+      await vscode.commands.executeCommand('vscode.diff', resources[0][1], resources[0][2], path.basename(s.files[0].path), { preview: true });
+    }
+  });
 }
 
 // ---------- 파일 장식(A/M/C/S 글자) ----------
@@ -810,8 +936,8 @@ const decorations = {
     switch (uri.query) {
       case 'A': return new vscode.FileDecoration('A', L('Created in this session'), new vscode.ThemeColor('gitDecoration.addedResourceForeground'));
       case 'M': return new vscode.FileDecoration('M', L('Modified in this session'), new vscode.ThemeColor('gitDecoration.modifiedResourceForeground'));
-      case 'C': return new vscode.FileDecoration('C', L("Only seen in this session's commits"), new vscode.ThemeColor('charts.purple'));
-      case 'S': return new vscode.FileDecoration('S', L('Guessed from shell commands'), new vscode.ThemeColor('charts.yellow'));
+      case 'D': return new vscode.FileDecoration('D', L('Not on disk anymore (deleted)'), new vscode.ThemeColor('gitDecoration.deletedResourceForeground'));
+      case '?': return new vscode.FileDecoration('?', L('Guessed from shell commands (not certain)'), new vscode.ThemeColor('gitDecoration.ignoredResourceForeground'));
       default: return undefined;
     }
   },
@@ -837,7 +963,7 @@ function requestScan(force) {
   if (inflight) { pending = { force: !!(force || (pending && pending.force)) }; return; }
   inflight = true;
   try {
-    ensureWorker().postMessage({ type: 'scan', id: ++reqId, opts: { lookbackHours: cfg().lookbackHours, force: !!force } });
+    ensureWorker().postMessage({ type: 'scan', id: ++reqId, opts: workerOpts({ force: !!force }) });
   } catch (e) {
     inflight = false;
     lastError = String((e && e.message) || e);
@@ -846,6 +972,13 @@ function requestScan(force) {
 }
 
 function onWorkerMessage(m) {
+  if (m.type === 'status') {
+    statusInflight = false;
+    // 실행 중 목록만 읽은 결과 + 마지막 전체 읽기에서 본 Codex 작업 중 세션
+    statusSessions = (m.sessions || []).concat(raw.filter((s) => s.agent === 'codex' && s.alive));
+    updateStatusBar();
+    return;
+  }
   inflight = false;
   if (m.type === 'error') {
     lastError = String(m.message || '').split('\n')[0];
@@ -854,10 +987,13 @@ function onWorkerMessage(m) {
     lastError = null;
     loaded = true;
     raw = m.sessions || [];
+    statusSessions = raw.filter((s) => s.alive);
     rebuild();
+    updateStatusBar();
   } else if (m.type === 'same' && Date.now() - lastFire > 60000) {
     provider.fire(); // "N분 전·N분째" 글자만 새로
     sessionsWebview.post();
+    updateStatusBar();
   }
   if (pending) {
     const p = pending;
@@ -870,7 +1006,56 @@ function startTimer() {
   if (timer) clearInterval(timer);
   timer = setInterval(() => {
     if ((treeView && treeView.visible) || (sessionsView && sessionsView.visible)) requestScan(false);
+    else if (cfg().statusBar) requestStatus();
   }, cfg().pollSeconds * 1000);
+}
+
+// ---------- 아래 상태 표시줄 ----------
+
+let statusItem = null;
+let statusSessions = [];
+let statusInflight = false;
+
+function requestStatus() {
+  if (statusInflight) return;
+  statusInflight = true;
+  try {
+    ensureWorker().postMessage({ type: 'status', id: ++reqId, opts: workerOpts() });
+  } catch {
+    statusInflight = false;
+  }
+}
+
+function updateStatusBar() {
+  if (!statusItem) return;
+  if (!cfg().statusBar) { statusItem.hide(); return; }
+  const groups = { busy: [], waiting: [], done: [], idle: [] };
+  for (const s of statusSessions) {
+    const k = stateOf(s).key;
+    if (groups[k]) groups[k].push(s);
+  }
+  const parts = [];
+  if (groups.busy.length) parts.push(`$(loading~spin) ${groups.busy.length}`);
+  if (groups.waiting.length) parts.push(`$(bell-dot) ${groups.waiting.length}`);
+  if (groups.done.length) parts.push(`$(check) ${groups.done.length}`);
+  statusItem.text = parts.length ? parts.join('  ') : `$(eye) ${groups.idle.length}`;
+  statusItem.backgroundColor = groups.waiting.length ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
+  const md = new vscode.MarkdownString(undefined, true);
+  md.isTrusted = false;
+  md.appendMarkdown('**Session Watchtower**\n\n');
+  const line = (icon, label, list) => {
+    if (!list.length) return;
+    const names = list.slice(0, 8).map((s) => (s.title || s.sid.slice(0, 8)).replace(/[\\`*_[\]<>|]/g, ' ')).join(', ');
+    md.appendMarkdown(`$(${icon}) **${label}** (${list.length}): ${names}${list.length > 8 ? ' …' : ''}\n\n`);
+  };
+  line('bell-dot', L('Waiting'), groups.waiting);
+  line('loading~spin', L('Working'), groups.busy);
+  line('check', L('Just finished'), groups.done);
+  line('debug-pause', L('Idle'), groups.idle);
+  if (!statusSessions.length) md.appendMarkdown(L('No running sessions') + '\n\n');
+  md.appendMarkdown(L('Click to open the Sessions view.'));
+  statusItem.tooltip = md;
+  statusItem.show();
 }
 
 // ---------- 명령 ----------
@@ -896,9 +1081,14 @@ function activate(context) {
   vscode.commands.executeCommand('setContext', CTX_ALIVE, aliveOnly);
 
   treeView = vscode.window.createTreeView(VIEW, { treeDataProvider: provider, showCollapseAll: true });
+  statusItem = vscode.window.createStatusBarItem('claudeSessionChanges.status', vscode.StatusBarAlignment.Left, 100);
+  statusItem.name = 'Session Watchtower';
+  statusItem.command = SESSIONS_VIEW + '.focus';
   context.subscriptions.push(
     treeView,
+    statusItem,
     vscode.window.registerWebviewViewProvider(SESSIONS_VIEW, sessionsWebview),
+    vscode.commands.registerCommand('claudeSessionChanges.openSessionChanges', (arg) => openSessionChanges(arg)),
     vscode.commands.registerCommand('claudeSessionChanges.revealSession', (arg) => revealSession(arg)),
     vscode.commands.registerCommand('claudeSessionChanges.openClaudeSession', (arg) => openClaudeSession(arg)),
     vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, contentProvider),
@@ -920,19 +1110,26 @@ function activate(context) {
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration(CFG)) return;
       startTimer();
-      if (e.affectsConfiguration(CFG + '.lookbackHours')) requestScan(true);
-      else rebuild();
+      if (e.affectsConfiguration(CFG + '.lookbackHours') || e.affectsConfiguration(CFG + '.includeCodex') || e.affectsConfiguration(CFG + '.attentionMarkerDir')) requestScan(true);
+      else { rebuild(); updateStatusBar(); }
     }),
-    { dispose: () => { if (timer) clearInterval(timer); if (worker) worker.terminate(); worker = null; } },
+    { dispose: () => { if (timer) clearInterval(timer); } },
   );
   startTimer();
   if (treeView.visible) requestScan(true);
+  else if (cfg().statusBar) requestStatus();
 }
 
+// 끌 때 읽은 결과를 한 번 저장하고 스레드를 닫는다
 function deactivate() {
   if (timer) clearInterval(timer);
-  if (worker) worker.terminate();
+  const w = worker;
   worker = null;
+  if (!w) return undefined;
+  return new Promise((resolve) => {
+    try { w.postMessage({ type: 'save', opts: workerOpts() }); } catch { /* 무시 */ }
+    setTimeout(() => { w.terminate().finally(resolve); }, 400);
+  });
 }
 
-module.exports = { activate, deactivate, _test: { hunksToSides, applyEdit, displayDir, fmtTime } };
+module.exports = { activate, deactivate, _test: { hunksToSides, applyEdit, displayDir, fmtTime, sidesForCodex } };

@@ -5,11 +5,16 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
 const HOME = os.homedir();
 const PROJECTS = path.join(HOME, '.claude', 'projects');
 const REGISTRY = path.join(HOME, '.claude', 'sessions');
+const CODEX_SESSIONS = path.join(HOME, '.codex', 'sessions');
+const CACHE_VERSION = 2;
+const CACHE_SAVE_MS = 20000;
+const CODEX_ACTIVE_MS = 90000;
 const CHUNK = 4 * 1024 * 1024;
 const NL = 10;
 const DISCOVERY_MS = 30000;
@@ -207,9 +212,11 @@ function newFileState(d) {
     sid: d.sid,
     sub: d.sub,
     project: d.project,
+    agent: d.agent || 'claude',
     offset: 0,
     mtimeMs: 0,
     size: 0,
+    ino: 0,
     customTitle: null,
     aiTitle: null,
     firstPrompt: null,
@@ -283,7 +290,138 @@ function textOfUser(o) {
   return null;
 }
 
+// ---------- Codex 기록(~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl) ----------
+
+const CX_META = B('"session_meta"');
+const CX_TURN = B('"turn_context"');
+const CX_PATCH = B('apply_patch');
+const CX_USER = B('"role":"user"');
+const CX_EXEC = B('exec_command');
+const CX_SHELL = B('"shell_command"');
+const CX_COMPACT = B('"type":"compacted"');
+
+function codexUserText(content) {
+  for (const c of Array.isArray(content) ? content : []) {
+    const t = c && typeof c.text === 'string' ? c.text.trim() : '';
+    if (!t || t.startsWith('<') || t.startsWith('#') || /AGENTS\.md|environment_context|user_instructions/.test(t.slice(0, 200))) continue;
+    return t.replace(/\s+/g, ' ').slice(0, 60);
+  }
+  return null;
+}
+
+// apply_patch 글: *** Add File / Update File / Delete File (+ Move to) 와 +/− 줄
+function parsePatch(text, cwd) {
+  const out = [];
+  let cur = null;
+  for (const line of String(text || '').split('\n')) {
+    const m = /^\*\*\* (Add|Update|Delete) File: (.+)$/.exec(line);
+    if (m) {
+      cur = { op: m[1], path: resolveTarget(m[2].trim(), cwd) || m[2].trim(), add: 0, del: 0, lines: [] };
+      out.push(cur);
+      continue;
+    }
+    const mv = /^\*\*\* Move to: (.+)$/.exec(line);
+    if (mv && cur) { cur.path = resolveTarget(mv[1].trim(), cwd) || mv[1].trim(); continue; }
+    if (!cur || line.startsWith('*** ')) continue;
+    cur.lines.push(line);
+    if (line[0] === '+') cur.add++;
+    else if (line[0] === '-') cur.del++;
+  }
+  return out;
+}
+
+function codexPatchText(p) {
+  if (!p) return null;
+  if (p.type === 'custom_tool_call' && typeof p.input === 'string') return p.input;
+  if (p.type === 'function_call' && typeof p.arguments === 'string') {
+    try {
+      const a = JSON.parse(p.arguments);
+      return typeof a.input === 'string' ? a.input : typeof a.patch === 'string' ? a.patch : null;
+    } catch { return null; }
+  }
+  return null;
+}
+
+function codexCommand(p) {
+  if (!p) return null;
+  if (p.type === 'function_call' && typeof p.arguments === 'string') {
+    try {
+      const a = JSON.parse(p.arguments);
+      if (typeof a.cmd === 'string') return { cmd: a.cmd, cwd: a.workdir || null };
+      if (typeof a.command === 'string') return { cmd: a.command, cwd: a.workdir || null };
+      if (Array.isArray(a.command)) return { cmd: String(a.command[a.command.length - 1] || ''), cwd: a.workdir || null };
+    } catch { return null; }
+  }
+  if (p.type === 'custom_tool_call' && typeof p.input === 'string') {
+    const m = /"cmd"\s*:\s*("(?:\\.|[^"\\])*")/.exec(p.input);
+    if (m) { try { return { cmd: JSON.parse(m[1]), cwd: null }; } catch { return null; } }
+  }
+  return null;
+}
+
+function handleCodexLine(st, line, absOffset) {
+  const len = line.length;
+  if (len < 2) return;
+  const meta = line.indexOf(CX_META) >= 0 && len < 400000;
+  const turn = !meta && line.indexOf(CX_TURN) >= 0 && len < 400000;
+  const patch = line.indexOf(CX_PATCH) >= 0;
+  const user = !st.firstPrompt && line.indexOf(CX_USER) >= 0 && len < 200000;
+  const exec = line.indexOf(CX_EXEC) >= 0 || line.indexOf(CX_SHELL) >= 0;
+  const compacted = !st.firstPrompt && line.indexOf(CX_COMPACT) >= 0;
+  if (!meta && !turn && !patch && !user && !exec && !compacted) return;
+  let o;
+  try { o = JSON.parse(line.toString('utf8')); } catch { return; }
+  const p = o && typeof o.payload === 'object' && o.payload ? o.payload : null;
+  if (!p) return;
+  const ts = Date.parse(o.timestamp) || st.mtimeMs || Date.now();
+  if (o.type === 'session_meta') {
+    if (p.cwd && !st.cwd) st.cwd = p.cwd;
+    if (!st.curCwd) st.curCwd = p.cwd || null;
+    return;
+  }
+  if (o.type === 'turn_context') {
+    if (p.cwd) st.curCwd = p.cwd;
+    if (p.cwd && !st.cwd) st.cwd = p.cwd;
+    return;
+  }
+  if (o.type === 'compacted') {
+    // 이어 붙인(압축된) 세션은 첫 질문이 replacement_history 안에 있다
+    for (const it of Array.isArray(p.replacement_history) ? p.replacement_history : []) {
+      if (it && it.role === 'user') { const t = codexUserText(it.content); if (t) { st.firstPrompt = t; break; } }
+    }
+    return;
+  }
+  if (o.type !== 'response_item') return;
+  if (p.type === 'message' && p.role === 'user' && !st.firstPrompt) {
+    const t = codexUserText(p.content);
+    if (t) st.firstPrompt = t;
+    return;
+  }
+  if (p.name === 'apply_patch') {
+    const text = codexPatchText(p);
+    if (!text) return;
+    parsePatch(text, st.curCwd || st.cwd).forEach((f, i) => {
+      pushChange(st, {
+        kind: 'cxedit', path: f.path, ts, add: f.add, del: f.del, created: f.op === 'Add', deleted: f.op === 'Delete',
+        offset: absOffset, length: len, idx: i,
+      });
+    });
+    return;
+  }
+  const ex = codexCommand(p);
+  if (ex && ex.cmd) {
+    const cwd = ex.cwd || st.curCwd || st.cwd;
+    for (const t of shellTargets(ex.cmd, cwd)) {
+      let s;
+      try { s = fs.statSync(t); } catch { continue; }
+      if (!s.isFile() || s.mtimeMs < ts - 2000) continue;
+      pushChange(st, { kind: 'shell', path: t, ts, add: 0, del: 0, created: false, cmd: shortCmd(ex.cmd), cwd });
+    }
+  }
+}
+
 function handleLine(st, line, absOffset) {
+  if (st.agent === 'codex') return handleCodexLine(st, line, absOffset);
   const len = line.length;
   if (len < 2) return;
 
@@ -403,10 +541,12 @@ function scanAppended(st) {
   let read = 0;
   try {
     const stat = fs.fstatSync(fd);
-    if (stat.size < st.offset) {
+    // 파일이 줄었거나(다시 써짐) 다른 파일로 바뀌었으면 처음부터
+    if (stat.size < st.offset || (st.ino && stat.ino && st.ino !== stat.ino)) {
       const fresh = newFileState(st);
       Object.assign(st, fresh);
     }
+    st.ino = stat.ino;
     let pos = st.offset;
     let carry = null;
     const buf = Buffer.allocUnsafe(CHUNK);
@@ -545,10 +685,55 @@ function readRegistry() {
   return map;
 }
 
+// 승인 알림 훅이 남기는 표시 파일(<sha256(세션ID) 앞 12자>.pending, 내용은 기다리는 도구 이름).
+// Claude Code가 상태 파일에 waiting을 안 적는 경우의 보조 신호. 승인 뒤 기록이 새로 쌓이면 지난 것으로 본다.
+function attentionMarker(dir, sid) {
+  if (!dir) return null;
+  const p = path.join(dir, crypto.createHash('sha256').update(sid).digest('hex').slice(0, 12) + '.pending');
+  try {
+    const s = fs.statSync(p);
+    let tool = '';
+    try { tool = fs.readFileSync(p, 'utf8').trim().slice(0, 80); } catch { tool = ''; }
+    return { mtimeMs: s.mtimeMs, tool };
+  } catch { return null; }
+}
+
+function applyMarker(state, marker, lastActivity) {
+  if (!marker || !state.alive || state.status === 'waiting') return state;
+  if (marker.mtimeMs < (lastActivity || 0) - 3000) return state;
+  const input = marker.tool === 'AskUserQuestion' || marker.tool.startsWith('dialog');
+  return { ...state, status: 'waiting', waitingFor: input ? 'input needed' : 'permission prompt', statusSince: Math.round(marker.mtimeMs), waitingSource: 'marker' };
+}
+
 // ---------- 모델 ----------
 
-function discover(sinceMs, registry) {
+function localDay(ms) {
+  const d = new Date(ms);
+  return [String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')];
+}
+
+function discoverCodex(sinceMs) {
   const out = [];
+  const seen = new Set();
+  for (let t = sinceMs - 86400e3; t <= Date.now() + 3600e3; t += 86400e3) {
+    const dir = path.join(CODEX_SESSIONS, ...localDay(t));
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    let names = [];
+    try { names = fs.readdirSync(dir); } catch { continue; }
+    for (const n of names) {
+      if (!n.startsWith('rollout-') || !n.endsWith('.jsonl')) continue;
+      const f = path.join(dir, n);
+      try { if (fs.statSync(f).mtimeMs < sinceMs) continue; } catch { continue; }
+      const m = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/.exec(n);
+      out.push({ file: f, sid: 'codex:' + (m ? m[1] : n), sub: false, project: 'codex', agent: 'codex' });
+    }
+  }
+  return out;
+}
+
+function discover(sinceMs, registry, includeCodex) {
+  const out = includeCodex ? discoverCodex(sinceMs) : [];
   let projs = [];
   try { projs = fs.readdirSync(PROJECTS, { withFileTypes: true }); } catch { return out; }
   for (const p of projs) {
@@ -577,19 +762,93 @@ function discover(sinceMs, registry) {
   return out;
 }
 
+// ---------- 읽은 결과 저장(창을 다시 열어도 새로 붙은 부분만 읽게) ----------
+
+function serializeState(st) {
+  const dayAgo = Date.now() - 86400e3;
+  const pending = [...st.pendingBash].filter(([, b]) => b.ts >= dayAgo).map(([id, b]) => [id, { ...b, full: String(b.full || '').slice(0, 20000) }]);
+  return { ...st, pendingBash: pending, seenSha: [...st.seenSha] };
+}
+
+function deserializeState(o) {
+  return { ...o, pendingBash: new Map(o.pendingBash || []), seenSha: new Set(o.seenSha || []), changes: o.changes || [], commits: o.commits || [], commitWins: o.commitWins || [] };
+}
+
+function loadCache(file, files) {
+  if (!file) return;
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!data || data.v !== CACHE_VERSION || !Array.isArray(data.files)) return;
+    for (const o of data.files) if (o && o.file && !files.has(o.file)) files.set(o.file, deserializeState(o));
+  } catch { /* 없거나 깨짐: 처음부터 읽음 */ }
+}
+
+function saveCache(file, states) {
+  if (!file) return;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = file + '.tmp-' + process.pid;
+    fs.writeFileSync(tmp, JSON.stringify({ v: CACHE_VERSION, savedAt: Date.now(), files: states.map(serializeState) }));
+    fs.renameSync(tmp, file);
+  } catch { /* 저장 실패는 다음에 다시 */ }
+}
+
 function createModel() {
   const files = new Map();
   let disc = [];
   let lastDisc = 0;
   let lastLook = 0;
+  let cacheLoaded = false;
+  let dirty = false;
+  let lastSave = 0;
+
+  function ensureCache(opts) {
+    if (cacheLoaded) return;
+    cacheLoaded = true;
+    loadCache(opts.cacheFile, files);
+  }
+
+  function titleOf(sid) {
+    for (const st of files.values()) {
+      if (st.sid === sid && !st.sub) return st.customTitle || st.aiTitle || st.firstPrompt || null;
+    }
+    return null;
+  }
+
+  // 상태 표시줄용: 대화 기록은 읽지 않고 실행 중 목록과 표시 파일만 본다(가벼움)
+  function status(opts) {
+    ensureCache(opts);
+    const registry = readRegistry();
+    const out = [];
+    for (const [sid, reg] of registry) {
+      let lastActivity = 0;
+      let cwd = reg.cwd;
+      for (const st of files.values()) if (st.sid === sid) { lastActivity = Math.max(lastActivity, st.mtimeMs); cwd = st.cwd || cwd; }
+      let s = { sid, alive: true, status: reg.status, waitingFor: reg.waitingFor, statusSince: reg.statusSince, lastActivity, cwd, project: cwd ? path.basename(cwd) : null };
+      s = applyMarker(s, attentionMarker(opts.attentionDir, sid), lastActivity);
+      s.title = titleOf(sid) || (reg.nameSource !== 'derived' && reg.name) || sid.slice(0, 8);
+      out.push(s);
+    }
+    return { sessions: out };
+  }
+
+  function maybeSave(opts, force) {
+    if (!opts.cacheFile || !dirty) return;
+    if (!force && Date.now() - lastSave < CACHE_SAVE_MS) return;
+    const keep = new Set(disc.map((d) => d.file));
+    saveCache(opts.cacheFile, [...files.values()].filter((st) => keep.has(st.file)));
+    lastSave = Date.now();
+    dirty = false;
+  }
 
   function scan(opts) {
+    ensureCache(opts);
     const t0 = Date.now();
     const lookMs = Math.max(1, Number(opts.lookbackHours) || 24) * 3600e3;
     const since = t0 - lookMs;
     const registry = readRegistry();
     if (opts.force || t0 - lastDisc > DISCOVERY_MS || lookMs !== lastLook) {
-      disc = discover(since, registry);
+      disc = discover(since, registry, opts.includeCodex !== false);
       lastDisc = t0;
       lastLook = lookMs;
     }
@@ -599,7 +858,10 @@ function createModel() {
       if (!st) { st = newFileState(d); files.set(d.file, st); }
       let s;
       try { s = fs.statSync(d.file); } catch { continue; }
-      if (s.size !== st.offset || s.mtimeMs !== st.mtimeMs) bytes += scanAppended(st);
+      if (s.size !== st.offset || s.mtimeMs !== st.mtimeMs || (st.ino && s.ino !== st.ino)) {
+        bytes += scanAppended(st);
+        dirty = true;
+      }
     }
 
     const bySid = new Map();
@@ -622,6 +884,7 @@ function createModel() {
         for (const c of st.commits) {
           if (c.resolved || c.ts < since) continue;
           c.resolved = true;
+          dirty = true;
           const res = resolveCommit(c, [projectCwd]);
           if (!res) {
             st.changes.push({ kind: 'commit', path: null, ts: c.ts, add: 0, del: 0, sha: c.sha, msg: c.msg, unresolved: true, sub: st.sub, file: st.file, scratch: false });
@@ -632,6 +895,7 @@ function createModel() {
         for (const w of st.commitWins) {
           if (w.resolved || w.to < since) continue;
           w.resolved = true;
+          dirty = true;
           let hits = commitsInWindow(w, projectCwd);
           // 커밋 하나만 만드는 명령인데 같은 시간대에 여러 개가 있으면(다른 세션 커밋) 끝난 시각에 가장 가까운 것만
           if (w.single && hits.length > 1) hits = [hits.reduce((a, b) => (Math.abs(a.ts - w.at) <= Math.abs(b.ts - w.at) ? a : b))];
@@ -642,29 +906,45 @@ function createModel() {
         }
         for (const c of st.changes) if (c.ts >= since) changes.push(c);
       }
+      const codex = main.agent === 'codex';
       let title = main.customTitle || main.aiTitle || null;
       let titleSource = main.customTitle ? 'custom' : main.aiTitle ? 'ai' : null;
       if (!title && reg && reg.name && reg.nameSource !== 'derived') { title = reg.name; titleSource = 'registry'; }
       if (!title && main.firstPrompt) { title = main.firstPrompt; titleSource = 'prompt'; }
-      if (!title) { title = sid.slice(0, 8); titleSource = 'id'; }
+      if (!title) { title = codex ? 'Codex ' + sid.slice(6, 14) : sid.slice(0, 8); titleSource = 'id'; }
+      // Codex는 실행 중 목록이 없어 최근 기록 시각으로만 작업 중을 짐작한다
+      const codexActive = codex && t0 - lastActivity < CODEX_ACTIVE_MS;
+      let state = {
+        alive: codex ? codexActive : !!reg,
+        status: codex ? (codexActive ? 'busy' : null) : reg ? reg.status : null,
+        waitingFor: reg ? reg.waitingFor : null,
+        statusSince: codex ? (codexActive ? lastActivity : null) : reg ? reg.statusSince : null,
+      };
+      if (!codex) state = applyMarker(state, attentionMarker(opts.attentionDir, sid), lastActivity);
       sessions.push({
         sid, title, titleSource,
+        agent: main.agent || 'claude',
         address: reg && reg.nameSource === 'derived' ? reg.name : null,
         project: projectCwd ? path.basename(projectCwd) : main.project,
         cwd: projectCwd,
         lastActivity,
-        alive: !!reg,
-        status: reg ? reg.status : null,
-        waitingFor: reg ? reg.waitingFor : null,
-        statusSince: reg ? reg.statusSince : null,
+        ...state,
         changes,
       });
     }
     sessions.sort((a, b) => b.lastActivity - a.lastActivity);
+    maybeSave(opts, !!opts.flush);
     return { sessions, stats: { ms: Date.now() - t0, files: disc.length, bytes } };
   }
 
-  return { scan };
+  return { scan, status, save: (opts) => maybeSave(opts, true) };
 }
 
-module.exports = { createModel, shellTargets, stripHeredocBodies, hunkCounts, isScratch, readRegistry };
+// 시험용: 기록 파일 하나를 통째로 읽은 상태
+function scanOne(file, agent) {
+  const st = newFileState({ file, sid: 'test', sub: false, project: '', agent });
+  scanAppended(st);
+  return st;
+}
+
+module.exports = { createModel, shellTargets, stripHeredocBodies, hunkCounts, isScratch, readRegistry, parsePatch, attentionMarker, scanOne };
