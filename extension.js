@@ -27,6 +27,7 @@ let inflight = false;
 let pending = null;
 let raw = [];
 let loaded = false;
+let stillReading = false;
 let lastError = null;
 let lastFire = 0;
 let aliveOnly = false;
@@ -46,6 +47,7 @@ function cfg() {
     hideScratchpadFiles: c.get('hideScratchpadFiles', true) !== false,
     includeSubagents: c.get('includeSubagents', true) !== false,
     pollSeconds: Math.max(2, Number(c.get('pollSeconds', 5)) || 5),
+    sessionDetails: c.get('sessionDetails', true) !== false,
     statusBar: c.get('statusBar', true) !== false,
     includeCodex: c.get('includeCodex', true) !== false,
     attentionDir: expandHome(String(c.get('attentionMarkerDir', '~/.cache/claude-attention') || '')),
@@ -237,7 +239,10 @@ function rebuild() {
   }
   out.sort((a, b) => Number(inWorkspace(b)) - Number(inWorkspace(a)));
   model = out;
-  if (treeView) treeView.description = L('Last {0}h', o.lookbackHours) + (aliveOnly ? ' · ' + L('running only') : '');
+  if (treeView) {
+    treeView.description = L('Last {0}h', o.lookbackHours) + (aliveOnly ? ' · ' + L('running only') : '');
+    treeView.message = stillReading ? L('Reading more logs…') : undefined;
+  }
   rebuildSessions();
   provider.fire();
 }
@@ -472,6 +477,8 @@ function sessionsPayload() {
   const { mine, groups } = splitByFolder(sessionsModel);
   return {
     strings,
+    compact: !cfg().sessionDetails,
+    reading: stillReading ? L('Reading more logs…') : '',
     mine: mine.map(sessionRow),
     noneHere: mine.length ? '' : L('No sessions in this folder'),
     groups: groups.map(([key, items]) => ({
@@ -652,7 +659,7 @@ function sessionsHtml(webview) {
       : '';
     const ds = diffstat(r.add || 0, r.del || 0);
     // 둘째 줄: 지금 하는 일(작업 중·기다림일 때)과 변경 규모. 둘 다 없으면 한 줄짜리
-    const sub = r.now || ds ? '<div class="sub"><span class="now ' + esc(r.state) + '">' + esc(r.now) + '</span>' + ds + '</div>' : '';
+    const sub = !(last && last.compact) && (r.now || ds) ? '<div class="sub"><span class="now ' + esc(r.state) + '">' + esc(r.now) + '</span>' + ds + '</div>' : '';
     return '<div class="row' + (r.canOpen ? '' : ' other') + '" role="listitem" tabindex="0" data-sid="' + esc(r.sid) + '" data-open="' + (r.canOpen ? '1' : '') + '" title="' + esc(r.tip) + '">'
       + '<div class="l1"><span class="dot ' + esc(r.state) + '"></span><span class="title">' + esc(r.title) + '</span>'
       + (r.codex ? '<span class="tag">Codex</span>' : '')
@@ -715,6 +722,7 @@ function sessionsHtml(webview) {
         + rows.map(row).join('') + '</details>';
     }
     if (filtering && !shown) h = '<div class="msg">' + esc(strings.noMatch) + '</div>';
+    if (p.reading) h += '<div class="msg">' + esc(p.reading) + '</div>';
     root.innerHTML = h;
   }
   root.addEventListener('click', (e) => {
@@ -1020,6 +1028,9 @@ async function openSessionChanges(arg) {
     const resources = [];
     s.files.forEach((f, i) => { if (pairs[i]) resources.push([vscode.Uri.file(f.path), pairs[i].left, pairs[i].right]); });
     if (!resources.length) return vscode.window.showInformationMessage(L('{0}: nothing to compare (the file no longer exists).', s.title));
+    // 셸 글자로 추정만 한 파일은 바뀐 내용 기록이 없어 비교할 수 없다 → 조용히 빼지 말고 알린다
+    const skipped = s.files.length - resources.length;
+    if (skipped > 0) vscode.window.showInformationMessage(L('{0} file(s) were left out: they were only guessed from shell commands, so there is no recorded change to compare.', skipped));
     try {
       await vscode.commands.executeCommand('vscode.changes', L('{0} — changed files', s.title), resources);
     } catch {
@@ -1073,6 +1084,17 @@ function requestScan(force) {
 }
 
 function onWorkerMessage(m) {
+  if (m.type === 'partial') {
+    // 처음 읽는 도중: 먼저 읽은 세션부터 보여 준다(읽기는 계속됨)
+    lastError = null;
+    loaded = true;
+    stillReading = true;
+    raw = m.sessions || [];
+    statusSessions = raw.filter((s) => s.alive);
+    rebuild();
+    updateStatusBar();
+    return;
+  }
   if (m.type === 'status') {
     statusInflight = false;
     // 실행 중 목록만 읽은 결과 + 마지막 전체 읽기에서 본 Codex 작업 중 세션
@@ -1081,6 +1103,9 @@ function onWorkerMessage(m) {
     return;
   }
   inflight = false;
+  const wasReading = stillReading;
+  stillReading = false;
+  if (m.type === 'same' && wasReading) rebuild(); // "더 읽는 중" 표시 지우기
   if (m.type === 'error') {
     lastError = String(m.message || '').split('\n')[0];
     provider.fire();

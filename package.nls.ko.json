@@ -21,6 +21,7 @@
   "config.includeSubagents": "하위 에이전트가 바꾼 파일도 부모 세션 아래에 보여 줍니다.",
   "config.pollSeconds": "창이 열려 있을 때 대화 기록을 다시 확인하는 간격(초). 새로 추가된 부분만 읽습니다.",
   "config.statusBar": "아래 상태 표시줄에 요약(작업 중 · 기다림 · 방금 끝남)을 보여 줍니다. 누르면 세션 상태 창이 열립니다.",
+  "config.sessionDetails": "세션마다 둘째 줄(지금 하는 일, 변경 규모)을 보여 줍니다. 끄면 한 줄짜리 짧은 목록이 됩니다.",
   "config.includeCodex": "~/.codex/sessions의 Codex 세션도 보여 줍니다(apply_patch로 고친 파일).",
   "config.attentionMarkerDir": "승인 알림 훅이 <sha256(세션 ID) 앞 12자>.pending 파일을 남기는 폴더. '기다림'을 알아내는 보조 신호로 씁니다. 비우면 끕니다."
 }

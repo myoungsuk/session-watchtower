@@ -255,7 +255,123 @@ function newFileState(d) {
     seenSha: new Set(),
     userChecked: 0,
     lastTool: null,
+    scanFrom: null, // 읽기 시작한 바이트 위치(null = 아직 안 읽음, 0 = 처음부터 다 읽음)
+    coveredSince: 0, // scanFrom > 0일 때, 이 시각 뒤의 기록은 다 읽었음
   };
+}
+
+// ---------- 큰 기록 파일에서 "보는 기간"이 시작되는 위치 찾기 ----------
+// 기록은 시간순으로 뒤에 붙으므로, 줄의 시각을 보며 반씩 좁혀 가면 앞부분(며칠 치)을 읽지 않아도 된다.
+
+const SEEK_MIN_BYTES = 8 * 1024 * 1024; // 이보다 작으면 그냥 다 읽는다
+const SEEK_STOP_BYTES = 1024 * 1024;
+const SEEK_MARGIN_MS = 10 * 60 * 1000; // 경계에 걸친 명령을 위해 10분 앞에서부터
+const HEAD_BYTES = 1024 * 1024; // 첫 질문·작업 폴더는 파일 맨 앞에 있다
+const PROBE_MAX_BYTES = 24 * 1024 * 1024;
+const PROBE_LINE_MAX = 2 * 1024 * 1024;
+const TITLE_BACK_BYTES = 64 * 1024 * 1024;
+let extraRead = 0;
+
+function lineTimestamp(line) {
+  if (line.length < 20 || line.length > PROBE_LINE_MAX) return 0;
+  if (line.subarray(0, 48).indexOf(K_APIREQ) >= 0) return 0; // 사본 줄의 시각은 옛 대화의 것
+  if (line.indexOf(K_TS) < 0) return 0;
+  try {
+    const o = JSON.parse(line.toString('utf8'));
+    return o && typeof o.timestamp === 'string' ? Date.parse(o.timestamp) || 0 : 0;
+  } catch { return 0; }
+}
+
+// pos 뒤, hi 앞에서 시각이 적힌 기록 줄 하나를 찾는다 → { lineStart, ts } 또는 null
+function probeTimestamp(fd, pos, hi, size) {
+  const buf = Buffer.allocUnsafe(256 * 1024);
+  let cur = pos;
+  let carry = null;
+  let carryStart = pos;
+  let aligned = pos === 0; // 줄 머리에 서 있는지(중간에 떨어졌으면 그 줄은 버린다)
+  let budget = PROBE_MAX_BYTES;
+  while (cur < size && budget > 0) {
+    const n = fs.readSync(fd, buf, 0, Math.min(buf.length, size - cur), cur);
+    if (n <= 0) break;
+    budget -= n;
+    extraRead += n;
+    const chunk = carry ? Buffer.concat([carry, buf.subarray(0, n)]) : Buffer.from(buf.subarray(0, n));
+    const chunkStart = carry ? carryStart : cur;
+    cur += n;
+    let start = 0;
+    let idx;
+    while ((idx = chunk.indexOf(NL, start)) !== -1) {
+      if (!aligned) { aligned = true; start = idx + 1; continue; }
+      const lineStart = chunkStart + start;
+      if (lineStart >= hi) return null;
+      const ts = lineTimestamp(chunk.subarray(start, idx));
+      if (ts) return { lineStart, ts };
+      start = idx + 1;
+    }
+    if (aligned && chunkStart + start >= hi) return null;
+    if (chunk.length - start > PROBE_LINE_MAX) { carry = null; aligned = false; } // 아주 긴 줄은 끝까지 건너뜀
+    else { carry = Buffer.from(chunk.subarray(start)); carryStart = chunkStart + start; }
+  }
+  return null;
+}
+
+// sinceMs보다 앞선 시각의 줄 머리 중 가장 뒤쪽 근처(못 찾으면 0 = 처음부터)
+function seekByTime(fd, size, sinceMs, minBytes) {
+  if (size < (minBytes || SEEK_MIN_BYTES)) return 0;
+  const stop = Math.min(SEEK_STOP_BYTES, Math.max(4096, Math.floor(size / 16)));
+  let lo = 0;
+  let hi = size;
+  for (let i = 0; i < 48 && hi - lo > stop; i++) {
+    const mid = lo + Math.floor((hi - lo) / 2);
+    const p = probeTimestamp(fd, mid, hi, size);
+    if (!p || p.ts >= sinceMs) hi = mid;
+    else lo = p.lineStart;
+  }
+  return lo;
+}
+
+// 파일 맨 앞에서 첫 질문·작업 폴더만 읽는다(변경 기록은 만들지 않음)
+function scanHead(st, fd, bytes) {
+  const buf = Buffer.allocUnsafe(bytes);
+  const n = fs.readSync(fd, buf, 0, bytes, 0);
+  if (n <= 0) return 0;
+  let start = 0;
+  let idx;
+  while ((idx = buf.indexOf(NL, start)) !== -1 && idx < n) {
+    handleLine(st, buf.subarray(start, idx), start, true);
+    start = idx + 1;
+  }
+  return n;
+}
+
+// 읽은 구간에 제목이 없을 때만: 뒤에서 앞으로 가며 마지막 제목 기록을 찾는다
+function findLastTitle(st, fd, endPos, size) {
+  const step = 4 * 1024 * 1024;
+  const overlap = 64 * 1024;
+  let pos = endPos;
+  let read = 0;
+  while (pos > 0 && read < TITLE_BACK_BYTES && !st.customTitle && !st.aiTitle) {
+    const from = Math.max(0, pos - step);
+    const len = Math.min(pos - from + overlap, size - from);
+    const buf = Buffer.allocUnsafe(len);
+    const n = fs.readSync(fd, buf, 0, len, from);
+    if (n <= 0) break;
+    read += n;
+    for (const key of [K_CUSTOM, K_AI]) {
+      const i = buf.lastIndexOf(key, n - 1);
+      if (i < 0) continue;
+      const s = buf.lastIndexOf(NL, i) + 1;
+      const e = buf.indexOf(NL, i);
+      if (e < 0 || e > n || e - s > 20000) continue;
+      try {
+        const o = JSON.parse(buf.toString('utf8', s, e));
+        if (o.type === 'custom-title' && o.customTitle) st.customTitle = String(o.customTitle);
+        if (o.type === 'ai-title' && o.aiTitle) st.aiTitle = String(o.aiTitle);
+      } catch { /* 깨진 줄 */ }
+    }
+    pos = from;
+  }
+  return read;
 }
 
 function extractToolUseId(line) {
@@ -387,7 +503,7 @@ function codexCommand(p) {
   return null;
 }
 
-function handleCodexLine(st, line, absOffset) {
+function handleCodexLine(st, line, absOffset, headOnly) {
   const len = line.length;
   if (len < 2) return;
   const meta = line.indexOf(CX_META) >= 0 && len < 400000;
@@ -425,6 +541,7 @@ function handleCodexLine(st, line, absOffset) {
     if (t) st.firstPrompt = t;
     return;
   }
+  if (headOnly) return;
   if (p.name === 'apply_patch') {
     const text = codexPatchText(p);
     if (!text) return;
@@ -451,8 +568,9 @@ function handleCodexLine(st, line, absOffset) {
   }
 }
 
-function handleLine(st, line, absOffset) {
-  if (st.agent === 'codex') return handleCodexLine(st, line, absOffset);
+// headOnly: 파일 맨 앞을 따로 읽을 때. 제목·첫 질문·작업 폴더만 챙기고 변경·도구 기록은 만들지 않는다
+function handleLine(st, line, absOffset, headOnly) {
+  if (st.agent === 'codex') return handleCodexLine(st, line, absOffset, headOnly);
   const len = line.length;
   if (len < 2) return;
   if (line.subarray(0, 48).indexOf(K_APIREQ) >= 0) return;
@@ -467,9 +585,12 @@ function handleLine(st, line, absOffset) {
   }
 
   if (line.indexOf(K_RESULT) >= 0) {
+    if (headOnly) return;
     const id = extractToolUseId(line);
     if (id && st.lastTool && st.lastTool.id === id) st.lastTool.done = true;
-    const bash = id ? st.pendingBash.get(id) : null;
+    let bash = id ? st.pendingBash.get(id) : null;
+    // 명령 줄은 읽기 시작 위치보다 앞에 있고 결과만 뒤에 있는 경우: 바뀐 파일 기록은 그대로 살린다
+    if (!bash && line.indexOf(K_BASHDIFF) >= 0) bash = { full: '', cmd: '', cwd: st.cwd, ts: tsBefore(line) || st.mtimeMs };
     if (bash) {
       st.pendingBash.delete(id);
       const hasDiff = line.indexOf(K_BASHDIFF) >= 0;
@@ -542,8 +663,8 @@ function handleLine(st, line, absOffset) {
     return;
   }
 
-  // 도구 호출 줄: 지금 하는 일(마지막 도구)·활동 흐름(호출 시각)·셸 명령 대기 목록
-  if (line.indexOf(K_TOOLUSE) >= 0 && line.indexOf(K_ASSISTANT) >= 0 && (line.indexOf(K_BASHUSE) >= 0 || len < 400000)) {
+  // 도구 호출 줄: 지금 하는 일(마지막 도구)·셸 명령 대기 목록
+  if (!headOnly && line.indexOf(K_TOOLUSE) >= 0 && line.indexOf(K_ASSISTANT) >= 0 && (line.indexOf(K_BASHUSE) >= 0 || len < 400000)) {
     let o;
     try { o = JSON.parse(line.toString('utf8')); } catch { return; }
     if (o.type !== 'assistant') return;
@@ -573,10 +694,12 @@ function handleLine(st, line, absOffset) {
   }
 }
 
-function scanAppended(st) {
+// sinceMs를 주면, 처음 읽는 큰 파일은 그 시각 근처에서부터 읽는다(seekMinBytes는 시험용)
+function scanAppended(st, sinceMs, seekMinBytes) {
   let fd;
   try { fd = fs.openSync(st.file, 'r'); } catch { return 0; }
   let read = 0;
+  extraRead = 0;
   try {
     const stat = fs.fstatSync(fd);
     // 파일이 줄었거나(다시 써짐) 다른 파일로 바뀌었으면 처음부터
@@ -585,6 +708,16 @@ function scanAppended(st) {
       Object.assign(st, fresh);
     }
     st.ino = stat.ino;
+    if (st.offset === 0 && st.scanFrom == null) {
+      const from = sinceMs ? sinceMs - SEEK_MARGIN_MS : 0;
+      const start = from > 0 ? seekByTime(fd, stat.size, from, seekMinBytes) : 0;
+      if (start > 0) {
+        read += scanHead(st, fd, Math.min(HEAD_BYTES, start));
+        st.offset = start;
+        st.coveredSince = from;
+      }
+      st.scanFrom = start;
+    }
     let pos = st.offset;
     let carry = null;
     const buf = Buffer.allocUnsafe(CHUNK);
@@ -606,23 +739,78 @@ function scanAppended(st) {
     st.offset = pos - (carry ? carry.length : 0);
     st.size = stat.size;
     st.mtimeMs = stat.mtimeMs;
+    if (st.scanFrom > 0 && !st.sub && st.agent !== 'codex' && !st.customTitle && !st.aiTitle && !st.titleSearched) {
+      st.titleSearched = true;
+      read += findLastTitle(st, fd, st.scanFrom, stat.size);
+    }
   } finally {
     fs.closeSync(fd);
   }
-  return read;
+  return read + extraRead;
 }
 
 // ---------- git 커밋 → 파일 ----------
 
+// 폴더 → { top: 작업 폴더 뿌리, common: 저장소 공통 폴더(worktree끼리 같음) }
 const topCache = new Map();
-function gitTop(dir) {
+function gitInfo(dir) {
   if (topCache.has(dir)) return topCache.get(dir);
-  let top = null;
+  let info = null;
   try {
-    top = execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
-  } catch { top = null; }
-  topCache.set(dir, top);
-  return top;
+    const out = execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel', '--git-common-dir'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).trim().split('\n');
+    if (out[0]) info = { top: out[0], common: out[1] ? path.resolve(dir, out[1]) : out[0] };
+  } catch { info = null; }
+  topCache.set(dir, info);
+  return info;
+}
+
+function gitTop(dir) {
+  const info = gitInfo(dir);
+  return info ? info.top : null;
+}
+
+// 저장소의 최근 커밋과 그 파일 목록을 git 한 번으로 읽어 둔다.
+// (커밋마다 git을 따로 부르면 처음 읽을 때 150번쯤 불러 몇 초가 걸린다)
+const repoLogs = new Map(); // common → { since, fetchedAt, commits }
+function fetchRepoLog(top, sinceMs) {
+  let out;
+  try {
+    out = execFileSync('git', ['-C', top, 'log', '--all', '--numstat', '-M', '--format=%x01%H%x09%ct%x09%s', `--since=${new Date(sinceMs).toISOString()}`],
+      { encoding: 'utf8', timeout: 20000, maxBuffer: 128 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch { return null; }
+  const commits = [];
+  for (const block of out.split('\x01')) {
+    const lines = block.split('\n');
+    const [sha, ct, ...rest] = (lines[0] || '').split('\t');
+    if (!/^[0-9a-f]{40}$/.test(sha || '')) continue;
+    const files = [];
+    for (const l of lines.slice(1)) {
+      const m = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(l);
+      if (m) files.push({ rel: renamedTo(m[3]), add: m[1] === '-' ? 0 : +m[1], del: m[2] === '-' ? 0 : +m[2] });
+    }
+    commits.push({ sha, ts: Number(ct) * 1000, subject: rest.join('\t'), files });
+  }
+  return commits;
+}
+
+// needSince 뒤의 커밋 목록. freshAfter 뒤에 읽은 것이어야 한다(방금 생긴 커밋을 놓치지 않게).
+function repoCommits(info, needSince, freshAfter) {
+  let c = repoLogs.get(info.common);
+  if (!c || c.since > needSince) {
+    const commits = fetchRepoLog(info.top, needSince);
+    if (!commits) return null;
+    c = { since: needSince, fetchedAt: Date.now(), commits };
+    repoLogs.set(info.common, c);
+  } else if (c.fetchedAt < freshAfter) {
+    const at = Date.now();
+    const more = fetchRepoLog(info.top, c.fetchedAt - 60000);
+    if (more) {
+      const have = new Set(c.commits.map((x) => x.sha));
+      for (const x of more) if (!have.has(x.sha)) c.commits.push(x);
+      c.fetchedAt = at;
+    }
+  }
+  return c.commits;
 }
 
 function renamedTo(p) {
@@ -632,14 +820,23 @@ function renamedTo(p) {
 }
 
 const commitCache = new Map();
-function resolveCommit(c, fallbackDirs) {
+function resolveCommit(c, fallbackDirs, since) {
   const dirs = [c.cwd, ...fallbackDirs].filter((d, i, a) => d && a.indexOf(d) === i);
   for (const d of dirs) {
     try { if (!fs.statSync(d).isDirectory()) continue; } catch { continue; }
-    const top = gitTop(d);
-    if (!top) continue;
+    const info = gitInfo(d);
+    if (!info) continue;
+    const top = info.top;
     const key = top + '@' + c.sha;
     if (commitCache.has(key)) return commitCache.get(key);
+    // 먼저 한 번에 읽어 둔 최근 커밋 목록에서 찾고, 없을 때만 git을 따로 부른다
+    const recent = since ? repoCommits(info, since - 5000, c.ts + 1000) : null;
+    const known = recent ? recent.find((x) => x.sha.startsWith(c.sha)) : null;
+    if (known) {
+      const res = { top, full: known.sha, subject: known.subject, files: known.files };
+      commitCache.set(key, res);
+      return res;
+    }
     let out;
     try {
       out = execFileSync('git', ['-C', top, 'show', '--numstat', '--format=%H%x09%s', '-M', c.sha], { encoding: 'utf8', timeout: 8000, maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
@@ -670,22 +867,18 @@ function addCommitEntries(st, res, ts, msg) {
 }
 
 // 커밋 명령이 돌던 시간 안에 그 저장소에 생긴 커밋(-q로 출력이 없어도 찾는다)
-function commitsInWindow(w, fallbackDir) {
+function commitsInWindow(w, fallbackDir, since) {
   for (const d of [w.dir, fallbackDir]) {
     if (!d) continue;
     try { if (!fs.statSync(d).isDirectory()) continue; } catch { continue; }
-    const top = gitTop(d);
-    if (!top) continue;
-    let out;
-    try {
-      out = execFileSync('git', ['-C', top, 'log', '--all', '--format=%H%x09%ct%x09%s', `--since=${new Date(w.from).toISOString()}`, `--until=${new Date(w.to).toISOString()}`], { encoding: 'utf8', timeout: 8000, maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
-    } catch { continue; }
-    const hits = [];
-    for (const l of out.split('\n')) {
-      const [sha, ct, ...rest] = l.split('\t');
-      if (/^[0-9a-f]{40}$/.test(sha || '')) hits.push({ sha, ts: Number(ct) * 1000 || w.to, subject: rest.join('\t'), top });
-    }
-    return hits;
+    const info = gitInfo(d);
+    if (!info) continue;
+    const commits = repoCommits(info, Math.min(since, w.from) - 5000, w.to + 1000);
+    if (!commits) continue;
+    // git의 --since/--until 처럼 초 단위로 비교한다
+    const lo = Math.floor(w.from / 1000) * 1000;
+    const hi = Math.floor(w.to / 1000) * 1000;
+    return commits.filter((c) => c.ts >= lo && c.ts <= hi).map((c) => ({ sha: c.sha, ts: c.ts, subject: c.subject, top: info.top, files: c.files }));
   }
   return [];
 }
@@ -891,17 +1084,36 @@ function createModel() {
       lastLook = lookMs;
     }
     let bytes = 0;
-    for (const d of disc) {
+    let lastProgress = Date.now();
+    // 실행 중인 세션의 기록부터, 본 기록을 하위 에이전트 기록보다 먼저 읽는다(먼저 읽은 것부터 화면에 보여 주려고)
+    const order = [...disc].sort((a, b) => Number(registry.has(b.sid)) - Number(registry.has(a.sid)) || Number(a.sub) - Number(b.sub));
+    for (const d of order) {
       let st = files.get(d.file);
       if (!st) { st = newFileState(d); files.set(d.file, st); }
+      // 보는 기간이 늘어 이미 읽은 구간보다 앞이 필요해지면 그 파일만 다시 읽는다
+      if (st.scanFrom > 0 && since - SEEK_MARGIN_MS < st.coveredSince - 60000) Object.assign(st, newFileState(d));
       let s;
       try { s = fs.statSync(d.file); } catch { continue; }
-      if (s.size !== st.offset || s.mtimeMs !== st.mtimeMs || (st.ino && s.ino !== st.ino)) {
-        bytes += scanAppended(st);
+      if (s.size !== st.offset || s.mtimeMs !== st.mtimeMs || (st.ino && s.ino !== st.ino) || st.scanFrom == null) {
+        const n = scanAppended(st, since, opts.seekMinBytes);
+        bytes += n;
         dirty = true;
+        if (n > 0 && opts.onProgress && Date.now() - lastProgress > (opts.progressMs == null ? 800 : opts.progressMs)) {
+          opts.onProgress({ sessions: build(registry, since, t0, opts, true) });
+          lastProgress = Date.now();
+        }
       }
     }
 
+    // 읽기는 끝났고 git 확인이 남았다: 읽는 데 시간이 걸렸으면 지금까지의 결과를 먼저 보여 준다
+    if (opts.onProgress && bytes > 0 && Date.now() - t0 > 300) opts.onProgress({ sessions: build(registry, since, t0, opts, true) });
+    const sessions = build(registry, since, t0, opts, false);
+    maybeSave(opts, !!opts.flush);
+    return { sessions, stats: { ms: Date.now() - t0, files: disc.length, bytes } };
+  }
+
+  // 읽은 상태 → 세션 목록. partial이면(읽는 도중) 아직 안 읽은 세션은 빼고 git 확인도 미룬다
+  function build(registry, since, t0, opts, partial) {
     const bySid = new Map();
     for (const d of disc) {
       const st = files.get(d.file);
@@ -913,34 +1125,32 @@ function createModel() {
     const sessions = [];
     for (const [sid, sts] of bySid) {
       const main = sts.find((x) => !x.sub) || sts[0];
+      if (partial && main.scanFrom == null && main.offset === 0) continue;
       const reg = registry.get(sid) || null;
       const projectCwd = main.cwd || (reg && reg.cwd) || null;
       const changes = [];
       let lastActivity = 0;
       for (const st of sts) {
         lastActivity = Math.max(lastActivity, st.mtimeMs);
-        for (const c of st.commits) {
+        for (const c of partial ? [] : st.commits) {
           if (c.resolved || c.ts < since) continue;
           c.resolved = true;
           dirty = true;
-          const res = resolveCommit(c, [projectCwd]);
+          const res = resolveCommit(c, [projectCwd], since);
           if (!res) {
             st.changes.push({ kind: 'commit', path: null, ts: c.ts, add: 0, del: 0, sha: c.sha, msg: c.msg, unresolved: true, sub: st.sub, file: st.file, scratch: false });
             continue;
           }
           addCommitEntries(st, res, c.ts, c.msg);
         }
-        for (const w of st.commitWins) {
+        for (const w of partial ? [] : st.commitWins) {
           if (w.resolved || w.to < since) continue;
           w.resolved = true;
           dirty = true;
-          let hits = commitsInWindow(w, projectCwd);
+          let hits = commitsInWindow(w, projectCwd, since);
           // 커밋 하나만 만드는 명령인데 같은 시간대에 여러 개가 있으면(다른 세션 커밋) 끝난 시각에 가장 가까운 것만
           if (w.single && hits.length > 1) hits = [hits.reduce((a, b) => (Math.abs(a.ts - w.at) <= Math.abs(b.ts - w.at) ? a : b))];
-          for (const hit of hits) {
-            const res = resolveCommit({ sha: hit.sha, cwd: hit.top }, []);
-            if (res) addCommitEntries(st, res, hit.ts, hit.subject);
-          }
+          for (const hit of hits) addCommitEntries(st, { top: hit.top, full: hit.sha, subject: hit.subject, files: hit.files }, hit.ts, hit.subject);
         }
         for (const c of st.changes) if (c.ts >= since) changes.push(c);
       }
@@ -977,17 +1187,17 @@ function createModel() {
       });
     }
     sessions.sort((a, b) => b.lastActivity - a.lastActivity);
-    maybeSave(opts, !!opts.flush);
-    return { sessions, stats: { ms: Date.now() - t0, files: disc.length, bytes } };
+    return sessions;
   }
 
   return { scan, status, save: (opts) => maybeSave(opts, true) };
 }
 
-// 시험용: 기록 파일 하나를 통째로 읽은 상태
-function scanOne(file, agent) {
+// 시험용: 기록 파일 하나를 읽은 상태(sinceMs를 주면 그 시각 근처부터)
+function scanOne(file, agent, sinceMs, seekMinBytes) {
   const st = newFileState({ file, sid: 'test', sub: false, project: '', agent });
-  scanAppended(st);
+  const read = scanAppended(st, sinceMs, seekMinBytes);
+  st.bytesRead = read;
   return st;
 }
 

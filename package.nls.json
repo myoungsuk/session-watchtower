@@ -21,6 +21,7 @@
   "config.includeSubagents": "Show files changed by subagents under their parent session.",
   "config.pollSeconds": "How often (seconds) to check for new log lines while the view is visible. Only newly appended lines are read.",
   "config.statusBar": "Show a status bar summary (working · waiting · just finished). Clicking it opens the Sessions view.",
+  "config.sessionDetails": "Show a second line under each session with its current step and the size of its changes. Turn off for a compact one-line list.",
   "config.includeCodex": "Also show Codex sessions from ~/.codex/sessions (edits made with apply_patch).",
   "config.attentionMarkerDir": "Folder where an approval-notification hook writes <first 12 hex of sha256(session id)>.pending files. Used as an extra 'waiting for you' signal. Leave empty to turn off."
 }

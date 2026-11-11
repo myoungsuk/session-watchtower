@@ -2,7 +2,10 @@
   "name": "session-watchtower",
   "displayName": "Session Watchtower for Claude Code",
   "description": "%description%",
-  "version": "0.9.1",
+  "version": "0.10.0",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
   "publisher": "kms-labs",
   "license": "MIT",
   "engines": {
@@ -263,6 +266,11 @@
           "type": "boolean",
           "default": true,
           "description": "%config.statusBar%"
+        },
+        "claudeSessionChanges.sessionDetails": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.sessionDetails%"
         },
         "claudeSessionChanges.includeCodex": {
           "type": "boolean",

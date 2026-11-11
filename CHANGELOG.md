@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.0
+
+- **Much faster first read**: large logs are read only from where the selected time range starts, and recent commits are read with one git call per repository instead of one per commit. In our test the first read went from about 4.5 s to 0.7 s (646 MB → 119 MB read, 150 → 10 git calls) with identical results.
+- Sessions that were read first are shown while the rest is still loading.
+- New setting `sessionDetails`: turn off the second line for a compact one-line list.
+- *Review all changes* now tells you when files were left out because there is no recorded change to compare.
+- Tests are part of the repository (`npm test`).
+
 ## 0.9.1
 
 - The change-size tooltip now says what it counts: lines added and removed within the time range of the Changed files view, with every edit counted.

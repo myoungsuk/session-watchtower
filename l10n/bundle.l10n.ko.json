@@ -118,5 +118,7 @@
   "Just finished (less than 10 minutes ago)": "방금 끝남 (10분 안)",
   "What it is doing now": "지금 하는 일",
   "Last {0} hours: {1} lines added, {2} removed (each edit counted)": "최근 {0}시간 동안 {1}줄 추가, {2}줄 삭제 (고칠 때마다 더한 합계)",
-  "Lines added / removed within the time range of the Changed files view": "변경 파일 창의 보는 기간 안에서 더한 줄 / 지운 줄"
+  "Lines added / removed within the time range of the Changed files view": "변경 파일 창의 보는 기간 안에서 더한 줄 / 지운 줄",
+  "Reading more logs…": "기록을 더 읽는 중…",
+  "{0} file(s) were left out: they were only guessed from shell commands, so there is no recorded change to compare.": "파일 {0}개는 뺐습니다. 셸 명령 글자로 추정만 한 파일이라 비교할 변경 기록이 없습니다."
 }

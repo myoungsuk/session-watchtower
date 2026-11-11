@@ -69,8 +69,13 @@ Everything stays on your machine. The extension only reads `~/.claude/projects`,
 | `claudeSessionChanges.includeSubagents` | true | Include files changed by subagents under their parent session. |
 | `claudeSessionChanges.pollSeconds` | 5 | How often to check for new log lines while the view is visible. |
 | `claudeSessionChanges.statusBar` | true | Show the status bar summary. |
+| `claudeSessionChanges.sessionDetails` | true | Show the second line under each session (current step, change size). Turn off for a compact list. |
 | `claudeSessionChanges.includeCodex` | true | Also show Codex sessions. |
 | `claudeSessionChanges.attentionMarkerDir` | `~/.cache/claude-attention` | Folder of approval-hook marker files (empty = off). |
+
+## Development
+
+No build step and no dependencies. Run the tests with `npm test` (Node 20 or newer). They use a fake home folder with made-up session logs and a stub of the VS Code API, so they never read your real `~/.claude`.
 
 ## Feedback and contact
 

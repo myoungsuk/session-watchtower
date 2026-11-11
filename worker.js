@@ -27,7 +27,9 @@ parentPort.on('message', (msg) => {
   }
   if (msg.type !== 'scan') return;
   try {
-    const res = model.scan(msg.opts || {});
+    // 읽는 데 오래 걸리면(처음 읽기) 먼저 읽은 세션부터 중간 결과를 보낸다
+    const onProgress = (p) => parentPort.postMessage({ type: 'partial', id: msg.id, sessions: p.sessions });
+    const res = model.scan({ ...(msg.opts || {}), onProgress });
     const sig = signature(res.sessions);
     if (sig === lastSig && !(msg.opts && msg.opts.force)) {
       parentPort.postMessage({ type: 'same', id: msg.id, stats: res.stats });
