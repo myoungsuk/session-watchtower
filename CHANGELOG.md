@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.3
+
+- **Codex: changed files work again with current Codex versions.** Recent Codex writes its edits as a script (`tools.apply_patch(...)` inside an `exec` call); those sessions showed no changed files at all. They are read now, failed patches are left out, and line counts only count lines that really changed. Checked against Codex's own per-file records in real logs: 2,094 of 2,132 edits found (98%).
+- Codex review and sub-agent threads are folded into the session that started them instead of each showing up as its own session (341 log files in one month were really 12 sessions).
+- Codex sessions that were started days ago and are still in use are found, and commits made by Codex are listed.
+- New sessions (Claude Code and Codex) appear at the next check instead of after up to 30 seconds.
+- Folder groups are easier to tell apart from sessions: an *Other folders* caption, a folder icon and a count pill on *Archived*. Sessions that ran in a git worktree are grouped under their repository with a *worktree* tag.
+- Sessions that have neither a title nor a first question are hidden unless they are running or changed files.
+
 ## 0.11.2
 
 - Folder groups for **other folders** now also list recent sessions that are not running, with the same timing as the main list (the `archiveAfter` setting, at most 14 days). Before, only running sessions of other folders were shown.

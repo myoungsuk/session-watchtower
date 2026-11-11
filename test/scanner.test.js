@@ -296,3 +296,96 @@ test('제목도 첫 질문도 없는 옛 세션은 목록에 넣지 않는다', 
   assert.ok(!find(S.createModel().scan({ ...base(), listDays: 14, workspaceDirs: [project] }), sid));
 });
 
+test('Codex 요즘 형식: exec 안의 tools.apply_patch·exec_command, 실패한 패치 제외, 하위 스레드는 뿌리 세션에 묶음', () => {
+  const ROOT = 'c0de0000-1111-4111-8111-00000000aaaa';
+  const SUB = 'c0de0000-2222-4222-8222-00000000bbbb';
+  const added = path.join(project, 'cx-new.txt');
+  const viaVar = path.join(project, 'cx-var.txt');
+  const failed = path.join(project, 'cx-failed.txt');
+  const shellOut = path.join(project, 'cx-shell.txt');
+  const subFile = path.join(project, 'cx-sub.txt');
+  const call = (ts, id, input) => ({ timestamp: fx.iso(ts), type: 'response_item', payload: { type: 'custom_tool_call', status: 'completed', call_id: id, name: 'exec', input } });
+  const out = (ts, id, ok) => ({ timestamp: fx.iso(ts), type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: id, output: [{ type: 'input_text', text: (ok ? 'Script completed' : 'Script failed') + '\nWall time 0.1 seconds\nOutput:\n' }, { type: 'input_text', text: ok ? '{}' : 'Script error:\napply_patch verification failed' }] } });
+  const js = (s) => JSON.stringify(s); // 자바스크립트 문자열 글자 그대로
+  const both = path.join(project, 'cx-both.txt');
+  const shellOut2 = path.join(project, 'cx-shell2.txt');
+  fs.writeFileSync(shellOut, 'made by a command\n');
+  fs.writeFileSync(shellOut2, 'done\n');
+  fx.codexSession(home, ROOT, [
+    { timestamp: fx.iso(now - 9 * MIN), type: 'session_meta', payload: { id: ROOT, session_id: ROOT, cwd: project, originator: 'codex_vscode', source: 'vscode' } },
+    { timestamp: fx.iso(now - 9 * MIN), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Work in code mode' }] } },
+    call(now - 8 * MIN, 'call_1', `text(await tools.apply_patch(${js(`*** Begin Patch\n*** Add File: ${added}\n+one "quoted"\n+two\n*** End Patch`)}));\n`),
+    out(now - 8 * MIN + 500, 'call_1', true),
+    call(now - 7 * MIN, 'call_2', `const patch = ${js(`*** Begin Patch\n*** Update File: ${viaVar}\n@@\n-old\n+new\n+more\n*** End Patch`)};\ntext(await tools.apply_patch(patch));\n`),
+    out(now - 7 * MIN + 500, 'call_2', true),
+    call(now - 6 * MIN, 'call_3', `const patch = ${js(`*** Begin Patch\n*** Update File: ${failed}\n@@\n-x\n+y\n*** End Patch`)};\ntext(await tools.apply_patch(patch));\n`),
+    out(now - 6 * MIN + 500, 'call_3', false),
+    call(now - 5 * MIN, 'call_4', `const r = await Promise.allSettled([\n  tools.exec_command({cmd:${js(`echo hi > ${shellOut}`)},workdir:${js(project)},max_output_tokens:4000}),\n]);\ntext(r);`),
+    out(now - 5 * MIN + 900, 'call_4', true),
+    // 한 스크립트에 패치 둘과 명령 하나(Codex CLI가 실제로 쓴 모양). 둘째 패치는 두 줄을 통째로 갈아 끼우지만 실제로 바뀐 줄은 하나다
+    call(now - 2 * MIN, 'call_6', `const r1 = await tools.apply_patch(${js(`*** Begin Patch\n*** Add File: ${both}\n+hello\n+world\n*** End Patch`)});\nconst r2 = await tools.apply_patch(${js(`*** Begin Patch\n*** Update File: ${both}\n@@\n-hello\n-world\n+hello\n+there\n*** End Patch`)});\nconst r3 = await tools.exec_command({"cmd":${js(`printf '%s\\n' done >> ${shellOut2}`)},"workdir":${js(project)},"yield_time_ms":10000});\ntext(JSON.stringify({r1,r2,r3}));`),
+    out(now - 2 * MIN + 900, 'call_6', true),
+    call(now - 1 * MIN, 'call_5', `text(await tools.exec_command({cmd:"npm test",workdir:${js(project)}}));`),
+  ], now);
+  fx.codexSession(home, SUB, [
+    { timestamp: fx.iso(now - 4 * MIN), type: 'session_meta', payload: { id: SUB, session_id: ROOT, parent_thread_id: ROOT, cwd: project, originator: 'codex_vscode', source: { subagent: { other: 'guardian' } }, thread_source: 'guardian_review' } },
+    { timestamp: fx.iso(now - 4 * MIN), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'The following is the Codex agent history' }] } },
+    call(now - 3 * MIN, 'sub_1', `text(await tools.apply_patch(${js(`*** Begin Patch\n*** Add File: ${subFile}\n+s\n*** End Patch`)}));`),
+    out(now - 3 * MIN + 500, 'sub_1', true),
+  ], now);
+  const r = S.createModel().scan(base());
+  assert.ok(!find(r, 'codex:' + SUB), '하위 스레드는 따로 세션으로 나오지 않는다');
+  const s = find(r, 'codex:' + ROOT);
+  assert.strictEqual(s.title, 'Work in code mode');
+  const of = (p) => s.changes.filter((c) => c.path === p);
+  assert.deepStrictEqual(of(added).map((c) => [c.kind, c.add, c.created]), [['cxedit', 2, true]]);
+  assert.deepStrictEqual(of(viaVar).map((c) => [c.kind, c.add, c.del]), [['cxedit', 2, 1]], '변수에 담아 넘긴 패치');
+  assert.strictEqual(of(failed).length, 0, '실패한 패치는 변경이 아니다');
+  assert.deepStrictEqual(of(shellOut).map((c) => c.kind), ['shell'], '명령으로 만든 파일(추정)');
+  assert.deepStrictEqual(of(subFile).map((c) => [c.kind, c.sub]), [['cxedit', true]], '하위 스레드의 변경은 뿌리 세션 아래에');
+  assert.deepStrictEqual(of(both).map((c) => [c.add, c.del, c.created]), [[2, 0, true], [1, 1, false]], '한 스크립트의 패치 둘: 줄 수는 실제로 바뀐 줄만');
+  assert.deepStrictEqual(of(shellOut2).map((c) => c.kind), ['shell'], '패치와 같은 스크립트에 있는 명령도 본다');
+  assert.deepStrictEqual([s.activity.tool, s.activity.arg, s.activity.done], ['exec', 'npm test', false], '지금 하는 일: 아직 결과가 없는 마지막 명령');
+  assert.strictEqual(S.codexPatchText({ type: 'custom_tool_call', name: 'exec', input: 'const patch = "*** Begin Patch\\n*** Add File: a.txt\\n+\\u00e9\\n*** End Patch"; tools.apply_patch(patch)' }), '*** Begin Patch\n*** Add File: a.txt\n+é\n*** End Patch');
+});
+
+test('Codex: 며칠 전에 시작해 지금도 쓰는 세션을 찾는다(기록은 시작한 날 폴더에 있다)', () => {
+  const LONG = 'c0de0000-3333-4333-8333-00000000cccc';
+  const f = path.join(project, 'cx-long.txt');
+  fx.codexSession(home, LONG, [
+    { timestamp: fx.iso(now - 10 * 24 * 60 * MIN), type: 'session_meta', payload: { id: LONG, session_id: LONG, cwd: project, originator: 'codex_vscode', source: 'vscode' } },
+    { timestamp: fx.iso(now - 10 * 24 * 60 * MIN), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'A long running job' }] } },
+    { timestamp: fx.iso(now - 2 * MIN), type: 'response_item', payload: { type: 'custom_tool_call', call_id: 'long_1', name: 'exec', input: `text(await tools.apply_patch(${JSON.stringify(`*** Begin Patch\n*** Add File: ${f}\n+x\n*** End Patch`)}));` } },
+    { timestamp: fx.iso(now - 2 * MIN + 300), type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: 'long_1', output: [{ type: 'input_text', text: 'Script completed\nWall time 0.1 seconds\nOutput:\n' }] } },
+  ], now - 10 * 24 * 60 * MIN);
+  const s = find(S.createModel().scan(base()), 'codex:' + LONG);
+  assert.ok(s, '열흘 전 폴더에 있어도 오늘 바뀐 기록이면 찾아야 함');
+  assert.deepStrictEqual([s.title, s.status, s.changes.filter((c) => c.path === f).length], ['A long running job', 'busy', 1]);
+});
+
+test('새 세션은 다음 확인 때 바로 보인다(30초 주기를 기다리지 않음)', () => {
+  const model = S.createModel();
+  model.scan({ ...base(), force: false });
+  const NEWCX = 'c0de0000-4444-4444-8444-00000000dddd';
+  fx.codexSession(home, NEWCX, [
+    { timestamp: fx.iso(Date.now()), type: 'session_meta', payload: { id: NEWCX, session_id: NEWCX, cwd: project, originator: 'codex_exec', source: 'exec' } },
+    { timestamp: fx.iso(Date.now()), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Brand new codex session' }] } },
+  ], Date.now());
+  const NEWCL = 'c1a0de00-5555-4555-8555-00000000eeee';
+  fx.claudeSession(home, project, NEWCL, [rec.user(project, Date.now(), 'Brand new claude session')]);
+  fx.registerSession(home, process.ppid, NEWCL, { status: 'busy', cwd: project, name: 'demo-new', nameSource: 'derived' });
+  const r = model.scan({ ...base(), force: false });
+  assert.ok(find(r, 'codex:' + NEWCX), '새 Codex 세션');
+  assert.ok(find(r, NEWCL) && find(r, NEWCL).changes, '새 Claude 세션');
+  fx.registerSession(home, process.ppid, SID_B, { status: 'idle', cwd: project, name: 'demo-b2', nameSource: 'derived' });
+});
+
+test('Claude Code가 만든 git worktree 세션은 저장소 이름으로 묶는다', () => {
+  const sid = 'c1a0de00-6666-4666-8666-00000000ffff';
+  const wt = path.join(project, '.claude', 'worktrees', 'fix-login-ab12cd');
+  fs.mkdirSync(wt, { recursive: true });
+  fx.claudeSession(home, wt, sid, [rec.user(wt, now - 3 * MIN, 'Work in a worktree'), rec.aiTitle(sid, 'Worktree job')]);
+  const s = find(S.createModel().scan(base()), sid);
+  assert.deepStrictEqual([s.project, s.worktree, s.cwd], [path.basename(project), 'fix-login-ab12cd', wt]);
+});
+

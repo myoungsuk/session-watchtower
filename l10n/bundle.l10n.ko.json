@@ -134,5 +134,7 @@
   "1 day": "1일",
   "Move a session to Archived after how long without conversation?": "대화가 없은 지 얼마나 지나면 보관함으로 보낼까요?",
   "Sessions with no conversation for {0} day(s) and sessions you archived here.": "{0}일 넘게 대화가 없던 세션과 여기서 보관한 세션입니다.",
-  "Choose when sessions move to Archived": "보관함으로 보내는 기준 바꾸기"
+  "Choose when sessions move to Archived": "보관함으로 보내는 기준 바꾸기",
+  "Other folders": "다른 폴더",
+  "Runs in a git worktree: {0}": "git worktree에서 돈 세션: {0}"
 }

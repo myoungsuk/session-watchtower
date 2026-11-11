@@ -12,7 +12,7 @@ const HOME = os.homedir();
 const PROJECTS = path.join(HOME, '.claude', 'projects');
 const REGISTRY = path.join(HOME, '.claude', 'sessions');
 const CODEX_SESSIONS = path.join(HOME, '.codex', 'sessions');
-const CACHE_VERSION = 4; // 4: 마지막 대화 시각(lastMsgTs)·목록용 요약 읽기 추가 — 옛 저장 파일은 버리고 한 번 새로 읽음
+const CACHE_VERSION = 5; // 4: 마지막 대화 시각(lastMsgTs)·목록용 요약 읽기 추가 — 옛 저장 파일은 버리고 한 번 새로 읽음
 const CACHE_SAVE_MS = 20000;
 const CODEX_ACTIVE_MS = 90000;
 // "지금 고치는 중"으로 보는 시간: 마지막으로 바뀐 뒤 이만큼
@@ -279,6 +279,8 @@ function newFileState(d) {
     cwd: null,
     changes: [],
     pendingBash: new Map(),
+    pendingCx: {}, // Codex: 결과를 기다리는 도구 호출(호출 ID → 패치·명령)
+    rootSid: d.rootSid || null, // Codex 하위 스레드가 속한 뿌리 세션
     commits: [],
     commitWins: [],
     seenSha: new Set(),
@@ -516,6 +518,10 @@ const CX_USER = B('"role":"user"');
 const CX_EXEC = B('exec_command');
 const CX_SHELL = B('"shell_command"');
 const CX_COMPACT = B('"type":"compacted"');
+const CX_OUT = B('"payload":{"type":"custom_tool_call_output"');
+const CX_FOUT = B('"payload":{"type":"function_call_output"');
+const CX_FAILED = B('"text":"Script failed');
+const K_CALLID = B('"call_id":"');
 
 function codexUserText(content) {
   for (const c of Array.isArray(content) ? content : []) {
@@ -530,9 +536,18 @@ function codexUserText(content) {
 function parsePatch(text, cwd) {
   const out = [];
   let cur = null;
+  // 한 구간(@@) 안에서 지웠다가 그대로 다시 넣은 줄은 바뀐 줄이 아니다(Codex가 여러 줄을 통째로 갈아 끼울 때 생김) → 줄 수에서 뺀다
+  let minus = new Map();
+  let plus = new Map();
+  const settle = () => {
+    if (cur) for (const [l, n] of minus) { const k = Math.min(n, plus.get(l) || 0); cur.add -= k; cur.del -= k; }
+    minus = new Map();
+    plus = new Map();
+  };
   for (const line of String(text || '').split('\n')) {
     const m = /^\*\*\* (Add|Update|Delete) File: (.+)$/.exec(line);
     if (m) {
+      settle();
       cur = { op: m[1], path: resolveTarget(m[2].trim(), cwd) || m[2].trim(), add: 0, del: 0, lines: [] };
       out.push(cur);
       continue;
@@ -541,15 +556,77 @@ function parsePatch(text, cwd) {
     if (mv && cur) { cur.path = resolveTarget(mv[1].trim(), cwd) || mv[1].trim(); continue; }
     if (!cur || line.startsWith('*** ')) continue;
     cur.lines.push(line);
-    if (line[0] === '+') cur.add++;
-    else if (line[0] === '-') cur.del++;
+    if (line.startsWith('@@')) settle();
+    else if (line[0] === '+') { cur.add++; plus.set(line.slice(1), (plus.get(line.slice(1)) || 0) + 1); }
+    else if (line[0] === '-') { cur.del++; minus.set(line.slice(1), (minus.get(line.slice(1)) || 0) + 1); }
+  }
+  settle();
+  return out;
+}
+
+// 자바스크립트 문자열 안의 \n·\"·\uXXXX 등을 푼다
+function unescapeJs(s) {
+  return String(s).replace(/\\(u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|\r?\n|[\s\S])/g, (m, e) => {
+    if ((e[0] === 'u' || e[0] === 'x') && e.length === 1) return e;
+    switch (e[0]) {
+      case 'n': return '\n';
+      case 't': return '\t';
+      case 'r': return '\r';
+      case 'b': return '\b';
+      case 'f': return '\f';
+      case 'v': return '\v';
+      case '0': return '\0';
+      case 'u': return e[1] === '{' ? String.fromCodePoint(parseInt(e.slice(2, -1), 16)) : String.fromCharCode(parseInt(e.slice(1), 16));
+      case 'x': return String.fromCharCode(parseInt(e.slice(1), 16));
+      case '\n': case '\r': return '';
+      default: return e;
+    }
+  });
+}
+
+// 요즘 Codex는 도구를 exec 안의 자바스크립트로 부른다:
+//   text(await tools.apply_patch("*** Begin Patch\n…"))   ·   tools.exec_command({cmd:"…",workdir:"…"})
+// 패치 문자열을 꺼낸다(없으면 null). 패치는 인자에 바로 쓰기도 하고(tools.apply_patch("*** Begin Patch…")),
+// 변수에 담아 넘기기도 한다(const patch = "*** Begin Patch…"; tools.apply_patch(patch)) → "*** Begin Patch"로 시작하는 문자열을 모두 모은다
+function jsPatchArg(input) {
+  const src = String(input || '');
+  if (src.indexOf('apply_patch') < 0) return null;
+  const out = [];
+  let from = 0;
+  while (out.length < 20) {
+    const k = src.indexOf('*** Begin Patch', from);
+    if (k < 1) break;
+    from = k + 15;
+    const q = src[k - 1];
+    if (q !== '"' && q !== "'" && q !== '`') continue;
+    let j = k;
+    while (j < src.length && src[j] !== q) j += src[j] === '\\' ? 2 : 1;
+    if (j >= src.length) break;
+    out.push(unescapeJs(src.slice(k, j)));
+    from = j + 1;
+  }
+  return out.length ? out.join('\n') : null;
+}
+
+// exec 안의 tools.exec_command({cmd:"…",workdir:"…"}) 들(한 번에 여러 개를 부르기도 한다)
+function jsCommands(input) {
+  const out = [];
+  const src = String(input || '');
+  if (src.indexOf('exec_command') < 0) return out;
+  const re = /["']?\bcmd["']?\s*:\s*"((?:\\[\s\S]|[^"\\])*)"/g;
+  let m;
+  while ((m = re.exec(src)) && out.length < 20) {
+    const rest = src.slice(re.lastIndex, re.lastIndex + 600);
+    const end = rest.search(/\btools\.[A-Za-z_]+\(/);
+    const w = /["']?\bworkdir["']?\s*:\s*"((?:\\[\s\S]|[^"\\])*)"/.exec(end >= 0 ? rest.slice(0, end) : rest);
+    out.push({ cmd: unescapeJs(m[1]), cwd: w ? unescapeJs(w[1]) : null });
   }
   return out;
 }
 
 function codexPatchText(p) {
   if (!p) return null;
-  if (p.type === 'custom_tool_call' && typeof p.input === 'string') return p.input;
+  if (p.type === 'custom_tool_call' && typeof p.input === 'string') return p.name === 'apply_patch' ? p.input : jsPatchArg(p.input);
   if (p.type === 'function_call' && typeof p.arguments === 'string') {
     try {
       const a = JSON.parse(p.arguments);
@@ -585,6 +662,16 @@ function handleCodexLine(st, line, absOffset, headOnly) {
   const user = !st.firstPrompt && line.indexOf(CX_USER) >= 0 && len < 200000;
   const exec = line.indexOf(CX_EXEC) >= 0 || line.indexOf(CX_SHELL) >= 0;
   const compacted = !st.firstPrompt && line.indexOf(CX_COMPACT) >= 0;
+  // 도구 결과 줄: 통째로 풀지 않고(명령 출력이 클 수 있다) 호출 ID와 성공 여부만 본다
+  if (!headOnly) {
+    const head = line.subarray(0, 240);
+    if (head.indexOf(CX_OUT) >= 0 || head.indexOf(CX_FOUT) >= 0) {
+      const i = line.indexOf(K_CALLID);
+      const e = i >= 0 ? line.indexOf(34, i + K_CALLID.length) : -1;
+      if (e > 0 && e - i < 200) codexToolDone(st, line.toString('latin1', i + K_CALLID.length, e), line);
+      return;
+    }
+  }
   if (!meta && !turn && !patch && !user && !exec && !compacted) return;
   let o;
   try { o = JSON.parse(line.toString('utf8')); } catch { return; }
@@ -594,6 +681,9 @@ function handleCodexLine(st, line, absOffset, headOnly) {
   if (o.type === 'session_meta') {
     if (p.cwd && !st.cwd) st.cwd = p.cwd;
     if (!st.curCwd) st.curCwd = p.cwd || null;
+    // 검토(guardian)·하위 에이전트 스레드는 따로 기록 파일을 갖는다 → 뿌리 세션(session_id) 아래로 묶는다
+    const isSub = !!p.parent_thread_id || !!(p.source && typeof p.source === 'object' && p.source.subagent);
+    if (isSub && typeof p.session_id === 'string' && p.session_id) { st.sub = true; st.rootSid = 'codex:' + p.session_id; }
     return;
   }
   if (o.type === 'turn_context') {
@@ -615,6 +705,20 @@ function handleCodexLine(st, line, absOffset, headOnly) {
     return;
   }
   if (headOnly) return;
+  // 요즘 형식: exec 안의 자바스크립트. 결과 줄이 와야 반영 여부를 알 수 있어 호출 ID로 기다려 둔다
+  if (p.type === 'custom_tool_call' && p.name !== 'apply_patch' && typeof p.input === 'string') {
+    const id = typeof p.call_id === 'string' ? p.call_id : null;
+    const wait = st.pendingCx || (st.pendingCx = {});
+    // 한 스크립트에 패치와 명령이 함께 들어 있기도 하다
+    const text = jsPatchArg(p.input);
+    const parts = text ? parsePatch(text, st.curCwd || st.cwd).map((f) => ({ path: f.path, add: f.add, del: f.del, op: f.op })) : [];
+    const cmds = jsCommands(p.input).map((c) => ({ cmd: c.cmd.slice(0, 20000), cwd: c.cwd }));
+    if (!parts.length && !cmds.length) return;
+    if (parts.length) noteTool(st, { id, tool: 'apply_patch', arg: path.basename(parts[0].path), path: parts[0].path, ts, done: false });
+    else noteTool(st, { id, tool: 'exec', arg: String(cmds[cmds.length - 1].cmd).split('\n')[0].replace(/\s+/g, ' ').trim().slice(0, 80), ts, done: false });
+    if (id) wait[id] = { ts, offset: absOffset, length: len, cwd: st.curCwd || st.cwd, parts: parts.length ? parts : null, cmds: cmds.length ? cmds : null };
+    return;
+  }
   if (p.name === 'apply_patch') {
     const text = codexPatchText(p);
     if (!text) return;
@@ -637,6 +741,39 @@ function handleCodexLine(st, line, absOffset, headOnly) {
       try { s = fs.statSync(t); } catch { continue; }
       if (!s.isFile() || s.mtimeMs < ts - 2000) continue;
       pushChange(st, { kind: 'shell', path: t, ts, add: 0, del: 0, created: false, cmd: shortCmd(ex.cmd), cwd });
+    }
+  }
+}
+
+// Codex 도구가 끝남: 기다려 둔 패치·명령을 반영한다
+function codexToolDone(st, id, line) {
+  if (st.lastTool && st.lastTool.id === id) st.lastTool.done = true;
+  const pend = st.pendingCx && st.pendingCx[id];
+  if (!pend) return;
+  delete st.pendingCx[id];
+  const j = line.indexOf(K_TS);
+  const e = j >= 0 && j < 64 ? line.indexOf(34, j + K_TS.length) : -1;
+  const doneTs = (e > 0 && Date.parse(line.toString('latin1', j + K_TS.length, e))) || pend.ts;
+  // "Script failed"(패치 검증 실패 등)는 파일에 반영되지 않은 수정이다
+  if (pend.parts && line.indexOf(CX_FAILED) < 0) {
+    pend.parts.forEach((f, i) => {
+      pushChange(st, {
+        kind: 'cxedit', path: f.path, ts: doneTs, add: f.add, del: f.del, created: f.op === 'Add', deleted: f.op === 'Delete',
+        offset: pend.offset, length: pend.length, idx: i,
+      });
+    });
+  }
+  for (const c of pend.cmds || []) {
+    const cwd = c.cwd || pend.cwd;
+    for (const t of shellTargets(c.cmd, cwd)) {
+      let s;
+      try { s = fs.statSync(t); } catch { continue; }
+      if (!s.isFile() || s.mtimeMs < pend.ts - 2000) continue;
+      pushChange(st, { kind: 'shell', path: t, ts: pend.ts, add: 0, del: 0, created: false, cmd: shortCmd(c.cmd), cwd });
+    }
+    if (COMMIT_CMD_RE.test(c.cmd)) {
+      const single = !/\b(?:merge|cherry-pick|revert|am|rebase)\b/.test(c.cmd);
+      st.commitWins.push({ dir: gitDirFor(c.cmd, cwd), from: pend.ts - 3000, to: doneTs + 3000, at: doneTs, single, resolved: false });
     }
   }
 }
@@ -1063,10 +1200,13 @@ function localDay(ms) {
   return [String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')];
 }
 
+// Codex 기록은 "세션을 시작한 날" 폴더에 있다. 며칠·몇 주씩 이어 쓰는 세션이 있으니
+// 보는 기간보다 CODEX_BACK_DAYS일 앞 폴더까지 훑고, 파일이 바뀐 시각으로 거른다
+const CODEX_BACK_DAYS = 60;
 function discoverCodex(sinceMs) {
   const out = [];
   const seen = new Set();
-  for (let t = sinceMs - 86400e3; t <= Date.now() + 3600e3; t += 86400e3) {
+  for (let t = sinceMs - CODEX_BACK_DAYS * 86400e3; t <= Date.now() + 3600e3; t += 86400e3) {
     const dir = path.join(CODEX_SESSIONS, ...localDay(t));
     if (seen.has(dir)) continue;
     seen.add(dir);
@@ -1124,7 +1264,9 @@ function discover(sinceMs, registry, includeCodex, listSinceMs, projectDirs, oth
 function serializeState(st) {
   const dayAgo = Date.now() - 86400e3;
   const pending = [...st.pendingBash].filter(([, b]) => b.ts >= dayAgo).map(([id, b]) => [id, { ...b, full: String(b.full || '').slice(0, 20000) }]);
-  return { ...st, pendingBash: pending, seenSha: [...st.seenSha] };
+  const cx = {};
+  for (const [id, v] of Object.entries(st.pendingCx || {})) if (v && v.ts >= dayAgo) cx[id] = v;
+  return { ...st, pendingBash: pending, pendingCx: cx, seenSha: [...st.seenSha] };
 }
 
 function deserializeState(o) {
@@ -1155,6 +1297,8 @@ function createModel() {
   let disc = [];
   let lastDisc = 0;
   let lastLook = 0;
+  let discSids = new Set(); // 지난번에 찾은(또는 찾아 봤지만 기록 파일이 아직 없던) 세션
+  let codexDirSeen = -1;
   let cacheLoaded = false;
   let dirty = false;
   let lastSave = 0;
@@ -1219,10 +1363,18 @@ function createModel() {
     const otherSince = otherDays ? Math.min(since, t0 - otherDays * 86400e3) : 0;
     const dirSet = new Set(dirs);
     const discKey = `${lookMs}|${listDays}|${otherDays}|${dirs.join(',')}`;
-    if (opts.force || t0 - lastDisc > DISCOVERY_MS || discKey !== lastLook) {
+    // 새 세션은 주기(DISCOVERY_MS)를 기다리지 않고 바로 찾는다: 실행 중 목록에 처음 보는 세션이 생겼거나, 오늘 자 Codex 폴더에 파일이 생겼을 때
+    let fresh = false;
+    for (const sid of registry.keys()) if (!discSids.has(sid)) { fresh = true; break; }
+    let codexDir = -1;
+    if (opts.includeCodex !== false) { try { codexDir = fs.statSync(path.join(CODEX_SESSIONS, ...localDay(t0))).mtimeMs; } catch { codexDir = -1; } }
+    if (codexDir !== codexDirSeen) fresh = true;
+    if (opts.force || fresh || t0 - lastDisc > DISCOVERY_MS || discKey !== lastLook) {
       disc = discover(since, registry, opts.includeCodex !== false, listSince, dirSet, otherSince);
       lastDisc = t0;
       lastLook = discKey;
+      discSids = new Set([...disc.map((d) => d.sid), ...registry.keys()]);
+      codexDirSeen = codexDir;
     }
     let bytes = 0;
     let lastProgress = Date.now();
@@ -1273,8 +1425,9 @@ function createModel() {
     for (const d of disc) {
       const st = files.get(d.file);
       if (!st) continue;
-      if (!bySid.has(d.sid)) bySid.set(d.sid, []);
-      bySid.get(d.sid).push(st);
+      const key = st.rootSid || d.sid; // Codex 하위 스레드는 뿌리 세션에 묶는다
+      if (!bySid.has(key)) bySid.set(key, []);
+      bySid.get(key).push(st);
     }
 
     const sessions = [];
@@ -1312,6 +1465,8 @@ function createModel() {
         for (const c of st.changes) if (c.ts >= since) changes.push(c);
       }
       const codex = main.agent === 'codex';
+      // 뿌리 세션 기록은 보는 기간 밖이고 하위 스레드(검토 등)만 걸린 Codex 세션: 바꾼 파일이 없으면 보여 줄 것이 없다
+      if (codex && main.sub && !changes.length) continue;
       if (!lastActivity || codex) lastActivity = lastWrite;
       let title = main.customTitle || main.aiTitle || null;
       let titleSource = main.customTitle ? 'custom' : main.aiTitle ? 'ai' : null;
@@ -1328,6 +1483,7 @@ function createModel() {
       };
       if (!codex) state = applyMarker(state, attentionMarker(opts.attentionDir, sid), lastWrite);
       const liveFiles = !partial && state.alive && state.status === 'busy' ? recentlyTouched(changes, t0) : [];
+      const worktree = projectCwd ? /^(.+)[\\/]\.claude[\\/]worktrees[\\/]([^\\/]+)$/.exec(projectCwd) : null;
       // 지금 하는 일: 본 세션·하위 에이전트 중 가장 최근 도구 호출
       let activity = null;
       for (const st of sts) {
@@ -1337,7 +1493,9 @@ function createModel() {
         sid, title, titleSource,
         agent: main.agent || 'claude',
         address: reg && reg.nameSource === 'derived' ? reg.name : null,
-        project: projectCwd ? path.basename(projectCwd) : main.project,
+        // Claude Code가 만든 git worktree(<저장소>/.claude/worktrees/<이름>)는 저장소 이름으로 묶는다
+        project: worktree ? path.basename(worktree[1]) : projectCwd ? path.basename(projectCwd) : main.project,
+        worktree: worktree ? worktree[2] : null,
         cwd: projectCwd,
         lastActivity,
         metaOnly: !!main.metaOnly,
@@ -1364,4 +1522,4 @@ function scanOne(file, agent, sinceMs, seekMinBytes) {
   return st;
 }
 
-module.exports = { LIVE_MS, createModel, shellTargets, stripHeredocBodies, hunkCounts, isScratch, readRegistry, parsePatch, attentionMarker, scanOne };
+module.exports = { LIVE_MS, codexPatchText, createModel, shellTargets, stripHeredocBodies, hunkCounts, isScratch, readRegistry, parsePatch, attentionMarker, scanOne };

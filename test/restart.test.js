@@ -29,6 +29,9 @@ fs.mkdirSync(other, { recursive: true });
 const O_3H = 'cccc0000-3333-4333-8333-333333333333';
 const O_2D = 'dddd0000-4444-4444-8444-444444444444';
 const O_20D = 'eeee0000-5555-4555-8555-555555555555';
+// 제목도 첫 질문도 없는 세션(다른 세션이 보낸 메시지만 있음): 기록 파일이 방금 바뀌었어도 목록에 넣지 않는다
+const O_BLANK = 'ffff0000-6666-4666-8666-666666666666';
+fx.claudeSession(home, other, O_BLANK, [{ ...rec.user(other, Date.now() - 2 * HOUR, 'Another Claude session sent a message: hi'), isMeta: true }, { type: 'cost-state', sessionId: O_BLANK }]);
 for (const [sid, title, ago] of [[O_3H, 'Elsewhere 3h', 3 * HOUR], [O_2D, 'Elsewhere 2d', 2 * 24 * HOUR], [O_20D, 'Elsewhere 20d', 20 * 24 * HOUR]]) {
   const f = fx.claudeSession(home, other, sid, [rec.user(other, Date.now() - ago - 60000, title), rec.aiTitle(sid, title), rec.user(other, Date.now() - ago, 'more')]);
   fs.utimesSync(f, new Date(Date.now() - ago), new Date(Date.now() - ago));
@@ -62,7 +65,7 @@ test('실행 중인 세션이 없어도 이 폴더 세션은 목록에, 오래�
 
 test('다른 폴더도 실행 중이 아닌 최근 세션을 묶음에 보여 준다(보관함으로 갈 만큼 오래된 것은 빼고)', async () => {
   const rowsOf = () => (web.lastPayload().groups || []).flatMap((g) => g.rows.map((r) => r.sid)).sort();
-  assert.deepStrictEqual(rowsOf(), [O_3H, O_2D].sort(), '기본(14일): 3시간 전·이틀 전은 보이고 20일 전은 안 보임');
+  assert.deepStrictEqual(rowsOf(), [O_3H, O_2D].sort(), '기본(14일): 3시간 전·이틀 전은 보이고 20일 전·제목 없는 세션은 안 보임');
   assert.ok(!JSON.stringify(web.lastPayload().archived).includes(O_20D), '다른 폴더의 오래된 세션은 이 창 보관함에도 넣지 않음');
   stub.changeConfig('archiveAfter', '1');
   await waitFor(() => rowsOf().length === 1, '기준 1일');

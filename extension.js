@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const { Worker } = require('worker_threads');
 const { execFile } = require('child_process');
-const { parsePatch, LIVE_MS } = require('./scanner');
+const { parsePatch, LIVE_MS, codexPatchText } = require('./scanner');
 
 // 화면 글자: 영어 원문 + l10n/bundle.l10n.ko.json(한국어). 날짜·시간 형식만 언어별로 직접 만든다.
 const L = (message, ...args) => vscode.l10n.t(message, ...args);
@@ -450,7 +450,9 @@ function rebuildSessions() {
   // (대화는 오래전에 끝났는데 기록 파일만 오늘 건드려진 세션이 끼어들지 않게)
   const since = Math.min(Date.now() - cfg().lookbackHours * 3600000, Date.now() - otherListDays() * DAY_MS);
   const withFiles = new Set(model.filter((m) => m.files.length || m.unresolved.length).map((m) => m.sid));
-  const listed = sorted.filter((s) => inWorkspace(s) || s.alive || s.lastActivity >= since || withFiles.has(s.sid));
+  // 제목도 첫 질문도 없는 세션(화면에는 ID 글자로만 보임)은 실행 중이거나 바꾼 파일이 있을 때만 보여 준다
+  const blank = (s) => s.titleSource === 'id' && !s.alive && !withFiles.has(s.sid);
+  const listed = sorted.filter((s) => !blank(s) && (inWorkspace(s) || s.alive || s.lastActivity >= since || withFiles.has(s.sid)));
   // 날 수로 보관함에 보내는 것은 이 폴더 세션만(Claude Code 목록과 같은 범위). 직접 보관은 어느 폴더든 된다
   const hidden = new Set(listed.filter((s) => archiveReason(s, archive, inWorkspace(s) ? days : 0)).map((s) => s.sid));
   sessionsModel = listed.filter((s) => !hidden.has(s.sid));
@@ -625,7 +627,7 @@ function sessionRow(s) {
   const del = m ? m.files.reduce((a, f) => a + (f.del || 0), 0) : 0;
   return {
     sid: s.sid, title: s.title, state: st.key, meta, tip: sessionTooltip(s, st) + '\n' + hint, canOpen, alive: !!s.alive, codex,
-    files: m ? m.files.length : 0, add, del, now: nowText(s, st), folder: inWorkspace(s) ? '' : s.project || '',
+    files: m ? m.files.length : 0, add, del, now: nowText(s, st), folder: inWorkspace(s) ? '' : s.project || '', worktree: s.worktree || '',
   };
 }
 
@@ -634,6 +636,7 @@ function sessionsPayload() {
     showChanges: L('Show changed files'), review: L('Review all changes'), newSession: L('New session'), active: L('Active'),
     search: L('Search sessions'), noMatch: L('No matching sessions'), legend: L('What the colors mean'),
     archive: L('Archive'), unarchive: L('Restore from archive'), archivedTitle: L('Archived'), archiveRule: L('Choose when sessions move to Archived'),
+    otherFolders: L('Other folders'), worktreeTip: L('Runs in a git worktree: {0}'),
     lgSessions: L('Sessions'), lgFiles: L('Changed files'), lgRow: L('Under each session'),
     lgBusy: L('Working'), lgWaiting: L('Waiting for you (approval or answer)'), lgDone: L('Just finished (less than 10 minutes ago)'), lgIdle: L('Idle'), lgOff: L('Off (no Claude process)'),
     lgA: L('Created in this session'), lgM: L('Modified in this session'), lgD: L('Not on disk anymore (deleted)'), lgQ: L('Guessed from shell commands (not certain)'),
@@ -759,7 +762,14 @@ function sessionsHtml(webview) {
   details > summary:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
   .chev { display: inline-block; width: 10px; transition: transform 0.1s; }
   details[open] > summary .chev { transform: rotate(90deg); }
-  .gname { color: var(--vscode-foreground); font-weight: 600; }
+  /* 폴더 묶음 머리줄은 세션 줄과 한눈에 구별되게: 구역 이름 + 폴더 그림 + 작은 글씨 */
+  .sect { margin-top: 10px; padding: 9px 10px 3px; border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.25))); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--vscode-descriptionForeground); }
+  details.grp > summary { min-height: 26px; font-size: 12px; }
+  details.arch { margin-top: 8px; padding-top: 4px; border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.25))); }
+  .gicon { flex-shrink: 0; display: inline-flex; color: var(--vscode-descriptionForeground); }
+  .gname { color: var(--vscode-foreground); font-weight: 600; opacity: 0.85; }
+  .gcount { flex-shrink: 0; min-width: 18px; padding: 0 6px; font-size: 11px; line-height: 17px; text-align: center; border-radius: 9px; color: var(--vscode-badge-foreground); background: var(--vscode-badge-background); }
+  .tag.wt { color: var(--vscode-descriptionForeground); background: transparent; border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35)); }
   .gdesc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .bell { width: 8px; height: 8px; border-radius: 50%; background: var(--vscode-charts-blue); flex-shrink: 0; }
   details .row { padding-left: 30px; }
@@ -835,6 +845,7 @@ function sessionsHtml(webview) {
   }
   const archiveIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M2 3.5h12v3H2z"/><path d="M3 6.5v6h10v-6"/><path d="M6.5 9h3"/></svg>';
   const restoreIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M3 8.5v4h10v-4"/><path d="M8 10V2.5"/><path d="M5.5 5 8 2.5 10.5 5"/></svg>';
+  const folderIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M1.5 4.5v8h13v-6.5h-6l-1.5-1.5z"/></svg>';
   const gearIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/></svg>';
   function row(r, inArchive) {
     const btn = (act, label, svg) => '<button class="act" data-act="' + act + '" data-sid="' + esc(r.sid) + '" title="' + esc(label) + '" aria-label="' + esc(label) + '">' + svg + '</button>';
@@ -847,6 +858,7 @@ function sessionsHtml(webview) {
       + '<div class="l1"><span class="dot ' + esc(r.state) + '"></span><span class="title">' + esc(r.title) + '</span>'
       + (r.codex ? '<span class="tag">Codex</span>' : '')
       + (inArchive && r.folder ? '<span class="tag">' + esc(r.folder) + '</span>' : '')
+      + (r.worktree ? '<span class="tag wt" title="' + esc(String(strings.worktreeTip || '').replace('{0}', r.worktree)) + '">worktree</span>' : '')
       + '<span class="meta">' + esc(r.meta) + '</span>' + acts + '</div>' + sub + '</div>';
   }
   // 색 범례(? 단추)
@@ -896,21 +908,23 @@ function sessionsHtml(webview) {
     let h = mine.map((r) => row(r, false)).join('');
     if (p.noneHere && !filtering) h += '<div class="msg">' + esc(p.noneHere) + '</div>';
     let shown = mine.length;
+    let sect = false;
     for (const g of p.groups || []) {
       const rows = g.rows.filter(keep);
       if (filtering && !rows.length) continue;
       shown += rows.length;
       const open = needle ? rows.length > 0 : !!saved.open[g.key];
-      h += '<details data-key="' + esc(g.key) + '"' + (open ? ' open' : '') + '><summary title="' + esc(g.tip) + '"><span class="chev">›</span>'
-        + (g.waiting ? '<span class="bell"></span>' : '') + '<span class="gname">' + esc(g.key) + '</span><span class="gdesc">' + esc(g.desc) + '</span></summary>'
+      if (!sect) { sect = true; h += '<div class="sect">' + esc(strings.otherFolders) + '</div>'; }
+      h += '<details class="grp" data-key="' + esc(g.key) + '"' + (open ? ' open' : '') + '><summary title="' + esc(g.tip) + '"><span class="chev">›</span>'
+        + '<span class="gicon">' + folderIcon + '</span>' + (g.waiting ? '<span class="bell"></span>' : '') + '<span class="gname">' + esc(g.key) + '</span><span class="gdesc">' + esc(g.desc) + '</span></summary>'
         + rows.map((r) => row(r, false)).join('') + '</details>';
     }
     // 보관함: 맨 아래 접힌 묶음. "실행 중만" 필터에서는 숨기고, 검색하면 맞는 것이 있을 때 펼친다
     const arch = saved.active ? [] : (p.archived || []).filter((r) => !needle || String(r.title).toLowerCase().includes(needle));
     if (arch.length) {
       shown += arch.length;
-      h += '<details data-key="__archived"' + ((needle || saved.open.__archived) ? ' open' : '') + '><summary title="' + esc(p.archivedTip || '') + '"><span class="chev">›</span><span class="gname">'
-        + esc(strings.archivedTitle) + '</span><span class="gdesc">' + arch.length + '</span>'
+      h += '<details class="grp arch" data-key="__archived"' + ((needle || saved.open.__archived) ? ' open' : '') + '><summary title="' + esc(p.archivedTip || '') + '"><span class="chev">›</span><span class="gicon">' + archiveIcon + '</span><span class="gname">'
+        + esc(strings.archivedTitle) + '</span><span class="gdesc"></span><span class="gcount">' + arch.length + '</span>'
         + '<button class="sact" data-act="pickArchive" title="' + esc(strings.archiveRule) + '" aria-label="' + esc(strings.archiveRule) + '">' + gearIcon + '</button></summary>'
         + arch.map((r) => row(r, true)).join('') + '</details>';
     }
@@ -1051,9 +1065,7 @@ function hunksToSides(hunks) {
 // Codex apply_patch 한 파일 부분 → 비교 양쪽(@@는 구간 나눔)
 async function sidesForCodex(c) {
   const o = await readRecord(c.file, c.offset, c.length);
-  const p = (o && o.payload) || {};
-  let text = typeof p.input === 'string' ? p.input : '';
-  if (!text && typeof p.arguments === 'string') { try { const a = JSON.parse(p.arguments); text = a.input || a.patch || ''; } catch { text = ''; } }
+  const text = codexPatchText((o && o.payload) || null) || '';
   const part = parsePatch(text, '')[c.idx];
   if (!part) return { left: '', right: '', partial: true };
   if (part.op === 'Delete') return { left: L('(This file was deleted.)'), right: '', partial: true };
