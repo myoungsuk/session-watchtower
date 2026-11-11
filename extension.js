@@ -708,8 +708,10 @@ function sessionsHtml(webview) {
   .row.other { cursor: default; }
   .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .meta { flex-shrink: 0; font-size: 12px; color: var(--vscode-descriptionForeground); }
-  .act { flex-shrink: 0; display: inline-flex; visibility: hidden; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--vscode-icon-foreground, var(--vscode-foreground)); cursor: pointer; }
-  .row:hover .act, .act:focus-visible { visibility: visible; }
+  /* 단추는 마우스를 올린 줄에서만 시간 자리에 나온다(평소에는 자리를 차지하지 않아 제목이 덜 잘린다. Claude 세션 목록과 같은 방식) */
+  .act { flex-shrink: 0; display: none; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--vscode-icon-foreground, var(--vscode-foreground)); cursor: pointer; }
+  .row:hover .act, .row:focus-visible .act, .row:has(.act:focus-visible) .act { display: inline-flex; }
+  .row:hover .meta, .row:focus-visible .meta, .row:has(.act:focus-visible) .meta { display: none; }
   .act:hover { background: var(--vscode-toolbar-hoverBackground); }
   .dot { flex-shrink: 0; box-sizing: border-box; width: 9px; height: 9px; border-radius: 50%; }
   .dot.busy { border: 2px solid var(--vscode-charts-green); border-top-color: transparent; animation: spin 0.9s linear infinite; }

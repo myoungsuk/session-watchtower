@@ -6,6 +6,7 @@
 - **Archived section.** Sessions with no conversation for longer than Claude Code's *Archive Inactive Sessions* setting are collected in a collapsed *Archived* section, and a new archive button moves a session there by hand (restore brings it back). An archived session returns by itself when it gets a new message. Sessions archived by hand inside Claude Code cannot be detected.
 - **Times are now based on the last conversation**, not on when the log file was last touched. A session that was only reopened no longer shows as *Just finished*.
 - **Files being edited right now** get a green spinner in the Changed files view (a blue bell while an edit waits for your approval).
+- Row buttons now appear only on the row under the mouse, in place of the time, so titles are no longer cut short to make room for them.
 - New setting `sessionListDays` (default 90).
 - If the Sessions view says *There is no data provider registered* after updating from 0.6.0, reload the window once.
 
