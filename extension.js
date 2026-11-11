@@ -72,6 +72,7 @@ function workerOpts(extra) {
     attentionDir: o.attentionDir,
     cacheFile: ctx ? path.join(ctx.globalStorageUri.fsPath, 'scan-cache-v2.json') : '',
     listDays: o.sessionListDays,
+    otherListDays: otherListDays(),
     workspaceDirs: (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath),
     ...extra,
   };
@@ -335,6 +336,14 @@ function autoArchiveDays() {
   return Number.isFinite(v) && v >= 0 ? v : 14;
 }
 
+// 다른 폴더 세션을 며칠 전 것까지 보여 줄지: 그 폴더 창의 목록에 남아 있을 만큼 최근 것만(보관함으로 갈 만큼 오래된 것은 그 폴더 창에서 본다)
+function otherListDays() {
+  const list = cfg().sessionListDays;
+  if (list <= 0) return 0;
+  const days = autoArchiveDays();
+  return Math.min(list, 14, days > 0 ? days : 14);
+}
+
 async function pickArchiveAfter() {
   const cur = ARCHIVE_CHOICES.includes(cfg().archiveAfter) ? cfg().archiveAfter : 'claude';
   const label = (v) => (v === 'claude' ? L('Same as Claude Code ("Archive Inactive Sessions")') : v === 'never' ? L('Never (only what I archive myself)') : v === '1' ? L('1 day') : L('{0} days', v));
@@ -437,9 +446,9 @@ function rebuildSessions() {
   const archive = loadArchive();
   const sorted = [...raw].sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
   const days = autoArchiveDays();
-  // 다른 폴더 세션은 실행 중이거나 보는 기간 안에 대화·변경이 있을 때만 보여 준다.
-  // (대화는 며칠 전에 끝났는데 기록 파일만 오늘 건드려진 세션이 끼어들지 않게)
-  const since = Date.now() - cfg().lookbackHours * 3600000;
+  // 다른 폴더 세션은 실행 중이거나, 최근(그 폴더 창의 목록에 남아 있을 날 수 안)에 대화했거나, 보는 기간 안에 변경이 있을 때만 보여 준다.
+  // (대화는 오래전에 끝났는데 기록 파일만 오늘 건드려진 세션이 끼어들지 않게)
+  const since = Math.min(Date.now() - cfg().lookbackHours * 3600000, Date.now() - otherListDays() * DAY_MS);
   const withFiles = new Set(model.filter((m) => m.files.length || m.unresolved.length).map((m) => m.sid));
   const listed = sorted.filter((s) => inWorkspace(s) || s.alive || s.lastActivity >= since || withFiles.has(s.sid));
   // 날 수로 보관함에 보내는 것은 이 폴더 세션만(Claude Code 목록과 같은 범위). 직접 보관은 어느 폴더든 된다
@@ -1421,10 +1430,10 @@ function activate(context) {
     vscode.commands.registerCommand('claudeSessionChanges.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
     treeView.onDidChangeVisibility((e) => { if (e.visible) requestScan(false); }),
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('claudeCode.archiveInactiveSessions')) rebuild();
+      if (e.affectsConfiguration('claudeCode.archiveInactiveSessions')) requestScan(true); // 다른 폴더 세션을 읽는 기간도 함께 바뀐다
       if (!e.affectsConfiguration(CFG)) return;
       startTimer();
-      if (['lookbackHours', 'includeCodex', 'attentionMarkerDir', 'sessionListDays'].some((k) => e.affectsConfiguration(CFG + '.' + k))) requestScan(true);
+      if (['lookbackHours', 'includeCodex', 'attentionMarkerDir', 'sessionListDays', 'archiveAfter'].some((k) => e.affectsConfiguration(CFG + '.' + k))) requestScan(true);
       else { rebuild(); updateStatusBar(); }
     }),
     { dispose: () => { if (timer) clearInterval(timer); } },

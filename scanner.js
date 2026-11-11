@@ -1084,7 +1084,8 @@ function discoverCodex(sinceMs) {
 }
 
 // listSinceMs·projectDirs: 이 폴더의 세션은 보는 기간보다 오래돼도(listSinceMs까지) 목록용으로 찾는다(meta: true)
-function discover(sinceMs, registry, includeCodex, listSinceMs, projectDirs) {
+// otherListSinceMs: 다른 폴더의 세션도 이 시각까지는 목록용으로 찾는다(보통 더 짧은 기간)
+function discover(sinceMs, registry, includeCodex, listSinceMs, projectDirs, otherListSinceMs) {
   const out = includeCodex ? discoverCodex(sinceMs) : [];
   let projs = [];
   try { projs = fs.readdirSync(PROJECTS, { withFileTypes: true }); } catch { return out; }
@@ -1100,7 +1101,8 @@ function discover(sinceMs, registry, includeCodex, listSinceMs, projectDirs) {
       let st;
       try { st = fs.statSync(f); } catch { continue; }
       if (st.mtimeMs < sinceMs && !registry.has(sid)) {
-        if (listSinceMs && st.mtimeMs >= listSinceMs && projectDirs && projectDirs.has(p.name)) out.push({ file: f, sid, sub: false, project: p.name, meta: true });
+        const cut = projectDirs && projectDirs.has(p.name) ? listSinceMs : otherListSinceMs;
+        if (cut && st.mtimeMs >= cut) out.push({ file: f, sid, sub: false, project: p.name, meta: true });
         continue;
       }
       out.push({ file: f, sid, sub: false, project: p.name });
@@ -1212,9 +1214,13 @@ function createModel() {
     const listDays = Math.max(0, Number(opts.listDays) || 0);
     const listSince = listDays ? Math.min(since, t0 - listDays * 86400e3) : 0;
     const dirs = (Array.isArray(opts.workspaceDirs) ? opts.workspaceDirs : []).map((d) => String(d).replace(/[^a-zA-Z0-9]/g, '-'));
-    const discKey = `${lookMs}|${listDays}|${dirs.join(',')}`;
+    // 다른 폴더의 세션은 otherListDays일 전까지(그 폴더 창의 목록에 남아 있을 만큼 최근 것만)
+    const otherDays = Math.max(0, Number(opts.otherListDays) || 0);
+    const otherSince = otherDays ? Math.min(since, t0 - otherDays * 86400e3) : 0;
+    const dirSet = new Set(dirs);
+    const discKey = `${lookMs}|${listDays}|${otherDays}|${dirs.join(',')}`;
     if (opts.force || t0 - lastDisc > DISCOVERY_MS || discKey !== lastLook) {
-      disc = discover(since, registry, opts.includeCodex !== false, listSince, new Set(dirs));
+      disc = discover(since, registry, opts.includeCodex !== false, listSince, dirSet, otherSince);
       lastDisc = t0;
       lastLook = discKey;
     }
@@ -1251,7 +1257,12 @@ function createModel() {
     if (opts.onProgress && bytes > 0 && Date.now() - t0 > 300) opts.onProgress({ sessions: build(registry, since, t0, opts, true) });
     // 요약만 읽은 옛 세션은 Claude Code 세션 목록에 나오는 것만: 목록 기간 안이고, 프로그램이 돌린 세션이 아닌 것
     // 제목도 첫 질문도 없는 세션(다른 세션이 보낸 메시지나 로컬 명령만 있는 것)도 Claude Code처럼 뺀다
-    const sessions = build(registry, since, t0, opts, false).filter((s) => !s.metaOnly || (!s.programmatic && s.titleSource !== 'id' && (!listSince || s.lastActivity >= listSince)));
+    const sessions = build(registry, since, t0, opts, false).filter((s) => {
+      if (!s.metaOnly) return true;
+      if (s.programmatic || s.titleSource === 'id') return false;
+      const cut = dirSet.has(s.projectDir) ? listSince : otherSince;
+      return !!cut && s.lastActivity >= cut;
+    });
     maybeSave(opts, !!opts.flush);
     return { sessions, stats: { ms: Date.now() - t0, files: disc.length, bytes } };
   }
@@ -1330,6 +1341,7 @@ function createModel() {
         cwd: projectCwd,
         lastActivity,
         metaOnly: !!main.metaOnly,
+        projectDir: main.project || null, // ~/.claude/projects 아래 폴더 이름
         programmatic: !!main.programmatic,
         ...state,
         activity,
