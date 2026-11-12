@@ -891,7 +891,58 @@ class Provider {
 const provider = new Provider();
 
 // 맨 위 "세션 상태" 창: 트리 대신 웹뷰로 그려 Claude 세션 목록처럼 큰 줄로 보여 준다.
-function sessionRow(s) {
+// ---------- 이 창에 탭으로 열린 Claude 대화 ----------
+// Claude Code는 대화 탭(웹뷰 claudeVSCodePanel)에 세션 이름을 붙인다: 25자를 넘으면 앞 24자 + "…", 이름이 없으면 "Claude Code"(2.1.322 기준).
+// 탭에는 세션 ID가 없어서 이름으로 맞춘다. 같은 이름이 여럿이면 실행 중인 세션을, 그것도 없으면 가장 최근 세션을 고른다.
+const CLAUDE_PANEL_RE = /claudeVSCodePanel$/;
+function claudeTabLabels() {
+  const out = [];
+  const groups = (vscode.window.tabGroups && vscode.window.tabGroups.all) || [];
+  for (const g of groups) {
+    for (const t of g.tabs || []) {
+      if (t && t.input && typeof t.input.viewType === 'string' && CLAUDE_PANEL_RE.test(t.input.viewType) && t.label && t.label !== 'Claude Code') out.push(String(t.label));
+    }
+  }
+  return out;
+}
+
+const oneLine = (t) => String(t || '').replace(/\s+/g, ' ').trim();
+function tabLabelMatches(title, label) {
+  const a = oneLine(title);
+  const b = oneLine(label);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return b.length > 1 && b.endsWith('…') && a.startsWith(b.slice(0, -1)); // Claude Code가 줄인 이름
+}
+
+function openTabSids(list) {
+  const out = new Set();
+  for (const label of claudeTabLabels()) {
+    const hits = list.filter((s) => s.agent !== 'codex' && inWorkspace(s) && tabLabelMatches(s.title, label));
+    if (!hits.length) continue;
+    const alive = hits.filter((s) => s.alive);
+    if (alive.length) for (const s of alive) out.add(s.sid);
+    else out.add(hits.reduce((a, b) => ((b.lastActivity || 0) > (a.lastActivity || 0) ? b : a)).sid);
+  }
+  return out;
+}
+
+// 탭이 열리고 닫히거나 이름이 바뀌면 세션 창을 다시 그린다(입력 중 저장 표시 같은 다른 탭 변화에는 그리지 않는다)
+let tabKey = '';
+let tabTimer = null;
+function onTabsChanged() {
+  if (tabTimer) return;
+  tabTimer = setTimeout(() => {
+    tabTimer = null;
+    const k = claudeTabLabels().sort().join('\n');
+    if (k === tabKey) return;
+    tabKey = k;
+    sessionsWebview.post();
+  }, 150);
+  if (tabTimer.unref) tabTimer.unref();
+}
+
+function sessionRow(s, tabs) {
   const st = stateOf(s);
   const codex = s.agent === 'codex';
   const canOpen = codex ? UUID_RE.test(codexId(s.sid)) : inWorkspace(s);
@@ -905,8 +956,9 @@ function sessionRow(s) {
   const m = model.find((x) => x.sid === s.sid);
   const add = m ? m.files.reduce((a, f) => a + (f.add || 0), 0) : 0;
   const del = m ? m.files.reduce((a, f) => a + (f.del || 0), 0) : 0;
+  const tab = !!(tabs && tabs.has(s.sid));
   return {
-    sid: s.sid, title: s.title, state: st.key, meta, tip: sessionTooltip(s, st) + '\n' + hint, canOpen, alive: !!s.alive, codex,
+    sid: s.sid, title: s.title, state: st.key, meta, tip: (tab ? L('Open in a tab in this window') + '\n' : '') + sessionTooltip(s, st) + '\n' + hint, canOpen, alive: !!s.alive, codex, tab,
     files: m ? m.files.length : 0, add, del, now: [subText(s, st), nowText(s, st)].filter(Boolean).join(' · '), folder: inWorkspace(s) ? '' : s.project || '', worktree: s.worktree || '',
     overlap: m ? m.files.filter((f) => f.overlap).length : 0,
   };
@@ -928,6 +980,7 @@ function sessionsPayload() {
     lgSessions: L('Sessions'), lgFiles: L('Changed files'), lgRow: L('Under each session'),
     lgBusy: L('Working'), lgWaiting: L('Waiting for you (approval or answer)'), lgDone: L('Just finished (less than 10 minutes ago)'), lgIdle: L('Idle'), lgOff: L('Off (no Claude process)'),
     lgA: L('Created in this session'), lgM: L('Modified in this session'), lgD: L('Not on disk anymore (deleted)'), lgQ: L('Guessed from shell commands (not certain)'),
+    lgTab: L('Open in a tab in this window'),
     lgNow: L('What it is doing now'), lgDiff: L('Lines added / removed within the time range of the Changed files view'),
     // 변경 규모는 변경 파일 창의 "보는 기간" 안에서, 고칠 때마다 더한 합계(같은 줄을 여러 번 고치면 여러 번 셈)
     diffTip: L('Last {0}: {1} lines added, {2} removed (each edit counted)', spanLong(cfg().lookbackHours), '{1}', '{2}'),
@@ -935,11 +988,14 @@ function sessionsPayload() {
   if (!loaded) return { message: lastError ? L('Read error') : L('Reading sessions…'), detail: lastError || '', strings };
   if (!sessionsModel.length && !archivedModel.length) return { message: L('No sessions in the last {0}', spanShort(cfg().lookbackHours)), strings };
   const { mine, groups } = splitByFolder(sessionsModel);
+  const tabs = openTabSids(sessionsModel.concat(archivedModel));
+  tabKey = claudeTabLabels().sort().join('\n');
+  const rowOf = (s) => sessionRow(s, tabs);
   return {
     strings,
     compact: !cfg().sessionDetails,
     reading: stillReading ? L('Reading more logs…') : '',
-    archived: archivedModel.map(sessionRow),
+    archived: archivedModel.map(rowOf),
     archivedTip: autoArchiveDays() <= 0 ? L('Sessions you archived here.')
       : followsClaudeArchive()
         ? L('Sessions with no conversation for {0} day(s) (the Claude Code setting "Archive Inactive Sessions") and sessions you archived here.', autoArchiveDays())
@@ -947,14 +1003,14 @@ function sessionsPayload() {
     // 단추의 숫자는 이 폴더에서 열려 있는 세션 수(머리말의 작업·멈춤·쉼 합과 같다). 다른 폴더는 설명에만 적는다
     openHere: mine.filter((s) => s.alive).length,
     openElsewhere: groups.reduce((n, [, items]) => n + items.filter((s) => s.alive).length, 0),
-    mine: mine.map(sessionRow),
+    mine: mine.map(rowOf),
     noneHere: mine.length ? '' : L('No sessions in this folder'),
     groups: groups.map(([key, items]) => ({
       key,
       desc: groupDescription(items, false),
       waiting: items.some((s) => s.alive && s.status === 'waiting'),
       tip: L('{0} session(s) from another folder ({1}). Expand to see them.\nConversations can only be opened from a VS Code window with that folder open.', items.length, key),
-      rows: items.map(sessionRow),
+      rows: items.map(rowOf),
     })),
   };
 }
@@ -1034,6 +1090,11 @@ function sessionsHtml(webview) {
   .row:hover { background: var(--vscode-list-hoverBackground); }
   .row:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
   .row.other { cursor: default; }
+  /* 이 창에 탭으로 열린 대화: 옅은 선택 색 바탕 + 왼쪽 막대(상태 색과 겹치지 않는 중립 색) */
+  .row.tab, .tabkey { background: var(--vscode-list-inactiveSelectionBackground); box-shadow: inset 2px 0 0 color-mix(in srgb, var(--vscode-foreground) 65%, transparent); }
+  .row.tab:hover { background: var(--vscode-list-hoverBackground); }
+  .row.tab + .row.tab { margin-top: 2px; } /* 탭으로 열린 줄이 이어져도 한 덩어리로 보이지 않게 */
+  .tabkey { display: inline-block; width: 14px; height: 12px; border-radius: 2px; }
   .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .meta { flex-shrink: 0; font-size: 12px; color: var(--vscode-descriptionForeground); }
   /* 단추는 마우스를 올린 줄에서만 시간 자리에 나온다(평소에는 자리를 차지하지 않아 제목이 덜 잘린다. Claude 세션 목록과 같은 방식) */
@@ -1151,7 +1212,7 @@ function sessionsHtml(webview) {
     const ds = diffstat(r.add || 0, r.del || 0);
     // 둘째 줄: 지금 하는 일(작업 중·기다림일 때)과 변경 규모. 둘 다 없으면 한 줄짜리
     const sub = !(last && last.compact) && (r.now || ds) ? '<div class="sub"><span class="now ' + esc(r.state) + '">' + esc(r.now) + '</span>' + ds + '</div>' : '';
-    return '<div class="row' + (r.canOpen ? '' : ' other') + '" role="listitem" tabindex="0" data-sid="' + esc(r.sid) + '" data-open="' + (r.canOpen ? '1' : '') + '" title="' + esc(r.tip) + '">'
+    return '<div class="row' + (r.canOpen ? '' : ' other') + (r.tab ? ' tab' : '') + '" role="listitem" tabindex="0" data-sid="' + esc(r.sid) + '" data-open="' + (r.canOpen ? '1' : '') + '" title="' + esc(r.tip) + '">'
       + '<div class="l1"><span class="dot ' + esc(r.state) + '"></span><span class="title">' + esc(r.title) + '</span>'
       + (r.codex ? '<span class="tag">Codex</span>' : '')
       + (r.overlap ? '<span class="tag warn" title="' + esc(String(strings.overlapTip || '').replace('{0}', r.overlap)) + '">⚠ ' + r.overlap + '</span>' : '')
@@ -1176,7 +1237,7 @@ function sessionsHtml(webview) {
     const mark = (ch, v) => '<span style="color:var(--vscode-gitDecoration-' + v + ')">' + ch + '</span>';
     legendBox.innerHTML = '<h4>' + esc(s.lgSessions) + '</h4>'
       + lg('<span class="dot busy"></span>', s.lgBusy) + lg('<span class="dot waiting"></span>', s.lgWaiting) + lg('<span class="dot done"></span>', s.lgDone)
-      + lg('<span class="dot idle"></span>', s.lgIdle) + lg('<span class="dot off"></span>', s.lgOff)
+      + lg('<span class="dot idle"></span>', s.lgIdle) + lg('<span class="dot off"></span>', s.lgOff) + lg('<span class="tabkey"></span>', s.lgTab)
       + '<h4>' + esc(s.lgRow) + '</h4>'
       + lg('<span style="color:var(--vscode-charts-green)">&#9656;</span>', s.lgNow) + lg('<span class="sq"><i class="a"></i><i class="d"></i></span>', s.lgDiff)
       + '<h4>' + esc(s.lgFiles) + '</h4>'
@@ -2004,6 +2065,7 @@ function activate(context) {
     vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, contentProvider),
     vscode.window.registerFileDecorationProvider(decorations),
     vscode.window.registerFileDecorationProvider(explorerMarks),
+    ...(vscode.window.tabGroups ? [vscode.window.tabGroups.onDidChangeTabs(onTabsChanged), vscode.window.tabGroups.onDidChangeTabGroups(onTabsChanged)] : []),
     vscode.commands.registerCommand('claudeSessionChanges.refresh', () => requestScan(true)),
     vscode.commands.registerCommand('claudeSessionChanges.showAliveOnly', () => setAliveOnly(true)),
     vscode.commands.registerCommand('claudeSessionChanges.showAll', () => setAliveOnly(false)),
@@ -2044,6 +2106,7 @@ function activate(context) {
 function deactivate() {
   if (timer) clearInterval(timer);
   if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; }
+  if (tabTimer) { clearTimeout(tabTimer); tabTimer = null; }
   stopSpin();
   if (searchWorker) { try { searchWorker.terminate(); } catch { /* 이미 끝남 */ } searchWorker = null; }
   const w = worker;

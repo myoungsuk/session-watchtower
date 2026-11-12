@@ -15,6 +15,15 @@ exports.activate = async () => {
   await run('claudeSessionChanges.sessions.focus');
   await sleep(300);
   await run('workbench.action.focusActiveEditorGroup');
+  if (scene === 'tabs') {
+    // stand-ins for Claude Code conversation tabs: webview panels with Claude Code's view type and the names it gives them (24 characters + "…")
+    const label = (t) => (t.length > 25 ? t.substring(0, 24) + '…' : t);
+    for (const t of ['Refactor auth middleware', 'Spike: response cache layer', 'Update API docs']) {
+      const p = vscode.window.createWebviewPanel('claudeVSCodePanel', label(t), { viewColumn: vscode.ViewColumn.One, preserveFocus: true }, {});
+      p.webview.html = '<body style="font-family:sans-serif;padding:20px">Stand-in for the Claude Code conversation "' + t + '"</body>';
+    }
+    return;
+  }
   if (scene === 'side' || scene === 'toasts') return;
   if (scene === 'explorer') {
     // the built-in file Explorer, with one edited file visible and another inside a collapsed folder; the edited file is also open in a tab

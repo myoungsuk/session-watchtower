@@ -66,6 +66,7 @@ Under a working or waiting session a second line shows **what it is doing now** 
 - **The magnifier** filters by title. Press Enter in the box to search inside conversations instead.
 - **The ? button** explains every color.
 - **Hover a row** for its buttons: rename, review all changes, show changed files, archive.
+- **A shaded row with a bar on the left** is a conversation that is open in an editor tab of this window, so you can tell the sessions you have in front of you from the rest.
 
 Sessions of this folder are listed even when nothing is running, for example right after a restart. Sessions from other folders are grouped under **Other folders**; conversations can only be opened from a window with that folder open. Sessions that ran in a git worktree made by Claude Code are grouped under their repository with a *worktree* tag.
 
@@ -224,6 +225,7 @@ Everything stays on your machine. The extension makes no network requests and co
 - **"Being edited right now."** Edit tools finish in well under a second, so the spinner is shown for 30 seconds after a change while the session keeps working.
 - **"May be stuck."** A command that runs for a long time without output looks the same as a stuck session.
 - **Explorer marks.** They appear a few seconds after the edit starts (the logs are checked every `pollSeconds`) and stay for 30 seconds after the last change. Only files inside the folder open in this window are marked. A Codex session is noticed within a minute when no Claude Code session is working in this folder and the side bar is hidden.
+- **Open in a tab.** Claude Code's tabs carry only the session name (cut to 24 characters and `…` when longer), so tabs are matched to sessions by name. When several sessions in this folder have the name, the running ones are marked, otherwise the most recent one. A conversation open in the Claude Code side bar instead of a tab is not marked.
 - **Archive.** Sessions you archived or restored by hand inside Claude Code cannot be detected (Claude Code keeps that list private), and neither can its "unread" mark. If you archive by hand in Claude Code, set the archive time to something short such as 1 day so finished sessions leave the list here too. Sessions started by scripts through the SDK are left out of the list, as in Claude Code.
 - **Search.** Only your own messages are indexed, up to 2,000 characters each, and only Claude Code sessions.
 - **Which sessions changed this file** and the summaries only cover the selected time range.
@@ -283,7 +285,7 @@ Questions, bug reports and ideas are welcome: **k4858678@gmail.com**, or open an
 
 Claude Code 세션을 여러 개 돌릴 때 **어느 세션이 일하는 중이고, 어느 세션이 멈춰서 나를 기다리고, 어느 세션이 어떤 파일을 바꿨는지**를 옆 창 하나에서 봅니다.
 
-- **세션 상태 창**: 이 폴더의 세션마다 상태(작업 중·기다림·방금 끝남·쉼·꺼짐), 지금 하는 일, 변경 규모가 나옵니다. 실행 중이 아니어도 나오고, 다른 폴더 세션은 아래에 묶여 나옵니다.
+- **세션 상태 창**: 이 창에 탭으로 열려 있는 대화는 바탕색과 왼쪽 막대로 따로 보입니다. 이 폴더의 세션마다 상태(작업 중·기다림·방금 끝남·쉼·꺼짐), 지금 하는 일, 변경 규모가 나옵니다. 실행 중이 아니어도 나오고, 다른 폴더 세션은 아래에 묶여 나옵니다.
 - **변경 파일 창**: 세션이 바꾼 파일과 줄 수가 나오고, 누르면 비교 화면이 열립니다. 지금 고치는 파일에는 초록 회전 표시가 붙습니다. 색은 git과 같습니다: 초록 A 새 파일, 노랑 M 수정, 빨강 D 지워짐, 회색 ? 추정.
 - **파일 탐색기에도**: 세션이 지금 고치는 파일은 VS Code 파일 탐색기와 편집기 탭에서 도는 배지와 초록 이름으로 보입니다. 그 파일이 든 폴더에는 초록 점이 붙습니다.
 - **알림**: 세션이 승인이나 답을 기다릴 때, 두 세션이 같은 파일을 고쳤을 때, 작업 중인 세션이 10분 넘게 조용할 때 알려 줍니다.

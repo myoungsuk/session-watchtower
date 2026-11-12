@@ -184,5 +184,6 @@
   "Several sessions have this name. Which one?": "이름이 같은 세션이 여러 개입니다. 어느 세션을 열까요?",
   "{0} min": "{0}분",
   "{0}h": "{0}시간",
-  "{0} minutes": "{0}분"
+  "{0} minutes": "{0}분",
+  "Open in a tab in this window": "이 창에 탭으로 열려 있음"
 }

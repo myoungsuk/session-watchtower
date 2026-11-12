@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.0
+
+- **Sessions open in a tab stand out.** In the Sessions view, a conversation that is open in an editor tab of this window gets a shaded row with a bar on the left, and the color legend explains it. Claude Code's tabs only show the session name, so tabs are matched by name (also when Claude Code cuts a long name short with `…`).
+
 ## 0.15.0
 
 - **Shorter time ranges.** The clock button of the Changed files view now also offers 10, 20, 30, 40 and 50 minutes, and `lookbackHours` accepts decimals (0.5 = 30 minutes). Short ranges show as "Last 10 min".

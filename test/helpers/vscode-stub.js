@@ -30,6 +30,8 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
     parse: (s) => ({ scheme: String(s).split(':')[0], path: s, toString() { return s; } }),
   };
   const disposable = () => ({ dispose() {} });
+  const tabEvents = new EventEmitter();
+  const tabGroupEvents = new EventEmitter();
 
   const vscode = {
     EventEmitter, TreeItem, ThemeIcon, ThemeColor, FileDecoration, MarkdownString, Uri,
@@ -70,6 +72,8 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
       },
       withProgress: async (o, fn) => fn({ report() {} }),
       registerUriHandler: (h) => { state.uriHandler = h; return disposable(); },
+      // 편집기 탭: 시험이 setTabs로 바꾸고 알린다
+      tabGroups: { all: [], onDidChangeTabs: tabEvents.event, onDidChangeTabGroups: tabGroupEvents.event },
     },
     workspace: {
       workspaceFolders: workspace ? [{ uri: mkUri(workspaceScheme, workspaceAuthority, workspace) }] : [],
@@ -112,13 +116,19 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
     if (state.onConfig) state.onConfig({ affectsConfiguration: (k) => k === 'claudeSessionChanges' || k === 'claudeSessionChanges.' + key });
   }
 
+  // 편집기 탭을 바꾸고 알린다. tabs: [{ label, viewType }] (viewType이 없으면 글 편집기 탭)
+  function setTabs(tabs) {
+    vscode.window.tabGroups.all = [{ isActive: true, tabs: tabs.map((t) => ({ label: t.label, input: t.viewType ? { viewType: t.viewType } : { uri: Uri.file('/x/' + t.label) } })) }];
+    tabEvents.fire({ opened: [], closed: [], changed: [] });
+  }
+
   // 다른 묶음의 설정(예: workbench.reduceMotion)을 바꾸고 알린다
   function changeSetting(fullKey, value) {
     state.config[fullKey.split('.').pop()] = value;
     if (state.onConfig) state.onConfig({ affectsConfiguration: (k) => k === fullKey || fullKey.startsWith(k + '.') });
   }
 
-  return { vscode, context, calls, commands, trees, statusItems, reveals, state, openWebview, changeConfig, changeSetting, mkUri };
+  return { vscode, context, calls, commands, trees, statusItems, reveals, state, openWebview, changeConfig, changeSetting, setTabs, mkUri };
 }
 
 module.exports = { install };
