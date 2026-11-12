@@ -3,7 +3,7 @@
   "view.sessions": "세션 상태",
   "view.changes": "세션별 변경 파일",
   "command.refresh": "새로 고침",
-  "command.showAliveOnly": "진행 중 세션만 보기",
+  "command.showAliveOnly": "열린 세션만 보기",
   "command.showAll": "모든 세션 보기",
   "command.pickWindow": "보는 기간 바꾸기",
   "command.openSettings": "설정 열기",

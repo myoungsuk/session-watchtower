@@ -18,7 +18,7 @@
 - **Review a whole session** — one click opens every file the session changed in a single multi-file diff. For files changed only with edit tools or commits, the right side is the file as the session left it, so other sessions' later edits don't get mixed in.
 - **Status bar summary** — working · waiting · just finished counts are always visible at the bottom; it turns to a warning color while a session waits for you.
 - **Jump to the conversation** — click a session to open it in Claude Code, or start a new one with **New session**.
-- **Find sessions fast** — **Active** shows only running sessions; the search box filters by title.
+- **Find sessions fast** — **Open** shows only sessions that are open right now (working, waiting or idle); the search box filters by title.
 - **Codex too** — Codex sessions from `~/.codex/sessions` appear next to Claude sessions with a *Codex* tag: files edited with `apply_patch` (the older tool-call form and the current script form), files its shell commands changed (best effort) and its commits. Review and sub-agent threads are folded into the session that started them.
 - **Read-only and light** — never modifies your files. Parsing runs on a worker thread, only newly appended log lines are read, and what was read is cached so reopening VS Code is instant.
 

@@ -285,7 +285,7 @@ function rebuild() {
   out.sort((a, b) => Number(inWorkspace(b)) - Number(inWorkspace(a)));
   model = out;
   if (treeView) {
-    treeView.description = L('Last {0}h', o.lookbackHours) + (aliveOnly ? ' · ' + L('running only') : '');
+    treeView.description = L('Last {0}h', o.lookbackHours) + (aliveOnly ? ' · ' + L('open only') : '');
     treeView.message = stillReading ? L('Reading more logs…') : undefined;
   }
   rebuildSessions();
@@ -496,7 +496,7 @@ class Provider {
     if (!el) {
       if (lastError && !loaded) return [{ t: 'info', label: L('Read error'), detail: lastError }];
       if (!loaded) return [{ t: 'info', label: L('Reading conversation logs…') }];
-      if (!model.length) return [{ t: 'info', label: aliveOnly ? L('No running sessions') : L('No files changed in the last {0}h', cfg().lookbackHours) }];
+      if (!model.length) return [{ t: 'info', label: aliveOnly ? L('No open sessions') : L('No files changed in the last {0}h', cfg().lookbackHours) }];
       const { mine, groups } = splitByFolder(model);
       const out = mine.map((s) => ({ t: 'session', s }));
       if (!mine.length) out.push({ t: 'info', label: L('No sessions in this folder') });
@@ -633,7 +633,9 @@ function sessionRow(s) {
 
 function sessionsPayload() {
   const strings = {
-    showChanges: L('Show changed files'), review: L('Review all changes'), newSession: L('New session'), active: L('Active'),
+    showChanges: L('Show changed files'), review: L('Review all changes'), newSession: L('New session'), active: L('Open'),
+    // "열린 세션" = 지금 프로세스가 떠 있는 세션(작업 중·기다림·쉼). 작업 중인 것만 세는 숫자가 아니다
+    activeTip: L('Show only sessions that are open right now (working, waiting or idle). This folder {0}, other folders {1}.'),
     search: L('Search sessions'), noMatch: L('No matching sessions'), legend: L('What the colors mean'),
     archive: L('Archive'), unarchive: L('Restore from archive'), archivedTitle: L('Archived'), archiveRule: L('Choose when sessions move to Archived'),
     otherFolders: L('Other folders'), worktreeTip: L('Runs in a git worktree: {0}'),
@@ -898,7 +900,10 @@ function sessionsHtml(webview) {
     q.placeholder = strings.search || '';
     if (p.message) { document.getElementById('lblActive').textContent = strings.active || ''; root.innerHTML = '<div class="msg" title="' + esc(p.detail) + '">' + esc(p.message) + '</div>'; return; }
     const all = (p.mine || []).concat(...(p.groups || []).map((g) => g.rows));
-    document.getElementById('lblActive').textContent = (strings.active || '') + ' · ' + all.filter((r) => r.alive).length;
+    const openMine = (p.mine || []).filter((r) => r.alive).length;
+    const openAll = all.filter((r) => r.alive).length;
+    document.getElementById('lblActive').textContent = (strings.active || '') + ' · ' + openAll;
+    btnActive.title = String(strings.activeTip || '').replace('{0}', openMine).replace('{1}', openAll - openMine);
     btnActive.classList.toggle('on', saved.active);
     btnActive.setAttribute('aria-pressed', String(saved.active));
     const needle = saved.q.trim().toLowerCase();
@@ -1006,7 +1011,7 @@ async function revealSession(arg) {
   const sid = sidOf(arg);
   const s = model.find((x) => x.sid === sid);
   if (!s || !treeView) {
-    return vscode.window.showInformationMessage(aliveOnly ? L('This session is hidden by the "running only" filter.') : L('This session has no changed files in the last {0}h.', cfg().lookbackHours));
+    return vscode.window.showInformationMessage(aliveOnly ? L('This session is hidden by the "open only" filter.') : L('This session has no changed files in the last {0}h.', cfg().lookbackHours));
   }
   try {
     await treeView.reveal({ t: 'session', s }, { select: true, focus: false, expand: true });
@@ -1384,7 +1389,7 @@ function updateStatusBar() {
   line('loading~spin', L('Working'), groups.busy);
   line('check', L('Just finished'), groups.done);
   line('debug-pause', L('Idle'), groups.idle);
-  if (!statusSessions.length) md.appendMarkdown(L('No running sessions') + '\n\n');
+  if (!statusSessions.length) md.appendMarkdown(L('No open sessions') + '\n\n');
   md.appendMarkdown(L('Click to open the Sessions view.'));
   statusItem.tooltip = md;
   statusItem.show();

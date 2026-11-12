@@ -3,7 +3,7 @@
   "view.sessions": "Sessions",
   "view.changes": "Changed files",
   "command.refresh": "Refresh",
-  "command.showAliveOnly": "Show running sessions only",
+  "command.showAliveOnly": "Show open sessions only",
   "command.showAll": "Show all sessions",
   "command.pickWindow": "Change time range",
   "command.openSettings": "Open settings",
