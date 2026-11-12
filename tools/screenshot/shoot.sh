@@ -1,7 +1,7 @@
 #!/bin/bash
 # Take a real screenshot of the extension: desktop VS Code on a virtual display (Xvfb), with made-up demo sessions in a throwaway home folder.
 # Usage: xvfb-run -a -s "-screen 0 2400x2400x24" tools/screenshot/shoot.sh "<theme name>" <full.png> [scene]
-# Scenes: side (default), toasts, search, file, review, summary, tabs — see helper/main.js. "gif" and "explorer" write numbered frames next to <full.png>.
+# Scenes: side (default), toasts, search, file, review, summary, tabs, groups — see helper/main.js. "gif" and "explorer" write numbered frames next to <full.png>.
 # Needs: desktop VS Code (CODE_BIN), xvfb-run, ImageMagick (import), node, python3.
 set -u
 V="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$V/../.." && pwd)"
@@ -27,6 +27,19 @@ PY
 # Live processes for the "open" demo sessions.
 PIDS=""; for i in 1 2 3 4 5 6 7; do sleep 900 & PIDS="$PIDS,$!"; done; PIDS="${PIDS#,}"
 node "$V/demo.js" "$REPO" "$RUN/home" "$RUN/ws" "$PIDS" || exit 1
+if [ "$SCENE" = groups ]; then
+  # a demo group with roles and a shared memo, written where the extension keeps its groups; plus uncommitted work in the demo repo
+  GS="$RUN/ud/User/globalStorage/kms-labs.session-watchtower"; mkdir -p "$GS"
+  printf '# Release crew\n\n## Decisions waiting\n\n| # | Question | Asked by |\n|---|---|---|\n| 1 | Ship the webhook retry change before Friday? | Add payment webhooks |\n\n## Decision log\n\n- 11-12 10:41 "go with the session store" (Refactor auth middleware)\n' > "$RUN/home/board.md"
+  node -e '
+    const fs = require("fs"); const [demoFile, out, memo] = process.argv.slice(1); const d = JSON.parse(fs.readFileSync(demoFile, "utf8"));
+    const m = (t, role) => [d.sids[t], { role, at: Date.now() }];
+    const members = Object.fromEntries([m("Refactor auth middleware", "develop"), m("Add payment webhooks", "deploy"), m("Fix flaky e2e tests", "test"), m("Offline sync for drafts", "mobile")]);
+    fs.writeFileSync(out, JSON.stringify({ groups: [{ id: "gdemo", name: "Release crew", memo, members, at: Date.now() }] }));
+  ' "$RUN/home/demo.json" "$GS/session-groups.json" "$RUN/home/board.md"
+  echo "// wip: token refresh" >> "$RUN/ws/web-app/src/middleware/auth.ts"
+  mkdir -p "$RUN/ws/web-app/notes" && echo "scratch" > "$RUN/ws/web-app/notes/scratch.txt"
+fi
 # Start with a clean environment: variables of a VS Code remote shell (ELECTRON_RUN_AS_NODE ...) stop the desktop app from starting.
 env -i HOME="$RUN/home" PATH="$PATH" DISPLAY="$DISPLAY" XAUTHORITY="${XAUTHORITY:-}" LANG="${LANG:-en_US.UTF-8}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}" SWT_SCENE="$SCENE" SWT_DEMO="$RUN/home/demo.json" \
 "$CODE_BIN" --no-sandbox --disable-gpu --force-device-scale-factor=2 --user-data-dir="$RUN/ud" --extensions-dir="$RUN/ext" \

@@ -46,5 +46,12 @@
   "config.overlapIgnore": "Files that never get an overlap warning, as glob patterns (** crosses folders). Files you silence from a notification are remembered separately.",
   "config.notifyStuckMinutes": "Notify when a session in this folder has been working this many minutes without writing anything new to its log (0 = off). A long-running command can look the same.",
   "command.renameSession": "Rename session",
-  "config.explorerMarks": "Mark the file a session is editing right now in the Explorer and on editor tabs: a rotating badge and a green name (a blue ! while an edit waits for your approval). Folders that contain such a file are tinted too. VS Code does not let extensions change or animate the file icon itself, so the badge is what turns. With \"Reduce Motion\" on, the badge is a still dot."
+  "config.explorerMarks": "Mark the file a session is editing right now in the Explorer and on editor tabs: a rotating badge and a green name (a blue ! while an edit waits for your approval). Folders that contain such a file are tinted too. VS Code does not let extensions change or animate the file icon itself, so the badge is what turns. With \"Reduce Motion\" on, the badge is a still dot.",
+  "command.createGroup": "New group",
+  "command.openGroupBoard": "Open a group board",
+  "command.renameGroup": "Rename a group",
+  "command.deleteGroup": "Delete a group",
+  "command.addToGroup": "Put in a group",
+  "command.removeFromGroup": "Remove from group",
+  "command.setSessionRole": "Set role in group"
 }

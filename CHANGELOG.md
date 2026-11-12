@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.0
+
+- **Session groups.** Put sessions that work together in a group (group button on a session row, or *Add sessions…* on the board) and give each a role such as *watch*, *develop* or *deploy*. A group sits at the top of the Sessions view. A session belongs to one group; groups are shared by all VS Code windows on the computer.
+- **Group board.** One page per group: sessions waiting for you with the command they want to run, a table of the sessions (role, state, doing now, files changed, files not committed yet, commits, last conversation), uncommitted files that no session log explains, your messages to the group with *Copy with time*, and a shared Markdown memo file (link an existing coordination board or create one). *Copy board as Markdown* copies a snapshot. The board never types into a session.
+- New commands: New group, Open a group board, Rename a group, Delete a group.
+
 ## 0.16.1
 
 - Only the conversation you have in front of you is shaded now: the Claude Code tab that is showing (one per editor group). In 0.16.0 every open conversation tab was shaded, which marked almost the whole list.

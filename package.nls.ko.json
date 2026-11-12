@@ -46,5 +46,12 @@
   "config.overlapIgnore": "겹침 경고를 하지 않을 파일(glob 패턴, **는 폴더를 넘어 일치). 알림에서 \"알리지 않기\"로 고른 파일은 따로 기억합니다.",
   "config.notifyStuckMinutes": "이 폴더의 세션이 작업 중인데 이만큼(분) 동안 새 기록이 없으면 알립니다(0 = 끔). 오래 걸리는 명령도 똑같이 보일 수 있습니다.",
   "command.renameSession": "세션 이름 바꾸기",
-  "config.explorerMarks": "세션이 지금 고치는 파일을 파일 탐색기와 편집기 탭에 표시합니다: 도는 배지와 초록 이름(승인을 기다리는 수정은 파란 !). 그 파일이 든 폴더에도 색이 번집니다. VS Code는 확장이 파일 그림 자체를 바꾸거나 움직이게 할 수 없어서 배지가 돕니다. \"움직임 줄이기\"를 켜면 배지는 멈춘 점입니다."
+  "config.explorerMarks": "세션이 지금 고치는 파일을 파일 탐색기와 편집기 탭에 표시합니다: 도는 배지와 초록 이름(승인을 기다리는 수정은 파란 !). 그 파일이 든 폴더에도 색이 번집니다. VS Code는 확장이 파일 그림 자체를 바꾸거나 움직이게 할 수 없어서 배지가 돕니다. \"움직임 줄이기\"를 켜면 배지는 멈춘 점입니다.",
+  "command.createGroup": "새 그룹",
+  "command.openGroupBoard": "그룹 보드 열기",
+  "command.renameGroup": "그룹 이름 바꾸기",
+  "command.deleteGroup": "그룹 지우기",
+  "command.addToGroup": "그룹에 넣기",
+  "command.removeFromGroup": "그룹에서 빼기",
+  "command.setSessionRole": "그룹 안 역할 정하기"
 }

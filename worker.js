@@ -28,7 +28,8 @@ parentPort.on('message', (msg) => {
       if (!promptIndex) promptIndex = createPromptIndex();
       let last = 0;
       const onProgress = (done, total) => { if (Date.now() - last > 250) { last = Date.now(); parentPort.postMessage({ type: 'searchProgress', id: msg.id, done, total }); } };
-      const res = promptIndex.search(msg.query, { ...(msg.opts || {}), onProgress });
+      const o = { ...(msg.opts || {}), onProgress };
+      const res = msg.sids ? promptIndex.recent(msg.sids, o) : promptIndex.search(msg.query, o);
       parentPort.postMessage({ type: 'searchResult', id: msg.id, ...res });
     } catch (e) {
       parentPort.postMessage({ type: 'searchResult', id: msg.id, results: [], total: 0, error: String((e && e.message) || e) });

@@ -36,6 +36,7 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
   const vscode = {
     EventEmitter, TreeItem, ThemeIcon, ThemeColor, FileDecoration, MarkdownString, Uri,
     TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
+    ViewColumn: { Active: -1, Beside: -2, One: 1 },
     ConfigurationTarget: { Global: 1 },
     StatusBarAlignment: { Left: 1, Right: 2 },
     ProgressLocation: { Notification: 15 },
@@ -72,6 +73,22 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
       },
       withProgress: async (o, fn) => fn({ report() {} }),
       registerUriHandler: (h) => { state.uriHandler = h; return disposable(); },
+      // 편집기 영역의 웹뷰(그룹 보드): 만든 화면을 state.panels에 모은다
+      createWebviewPanel: (viewType, title) => {
+        const posted = [];
+        let onMessage = null;
+        const disposeLs = [];
+        const panel = {
+          viewType, title, revealed: 0, disposed: false,
+          webview: { html: '', cspSource: 'vscode-resource:', onDidReceiveMessage: (cb) => { onMessage = cb; return disposable(); }, postMessage: async (m) => { posted.push(m); return true; } },
+          reveal() { this.revealed++; }, onDidDispose: (cb) => { disposeLs.push(cb); return disposable(); },
+          dispose() { if (this.disposed) return; this.disposed = true; disposeLs.forEach((cb) => cb()); },
+          posted, send: (m) => onMessage(m), lastPayload: () => { for (let i = posted.length - 1; i >= 0; i--) if (posted[i].type === 'render') return posted[i].payload; return null; },
+        };
+        (state.panels = state.panels || []).push(panel);
+        return panel;
+      },
+      showOpenDialog: async (o) => { calls.push(['openDialog', o]); return state.openDialog ? [Uri.file(state.openDialog)] : undefined; },
       // 편집기 탭: 시험이 setTabs로 바꾸고 알린다
       tabGroups: { all: [], onDidChangeTabs: tabEvents.event, onDidChangeTabGroups: tabGroupEvents.event },
     },

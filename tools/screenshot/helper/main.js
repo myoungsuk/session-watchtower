@@ -24,6 +24,12 @@ exports.activate = async () => {
     }
     return;
   }
+  if (scene === 'groups') {
+    // the board of the demo group (the group file is written before VS Code starts, see shoot.sh)
+    await sleep(9000);
+    await run('claudeSessionChanges.openGroupBoard', 'gdemo');
+    return;
+  }
   if (scene === 'side' || scene === 'toasts') return;
   if (scene === 'explorer') {
     // the built-in file Explorer, with one edited file visible and another inside a collapsed folder; the edited file is also open in a tab

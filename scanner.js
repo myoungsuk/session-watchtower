@@ -1540,7 +1540,21 @@ function createPromptIndex() {
     return { results: out.slice(0, max), total: out.length, stats };
   }
 
-  return { update, search };
+  // 고른 세션들에 내가 쓴 말을 최근 것부터(그룹 보드의 "내가 한 말")
+  function recent(sids, opts) {
+    const o = opts || {};
+    const stats = update(o);
+    const want = new Set((sids || []).map(String));
+    const out = [];
+    for (const e of idx.values()) {
+      if (!want.has(e.sid)) continue;
+      for (const p of e.prompts) out.push({ sid: e.sid, title: e.title || '', ts: p.ts, text: p.text });
+    }
+    out.sort((a, b) => b.ts - a.ts);
+    return { results: out.slice(0, o.max || 50), total: out.length, stats };
+  }
+
+  return { update, search, recent };
 }
 
 // ---------- 읽은 결과 저장(창을 다시 열어도 새로 붙은 부분만 읽게) ----------

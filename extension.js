@@ -405,7 +405,7 @@ async function openOverlapCompare(p, sidA, sidB) {
 let searchWorker = null;
 let searchSeq = 0;
 const searchWaiters = new Map();
-function searchPrompts(query, onProgress) {
+function ensureSearchWorker() {
   if (!searchWorker) {
     searchWorker = new Worker(path.join(__dirname, 'worker.js'));
     searchWorker.on('message', (m) => {
@@ -418,6 +418,11 @@ function searchPrompts(query, onProgress) {
     searchWorker.on('error', fail);
     searchWorker.on('exit', () => fail(null));
   }
+  return searchWorker;
+}
+
+function searchPrompts(query, onProgress) {
+  ensureSearchWorker();
   const id = ++searchSeq;
   return new Promise((resolve) => {
     searchWaiters.set(id, { resolve, onProgress });
@@ -688,6 +693,637 @@ function setArchived(arg, on) {
   rebuild();
 }
 
+// ---------- 세션 그룹 ----------
+// 사용자가 세션을 묶는 그룹(예: "챗봇 운영" = 감시·배포·개발 세션). 세션 하나는 그룹 하나에만 들어간다.
+// 그룹마다 역할 꼬리표와 공유 메모 파일(협업보드 같은 마크다운)을 붙이고, 보드 화면에서 한꺼번에 본다.
+// 파일에 두어 같은 컴퓨터의 여러 VS Code 창이 함께 쓴다(보관함과 같은 방식):
+// { groups: [{ id, name, memo: 메모 파일 절대 경로 또는 '', members: { 세션: { role, at } }, at }] }
+
+const EMPTY_GROUPS = { groups: [] };
+let groupsMemo = { mtimeMs: -1, data: EMPTY_GROUPS };
+
+function groupsFile() {
+  return ctx ? path.join(ctx.globalStorageUri.fsPath, 'session-groups.json') : '';
+}
+
+function normalizeGroups(data) {
+  const list = data && Array.isArray(data.groups) ? data.groups : [];
+  const seen = new Set();
+  const groups = [];
+  for (const g of list) {
+    if (!g || typeof g.id !== 'string' || !g.id || typeof g.name !== 'string') continue;
+    const members = {};
+    const m = g.members && typeof g.members === 'object' && !Array.isArray(g.members) ? g.members : {};
+    for (const [sid, v] of Object.entries(m)) {
+      if (seen.has(sid)) continue; // 세션 하나는 그룹 하나에만
+      seen.add(sid);
+      members[sid] = { role: v && typeof v.role === 'string' ? v.role.slice(0, 24) : '', at: v && Number(v.at) > 0 ? Number(v.at) : 0 };
+    }
+    groups.push({ id: g.id, name: g.name.slice(0, 60), memo: typeof g.memo === 'string' ? g.memo : '', members, at: Number(g.at) > 0 ? Number(g.at) : 0 });
+  }
+  return { groups };
+}
+
+function loadGroups() {
+  const f = groupsFile();
+  if (!f) return EMPTY_GROUPS;
+  try {
+    const st = fs.statSync(f);
+    if (st.mtimeMs !== groupsMemo.mtimeMs) groupsMemo = { mtimeMs: st.mtimeMs, data: normalizeGroups(JSON.parse(fs.readFileSync(f, 'utf8'))) };
+  } catch {
+    groupsMemo = { mtimeMs: -1, data: EMPTY_GROUPS };
+  }
+  return groupsMemo.data;
+}
+
+// 다른 창이 그룹을 바꿨는지(확인 주기마다 본다). 세션 창이 마지막으로 그린 판과 비교한다:
+// 보드 같은 다른 곳이 먼저 새 파일을 읽어도 세션 창은 다시 그려야 한다
+let groupsRendered = -1;
+function groupsChangedOnDisk() {
+  const f = groupsFile();
+  if (!f) return false;
+  let m = -1;
+  try { m = fs.statSync(f).mtimeMs; } catch { m = -1; }
+  return m !== groupsRendered;
+}
+
+function saveGroups(data) {
+  const f = groupsFile();
+  if (!f) return false;
+  try {
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    const tmp = f + '.tmp-' + process.pid;
+    fs.writeFileSync(tmp, JSON.stringify(data));
+    fs.renameSync(tmp, f);
+    groupsMemo = { mtimeMs: fs.statSync(f).mtimeMs, data };
+    return true;
+  } catch (e) {
+    vscode.window.showWarningMessage(L('Could not save the groups: {0}', String((e && e.message) || e)));
+    return false;
+  }
+}
+
+// 바꿀 때는 늘 파일에서 새로 읽은 뒤 고친다(다른 창이 방금 바꾼 것을 덮지 않게)
+function updateGroups(fn) {
+  const data = normalizeGroups(JSON.parse(JSON.stringify(loadGroups())));
+  const res = fn(data);
+  if (res === false) return false;
+  const ok = saveGroups(normalizeGroups(data));
+  if (ok) rebuildSessions();
+  return ok;
+}
+
+function groupById(id) {
+  return loadGroups().groups.find((g) => g.id === id) || null;
+}
+
+function groupOfSession(sid) {
+  return loadGroups().groups.find((g) => g.members[sid]) || null;
+}
+
+function sessionBySid(sid) {
+  return raw.find((s) => s.sid === sid) || null;
+}
+
+async function askGroupName(value) {
+  const name = await vscode.window.showInputBox({ prompt: L('Group name'), placeHolder: L('For example: Chatbot operations'), value: value || '', validateInput: (v) => (String(v || '').trim() ? undefined : L('Enter a name')) });
+  return name && name.trim() ? name.trim().slice(0, 60) : null;
+}
+
+async function createGroup() {
+  const name = await askGroupName('');
+  if (!name) return null;
+  const g = { id: 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, memo: '', members: {}, at: Date.now() };
+  updateGroups((d) => { d.groups.push(g); });
+  return g.id;
+}
+
+// 그룹 고르기(새 그룹 만들기 포함). 돌려주는 값은 그룹 id
+async function pickGroup(placeHolder, exceptId) {
+  const groups = loadGroups().groups.filter((g) => g.id !== exceptId);
+  const NEW = '__new';
+  const items = groups.map((g) => ({ label: g.name, description: L('{0} session(s)', Object.keys(g.members).length), id: g.id }));
+  items.push({ label: '$(add) ' + L('New group…'), id: NEW });
+  const pick = await vscode.window.showQuickPick(items, { placeHolder });
+  if (!pick) return null;
+  return pick.id === NEW ? createGroup() : pick.id;
+}
+
+async function addToGroup(arg, groupId) {
+  const sid = sidOf(arg);
+  if (!sid) return;
+  const cur = groupOfSession(sid);
+  const s = sessionBySid(sid);
+  const id = groupId || (await pickGroup(L('Put "{0}" in which group?', s ? s.title : sid.slice(0, 8)), cur ? cur.id : ''));
+  if (!id) return;
+  updateGroups((d) => {
+    const target = d.groups.find((g) => g.id === id);
+    if (!target) return false;
+    let role = '';
+    for (const g of d.groups) if (g.members[sid]) { role = g.members[sid].role; delete g.members[sid]; }
+    target.members[sid] = { role, at: Date.now() };
+  });
+}
+
+function removeFromGroup(arg) {
+  const sid = sidOf(arg);
+  if (!sid) return;
+  updateGroups((d) => {
+    let hit = false;
+    for (const g of d.groups) if (g.members[sid]) { delete g.members[sid]; hit = true; }
+    return hit ? undefined : false;
+  });
+}
+
+async function setSessionRole(arg) {
+  const sid = sidOf(arg);
+  const g = sid && groupOfSession(sid);
+  if (!g) { vscode.window.showInformationMessage(L('Put the session in a group first. Roles belong to a group.')); return; }
+  const s = sessionBySid(sid);
+  const role = await vscode.window.showInputBox({
+    prompt: L('Role of "{0}" in {1}', s ? s.title : sid.slice(0, 8), g.name),
+    placeHolder: L('For example: watch, develop, deploy, docs (empty = no role)'),
+    value: g.members[sid].role || '',
+  });
+  if (role === undefined) return;
+  updateGroups((d) => {
+    const t = d.groups.find((x) => x.members[sid]);
+    if (!t) return false;
+    t.members[sid].role = role.trim().slice(0, 24);
+  });
+}
+
+async function renameGroup(id) {
+  const g = id ? groupById(id) : groupById(await pickGroup(L('Rename which group?')));
+  if (!g) return;
+  const name = await askGroupName(g.name);
+  if (!name) return;
+  updateGroups((d) => { const t = d.groups.find((x) => x.id === g.id); if (!t) return false; t.name = name; });
+  refreshBoard(g.id);
+}
+
+async function deleteGroup(id) {
+  const g = id ? groupById(id) : groupById(await pickGroup(L('Delete which group?')));
+  if (!g) return;
+  const yes = L('Delete group');
+  const pick = await vscode.window.showWarningMessage(L('Delete the group "{0}"? The sessions stay as they are; only the grouping, roles and the link to the memo file are removed.', g.name), { modal: true }, yes);
+  if (pick !== yes) return;
+  updateGroups((d) => { d.groups = d.groups.filter((x) => x.id !== g.id); });
+  const b = boards.get(g.id);
+  if (b) b.panel.dispose();
+}
+
+// 그룹에 세션 여러 개를 한꺼번에 넣기(보드의 "세션 넣기")
+async function addSessionsToGroup(id) {
+  const g = groupById(id);
+  if (!g) return;
+  const items = [...sessionsModel, ...archivedModel].filter((s) => !g.members[s.sid]).map((s) => {
+    const other = groupOfSession(s.sid);
+    return { label: s.title, description: [s.agent === 'codex' ? 'Codex' : '', inWorkspace(s) ? '' : s.project || '', other ? L('now in {0}', other.name) : '', stateOf(s).label].filter(Boolean).join(' · '), sid: s.sid };
+  });
+  if (!items.length) { vscode.window.showInformationMessage(L('No other sessions to add.')); return; }
+  const picks = await vscode.window.showQuickPick(items, { canPickMany: true, placeHolder: L('Add sessions to {0}', g.name) });
+  if (!picks || !picks.length) return;
+  updateGroups((d) => {
+    const t = d.groups.find((x) => x.id === g.id);
+    if (!t) return false;
+    for (const p of picks) {
+      let role = '';
+      for (const x of d.groups) if (x.members[p.sid]) { role = x.members[p.sid].role; delete x.members[p.sid]; }
+      t.members[p.sid] = { role, at: Date.now() };
+    }
+  });
+}
+
+// ---------- 그룹 보드(관제 화면) ----------
+// 그룹 하나를 한 화면에: 지금 사용자를 기다리는 세션, 세션별 현황(역할·상태·지금 하는 일·커밋 안 한 파일·커밋),
+// 세션 기록으로 설명되지 않는 커밋 전 변경, 내가 그 세션들에 한 말(원문·시각), 공유 메모 파일.
+// 세션을 대신 조작하지 않는다. 대화 열기·복사·메모 파일 열기만 한다.
+
+const boards = new Map(); // 그룹 → { panel, said, saidAt, saidBusy, watched }
+const SAID_MS = 15000;
+
+function zoneLabel(d) {
+  const off = -d.getTimezoneOffset();
+  if (off === 540) return 'KST';
+  const sign = off >= 0 ? '+' : '−';
+  const h = Math.floor(Math.abs(off) / 60);
+  const m = Math.abs(off) % 60;
+  return 'UTC' + sign + h + (m ? ':' + String(m).padStart(2, '0') : '');
+}
+
+// 결정 기록에 쓰는 모양: 11-12 15:31:15 KST
+function stampOf(ts) {
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} ${zoneLabel(d)}`;
+}
+
+function recentPrompts(sids, max) {
+  if (!sids.length) return Promise.resolve({ results: [], total: 0 });
+  ensureSearchWorker();
+  const id = ++searchSeq;
+  return new Promise((resolve) => {
+    searchWaiters.set(id, { resolve, onProgress: null });
+    searchWorker.postMessage({ type: 'search', id, sids, opts: { indexFile: ctx ? path.join(ctx.globalStorageUri.fsPath, 'prompt-index-v1.json') : '', max } });
+  });
+}
+
+function runGit(cwd, args) {
+  return new Promise((resolve) => {
+    execFile('git', ['-C', cwd, '--no-optional-locks', ...args], { timeout: 8000, maxBuffer: 16 * 1024 * 1024 }, (err, out) => resolve(err ? null : String(out)));
+  });
+}
+
+// 저장소별 커밋 안 한 파일(절대 경로). 큰 저장소에서 git status를 너무 자주 돌리지 않게 10초 동안은 다시 묻지 않는다(새로 고침 단추는 바로)
+const dirtyMemo = new Map(); // 폴더 → { at, top, files }
+async function dirtyFilesOf(cwd) {
+  const hit = dirtyMemo.get(cwd);
+  if (hit && Date.now() - hit.at < 10000) return hit;
+  const top = ((await runGit(cwd, ['rev-parse', '--show-toplevel'])) || '').trim();
+  let files = [];
+  if (top) {
+    const out = await runGit(top, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames']);
+    if (out) files = out.split('\0').filter((x) => x.length > 3).map((x) => path.join(top, x.slice(3)));
+  }
+  const res = { at: Date.now(), top, files };
+  dirtyMemo.set(cwd, res);
+  return res;
+}
+
+async function boardPayload(id) {
+  const g = groupById(id);
+  if (!g) return { gone: true, strings: boardStrings() };
+  const sids = Object.keys(g.members);
+  const byId = new Map(raw.map((s) => [s.sid, s]));
+  const modelOf = new Map(model.map((m) => [m.sid, m]));
+  const members = [];
+  const waiting = [];
+  const tops = new Map();
+  for (const sid of sids) {
+    const s = byId.get(sid);
+    const role = g.members[sid].role || '';
+    if (!s) { members.push({ sid, title: sid.slice(0, 8), role, state: 'gone', stateLabel: L('Not found in the logs'), now: '', missing: true }); continue; }
+    const st = stateOf(s);
+    const m = modelOf.get(sid);
+    const files = m ? m.files : [];
+    const shas = new Set();
+    for (const f of files) for (const c of f.changes) if (c.kind === 'commit' && c.sha) shas.add(c.sha);
+    const row = {
+      sid, title: s.title, role, state: s.alive ? st.key : 'off', stateLabel: s.alive ? st.label : L('Off'), now: [subText(s, st), nowText(s, st)].filter(Boolean).join(' · '),
+      last: s.lastActivity ? fmtAgo(s.lastActivity) : '', files: files.length, add: files.reduce((a, f) => a + (f.add || 0), 0), del: files.reduce((a, f) => a + (f.del || 0), 0),
+      commits: shas.size, canOpen: s.agent === 'codex' ? UUID_RE.test(codexId(s.sid)) : inWorkspace(s), folder: inWorkspace(s) ? '' : s.project || '', paths: files.map((f) => f.path), uncommitted: [],
+    };
+    members.push(row);
+    if (s.alive && s.status === 'waiting') {
+      const a = s.activity && !s.activity.done ? [s.activity.tool, s.activity.arg].filter(Boolean).join(': ') : '';
+      waiting.push({ sid, title: s.title, role, what: st.short || st.label, detail: a, since: st.time || '' });
+    }
+    if (s.cwd) tops.set(s.cwd, true);
+  }
+  // 커밋 안 한 파일: 그룹 세션들의 저장소마다 git status를 보고, 그 파일을 바꾼 세션에 붙인다
+  const dirty = new Set();
+  for (const cwd of tops.keys()) {
+    const d = await dirtyFilesOf(cwd);
+    for (const f of d.files) dirty.add(f);
+  }
+  for (const r of members) {
+    if (!r.paths) continue;
+    r.uncommitted = r.paths.filter((p) => dirty.has(p));
+    delete r.paths;
+  }
+  // 어느 세션 기록(보는 기간 안)으로도 설명되지 않는 변경: 사람이 직접 고쳤거나 다른 도구·기록 밖의 세션
+  const known = new Set();
+  for (const m of model) for (const f of m.files) known.add(f.path);
+  const unknown = [...dirty].filter((p) => !known.has(p)).sort();
+  const b = boards.get(id);
+  const memo = await memoView(g.memo);
+  return {
+    strings: boardStrings(), id, name: g.name, waiting, members, unknown: unknown.slice(0, 200), unknownMore: Math.max(0, unknown.length - 200),
+    said: b ? b.said : [], saidBusy: !!(b && b.saidBusy), memo, span: spanShort(cfg().lookbackHours),
+    roots: (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath),
+  };
+}
+
+// 메모 파일 경로를 짧게: 작업 폴더 안이면 그 기준, 홈 폴더 안이면 ~/…
+function shortPath(file) {
+  for (const f of vscode.workspace.workspaceFolders || []) {
+    const r = f.uri.fsPath;
+    if (file.startsWith(r + path.sep)) return path.relative(r, file);
+  }
+  const home = os.homedir();
+  return home && file.startsWith(home + path.sep) ? '~' + file.slice(home.length) : file;
+}
+
+async function memoView(file) {
+  if (!file) return { file: '', name: '', html: '' };
+  let text = '';
+  try {
+    const st = fs.statSync(file);
+    if (st.size > 600 * 1024) return { file, name: path.basename(file), html: '', error: L('The memo file is too large to show here ({0} KB). Open it in the editor.', Math.round(st.size / 1024)) };
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return { file, name: path.basename(file), html: '', error: L('The memo file cannot be read: {0}', file) };
+  }
+  let html = '';
+  try { html = await vscode.commands.executeCommand('markdown.api.render', text); } catch { html = ''; }
+  if (typeof html !== 'string' || !html) html = '<pre>' + text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) + '</pre>';
+  return { file, shown: shortPath(file), name: path.basename(file), html };
+}
+
+function boardStrings() {
+  return {
+    waiting: L('Waiting for you'), noneWaiting: L('No session in this group is waiting for you.'), sessions: L('Sessions'),
+    role: L('Role'), session: L('Session'), state: L('State'), now: L('Doing now'), changed: L('Changed'), uncommitted: L('Not committed'), commits: L('Commits'), last: L('Last talk'),
+    setRole: L('Set role'), remove: L('Remove from group'), open: L('Open conversation'), otherFolder: L('From another folder ({0}): open it from a VS Code window with that folder.', '{0}'),
+    unknownTitle: L('Changes no session log explains (last {0})', '{0}'), unknownTip: L('Uncommitted files in these repositories that no session changed within the time range: edited by hand, by another tool, or by a session outside the time range.'),
+    said: L('What you said to these sessions'), saidNone: L('Nothing yet.'), saidBusy: L('Reading your messages…'), copyQuote: L('Copy with time'),
+    memo: L('Shared memo'), memoNone: L('No memo file linked. Link a Markdown file the sessions also read and write (like a coordination board), or create a new one.'),
+    linkMemo: L('Link a file…'), newMemo: L('Create a memo file'), openMemo: L('Open in editor'), unlinkMemo: L('Unlink'),
+    addSessions: L('Add sessions…'), copyBoard: L('Copy board as Markdown'), refresh: L('Refresh'), empty: L('No sessions in this group yet. Use "Add sessions…" or the group button on a session row.'),
+    gone: L('This group was deleted.'),
+  };
+}
+
+function boardMarkdown(p) {
+  const lines = [`## ${p.name} · ${stampOf(Date.now())}`, ''];
+  lines.push(`### ${L('Waiting for you')}`);
+  if (!p.waiting.length) lines.push('- ' + L('None'));
+  for (const w of p.waiting) lines.push(`- ${w.title}${w.role ? ` (${w.role})` : ''}: ${w.what}${w.detail ? ' — `' + w.detail.replace(/`/g, "'") + '`' : ''}${w.since ? ` · ${w.since}` : ''}`);
+  lines.push('', `### ${L('Sessions')}`, '', `| ${L('Role')} | ${L('Session')} | ${L('State')} | ${L('Doing now')} | ${L('Not committed')} | ${L('Commits')} |`, '|---|---|---|---|---|---|');
+  const cell = (t) => String(t == null ? '' : t).replace(/\|/g, '\\|').replace(/\s+/g, ' ');
+  for (const r of p.members) lines.push(`| ${cell(r.role)} | ${cell(r.title)} | ${cell(r.stateLabel)} | ${cell(r.now || r.last)} | ${r.uncommitted ? r.uncommitted.length : 0} | ${r.commits || 0} |`);
+  if (p.unknown.length) {
+    lines.push('', `### ${L('Changes no session log explains (last {0})', p.span)}`);
+    for (const f of p.unknown.slice(0, 50)) lines.push('- `' + f + '`');
+  }
+  return lines.join('\n') + '\n';
+}
+
+// 보드의 "내가 한 말"은 15초에 한 번만 새로 읽는다(처음에는 기록 전체를 한 번 읽어 몇 초 걸릴 수 있다)
+function refreshSaid(id, force) {
+  const b = boards.get(id);
+  const g = groupById(id);
+  if (!b || !g || b.saidBusy) return;
+  const key = Object.keys(g.members).sort().join(',');
+  if (!force && key === b.saidKey && Date.now() - b.saidAt < SAID_MS) return; // 세션을 넣고 빼면 바로 다시 읽는다
+  b.saidKey = key;
+  b.saidBusy = true;
+  recentPrompts(Object.keys(g.members), 60).then((res) => {
+    const names = new Map(raw.map((s) => [s.sid, s.title]));
+    b.said = (res.results || []).map((x) => ({ sid: x.sid, title: names.get(x.sid) || x.title || x.sid.slice(0, 8), ts: x.ts, stamp: stampOf(x.ts), text: x.text }));
+    b.saidAt = Date.now();
+    b.saidBusy = false;
+    postBoard(id);
+  });
+}
+
+function watchMemo(id, file) {
+  const b = boards.get(id);
+  if (!b || b.watched === file) return;
+  if (b.watched) fs.unwatchFile(b.watched, b.onMemo);
+  b.watched = file || '';
+  if (file) fs.watchFile(file, { interval: 2000 }, b.onMemo);
+}
+
+async function postBoard(id) {
+  const b = boards.get(id);
+  if (!b) return;
+  const p = await boardPayload(id);
+  b.lastPayload = p;
+  if (!p.gone) {
+    b.panel.title = L('Board · {0}', p.name);
+    watchMemo(id, p.memo.file);
+  }
+  b.panel.webview.postMessage({ type: 'render', payload: p });
+}
+
+let boardTimer = null;
+function refreshBoards() {
+  if (!boards.size || boardTimer) return;
+  boardTimer = setTimeout(() => {
+    boardTimer = null;
+    for (const id of boards.keys()) { refreshSaid(id, false); postBoard(id); }
+  }, 300);
+  if (boardTimer.unref) boardTimer.unref();
+}
+
+function refreshBoard(id) {
+  if (boards.has(id)) postBoard(id);
+}
+
+async function linkMemo(id) {
+  const g = groupById(id);
+  if (!g) return;
+  const ws = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
+  const pick = await vscode.window.showOpenDialog({ canSelectMany: false, openLabel: L('Link'), filters: { Markdown: ['md', 'markdown', 'txt'] }, defaultUri: ws ? ws.uri : undefined });
+  if (!pick || !pick[0]) return;
+  const file = pick[0].fsPath;
+  updateGroups((d) => { const t = d.groups.find((x) => x.id === id); if (!t) return false; t.memo = file; });
+  refreshBoard(id);
+}
+
+// 메모 파일을 이 확장의 저장소에 새로 만든다(프로젝트 파일은 건드리지 않는다)
+async function newMemo(id) {
+  const g = groupById(id);
+  if (!g || !ctx) return;
+  const file = path.join(ctx.globalStorageUri.fsPath, 'group-memos', g.id + '.md');
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    if (!fs.existsSync(file)) {
+      fs.writeFileSync(file, [`# ${g.name}`, '', `## ${L('Decisions waiting')}`, '', `## ${L('Decision log')}`, '', `## ${L('Notes')}`, ''].join('\n'));
+    }
+  } catch (e) {
+    vscode.window.showWarningMessage(L('Could not create the memo file: {0}', String((e && e.message) || e)));
+    return;
+  }
+  updateGroups((d) => { const t = d.groups.find((x) => x.id === id); if (!t) return false; t.memo = file; });
+  refreshBoard(id);
+  vscode.window.showInformationMessage(L('Memo file created: {0}. Sessions can read and write it at this path.', file));
+}
+
+function unlinkMemo(id) {
+  updateGroups((d) => { const t = d.groups.find((x) => x.id === id); if (!t) return false; t.memo = ''; });
+  refreshBoard(id);
+}
+
+async function openGroupBoard(id) {
+  const gid = id || (loadGroups().groups.length === 1 ? loadGroups().groups[0].id : await pickGroup(L('Open the board of which group?')));
+  const g = gid && groupById(gid);
+  if (!g) return undefined;
+  const had = boards.get(g.id);
+  if (had) { had.panel.reveal(); return had.panel; }
+  const panel = vscode.window.createWebviewPanel('sessionWatchtower.board', L('Board · {0}', g.name), vscode.ViewColumn ? vscode.ViewColumn.Active : undefined, { enableScripts: true, retainContextWhenHidden: true });
+  const b = { panel, said: [], saidAt: 0, saidBusy: false, watched: '', lastPayload: null };
+  b.onMemo = () => postBoard(g.id);
+  boards.set(g.id, b);
+  panel.webview.html = boardHtml(panel.webview);
+  panel.webview.onDidReceiveMessage((m) => {
+    if (!m || typeof m.type !== 'string') return;
+    const sid = typeof m.sid === 'string' ? m.sid : '';
+    if (m.type === 'ready') { refreshSaid(g.id, true); postBoard(g.id); }
+    else if (m.type === 'open' && sid) openClaudeSession(sid);
+    else if (m.type === 'role' && sid) setSessionRole(sid);
+    else if (m.type === 'remove' && sid) removeFromGroup(sid);
+    else if (m.type === 'add') addSessionsToGroup(g.id);
+    else if (m.type === 'linkMemo') linkMemo(g.id);
+    else if (m.type === 'newMemo') newMemo(g.id);
+    else if (m.type === 'unlinkMemo') unlinkMemo(g.id);
+    else if (m.type === 'openMemo') { const cur = groupById(g.id); if (cur && cur.memo) vscode.window.showTextDocument(vscode.Uri.file(cur.memo)); }
+    else if (m.type === 'refresh') { dirtyMemo.clear(); refreshSaid(g.id, true); postBoard(g.id); }
+    else if (m.type === 'copyBoard' && b.lastPayload && !b.lastPayload.gone) {
+      const md = boardMarkdown(b.lastPayload);
+      Promise.resolve(vscode.env.clipboard.writeText(md)).then(() => vscode.window.showInformationMessage(L('Copied the board as Markdown.')));
+    } else if (m.type === 'copyQuote' && Number.isInteger(m.i) && b.said[m.i]) {
+      const x = b.said[m.i];
+      vscode.env.clipboard.writeText(`${x.stamp} "${x.text.replace(/\s+/g, ' ').trim()}" (${x.title})`);
+    }
+  });
+  panel.onDidDispose(() => {
+    if (b.watched) fs.unwatchFile(b.watched, b.onMemo);
+    boards.delete(g.id);
+  });
+  return panel;
+}
+
+function boardHtml(webview) {
+  const n = nonce();
+  return `<!DOCTYPE html>
+<html lang="${isKo() ? 'ko' : 'en'}"><head><meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data:; script-src 'nonce-${n}';">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  body { margin: 0; padding: 14px 22px 40px; font-family: var(--vscode-font-family); font-size: 13px; color: var(--vscode-foreground); background: var(--vscode-editor-background); }
+  h1 { margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+  h2 { margin: 22px 0 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--vscode-descriptionForeground); display: flex; align-items: center; gap: 8px; }
+  .count { min-width: 18px; padding: 0 6px; font-size: 11px; line-height: 17px; text-align: center; border-radius: 9px; color: var(--vscode-badge-foreground); background: var(--vscode-badge-background); letter-spacing: 0; }
+  .bar { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+  button { font: inherit; font-size: 12.5px; padding: 3px 10px; border-radius: 3px; border: 1px solid var(--vscode-button-border, transparent); color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); cursor: pointer; }
+  button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  button.link { border: 0; background: transparent; color: var(--vscode-textLink-foreground); padding: 0 4px; }
+  button.link:hover { text-decoration: underline; background: transparent; }
+  .muted { color: var(--vscode-descriptionForeground); }
+  .wait { display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin: 4px 0; border-radius: 4px; border-left: 3px solid var(--vscode-charts-blue); background: color-mix(in srgb, var(--vscode-charts-blue) 10%, transparent); }
+  .wait .t { font-weight: 600; }
+  .wait .d { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--vscode-editor-font-family); font-size: 12px; }
+  table { border-collapse: collapse; width: 100%; }
+  th { text-align: left; font-weight: 600; font-size: 12px; color: var(--vscode-descriptionForeground); padding: 4px 8px; border-bottom: 1px solid var(--vscode-widget-border, rgba(128,128,128,.35)); }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--vscode-widget-border, rgba(128,128,128,.18)); vertical-align: top; }
+  tr.sess:hover td { background: var(--vscode-list-hoverBackground); }
+  .dot { display: inline-block; box-sizing: border-box; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+  .dot.busy { border: 2px solid var(--vscode-charts-green); border-top-color: transparent; animation: spin 0.9s linear infinite; }
+  .dot.waiting { background: var(--vscode-charts-blue); }
+  .dot.done { background: var(--vscode-charts-orange); }
+  .dot.idle { background: var(--vscode-descriptionForeground); opacity: .45; }
+  .dot.off, .dot.gone { border: 1.5px solid var(--vscode-descriptionForeground); opacity: .6; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .dot.busy { animation: none; } }
+  .role { display: inline-block; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 3px; border: 1px solid var(--vscode-widget-border, rgba(128,128,128,.45)); cursor: pointer; white-space: nowrap; }
+  .role.none { border-style: dashed; color: var(--vscode-descriptionForeground); }
+  .title { font-weight: 600; cursor: pointer; }
+  .title.other { cursor: default; font-weight: 500; }
+  .now { color: var(--vscode-descriptionForeground); }
+  .now.busy { color: var(--vscode-charts-green); }
+  .now.waiting { color: var(--vscode-charts-blue); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .a { color: var(--vscode-gitDecoration-addedResourceForeground); }
+  .r { color: var(--vscode-gitDecoration-deletedResourceForeground); }
+  .unc { color: var(--vscode-gitDecoration-modifiedResourceForeground); cursor: help; }
+  .warnbox { margin-top: 6px; padding: 8px 12px; border-radius: 4px; border-left: 3px solid var(--vscode-editorWarning-foreground, #cca700); background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 9%, transparent); }
+  .warnbox code, .paths code { font-size: 12px; }
+  .paths { margin: 6px 0 0; padding-left: 18px; max-height: 160px; overflow: auto; }
+  .said { display: grid; grid-template-columns: auto auto 1fr auto; gap: 4px 12px; align-items: baseline; }
+  .said .ts { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--vscode-descriptionForeground); font-size: 12px; }
+  .said .who { white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--vscode-descriptionForeground); }
+  .said .txt { white-space: pre-wrap; word-break: break-word; max-height: 4.5em; overflow: hidden; }
+  .memo { margin-top: 6px; padding: 4px 16px; border: 1px solid var(--vscode-widget-border, rgba(128,128,128,.3)); border-radius: 4px; max-height: 70vh; overflow: auto; }
+  .memo table { width: auto; }
+  .memo td, .memo th { border: 1px solid var(--vscode-widget-border, rgba(128,128,128,.3)); }
+  .memo pre { white-space: pre-wrap; }
+  .memo a { color: var(--vscode-textLink-foreground); }
+</style></head><body>
+<div id="root"></div>
+<script nonce="${n}">
+(function () {
+  const vscode = acquireVsCodeApi();
+  const root = document.getElementById('root');
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  let S = {};
+  let roots = [];
+  // 작업 폴더 안 파일은 그 폴더 기준 경로로 짧게 보여 준다(전체 경로는 마우스 설명)
+  const rel = (f) => { for (const r of roots) if (f.startsWith(r + '/') || f.startsWith(r + '\\\\')) return f.slice(r.length + 1); return f; };
+  function render(p) {
+    S = p.strings || {};
+    roots = p.roots || [];
+    if (p.gone) { root.innerHTML = '<p class="muted">' + esc(S.gone) + '</p>'; return; }
+    let h = '<h1>' + esc(p.name) + '</h1>'
+      + '<div class="bar"><button data-act="add">' + esc(S.addSessions) + '</button><button data-act="copyBoard">' + esc(S.copyBoard) + '</button><button data-act="refresh">' + esc(S.refresh) + '</button></div>';
+    // 1. 기다리는 것
+    h += '<h2>' + esc(S.waiting) + (p.waiting.length ? '<span class="count">' + p.waiting.length + '</span>' : '') + '</h2>';
+    if (!p.waiting.length) h += '<div class="muted">' + esc(S.noneWaiting) + '</div>';
+    for (const w of p.waiting) {
+      h += '<div class="wait"><span class="t">' + esc(w.title) + '</span>' + (w.role ? '<span class="role">' + esc(w.role) + '</span>' : '')
+        + '<span>' + esc(w.what) + '</span><span class="d" title="' + esc(w.detail) + '">' + esc(w.detail) + '</span><span class="muted">' + esc(w.since) + '</span>'
+        + '<button data-act="open" data-sid="' + esc(w.sid) + '">' + esc(S.open) + '</button></div>';
+    }
+    // 2. 세션 현황
+    h += '<h2>' + esc(S.sessions) + '<span class="count">' + p.members.length + '</span></h2>';
+    if (!p.members.length) h += '<div class="muted">' + esc(S.empty) + '</div>';
+    else {
+      h += '<table><thead><tr><th>' + esc(S.role) + '</th><th>' + esc(S.session) + '</th><th>' + esc(S.state) + '</th><th>' + esc(S.now) + '</th><th class="num">' + esc(S.changed) + '</th><th class="num">' + esc(S.uncommitted) + '</th><th class="num">' + esc(S.commits) + '</th><th>' + esc(S.last) + '</th><th></th></tr></thead><tbody>';
+      for (const r of p.members) {
+        const tip = r.folder ? String(S.otherFolder || '').replace('{0}', r.folder) : S.open;
+        h += '<tr class="sess">'
+          + '<td><span class="role' + (r.role ? '' : ' none') + '" data-act="role" data-sid="' + esc(r.sid) + '" title="' + esc(S.setRole) + '">' + esc(r.role || '+') + '</span></td>'
+          + '<td><span class="title' + (r.canOpen ? '' : ' other') + '"' + (r.canOpen ? ' data-act="open" data-sid="' + esc(r.sid) + '"' : '') + ' title="' + esc(tip) + '">' + esc(r.title) + '</span>' + (r.folder ? ' <span class="muted">· ' + esc(r.folder) + '</span>' : '') + '</td>'
+          + '<td><span class="dot ' + esc(r.state) + '"></span>' + esc(r.stateLabel) + '</td>'
+          + '<td class="now ' + esc(r.state) + '">' + esc(r.now || '') + '</td>'
+          + '<td class="num">' + (r.files ? r.files + ' <span class="a">+' + r.add + '</span> <span class="r">−' + r.del + '</span>' : '') + '</td>'
+          + '<td class="num">' + (r.uncommitted && r.uncommitted.length ? '<span class="unc" title="' + esc(r.uncommitted.join('\\n')) + '">' + r.uncommitted.length + '</span>' : '') + '</td>'
+          + '<td class="num">' + (r.commits || '') + '</td>'
+          + '<td class="muted" style="white-space:nowrap">' + esc(r.last || '') + '</td>'
+          + '<td><button class="link" data-act="remove" data-sid="' + esc(r.sid) + '" title="' + esc(S.remove) + '">✕</button></td></tr>';
+      }
+      h += '</tbody></table>';
+    }
+    // 3. 세션 기록으로 설명되지 않는 커밋 전 변경
+    if (p.unknown.length) {
+      h += '<div class="warnbox" title="' + esc(S.unknownTip) + '"><b>⚠ ' + esc(String(S.unknownTitle || '').replace('{0}', p.span)) + ' · ' + (p.unknown.length + p.unknownMore) + '</b>'
+        + '<ul class="paths">' + p.unknown.map((f) => '<li><code title="' + esc(f) + '">' + esc(rel(f)) + '</code></li>').join('') + '</ul></div>';
+    }
+    // 4. 내가 한 말
+    h += '<h2>' + esc(S.said) + '</h2>';
+    if (p.saidBusy && !p.said.length) h += '<div class="muted">' + esc(S.saidBusy) + '</div>';
+    else if (!p.said.length) h += '<div class="muted">' + esc(S.saidNone) + '</div>';
+    else {
+      h += '<div class="said">';
+      p.said.forEach((x, i) => {
+        h += '<span class="ts">' + esc(x.stamp) + '</span><span class="who" title="' + esc(x.title) + '">' + esc(x.title) + '</span><span class="txt">' + esc(x.text) + '</span>'
+          + '<button class="link" data-act="copyQuote" data-i="' + i + '">' + esc(S.copyQuote) + '</button>';
+      });
+      h += '</div>';
+    }
+    // 5. 공유 메모
+    h += '<h2>' + esc(S.memo) + (p.memo.name ? ' · <span style="text-transform:none;letter-spacing:0">' + esc(p.memo.name) + '</span>' : '') + '</h2>';
+    if (!p.memo.file) h += '<div class="muted">' + esc(S.memoNone) + '</div><div class="bar"><button data-act="linkMemo">' + esc(S.linkMemo) + '</button><button data-act="newMemo">' + esc(S.newMemo) + '</button></div>';
+    else {
+      h += '<div class="bar"><button data-act="openMemo">' + esc(S.openMemo) + '</button><button data-act="linkMemo">' + esc(S.linkMemo) + '</button><button data-act="unlinkMemo">' + esc(S.unlinkMemo) + '</button><span class="muted" style="align-self:center" title="' + esc(p.memo.file) + '">' + esc(p.memo.shown || p.memo.file) + '</span></div>';
+      h += p.memo.error ? '<div class="muted">' + esc(p.memo.error) + '</div>' : '<div class="memo">' + p.memo.html + '</div>';
+    }
+    root.innerHTML = h;
+  }
+  root.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-act]');
+    if (!el) return;
+    e.preventDefault();
+    vscode.postMessage({ type: el.dataset.act, sid: el.dataset.sid, i: el.dataset.i === undefined ? undefined : Number(el.dataset.i) });
+  });
+  window.addEventListener('message', (e) => { if (e.data && e.data.type === 'render') render(e.data.payload); });
+  vscode.postMessage({ type: 'ready' });
+})();
+</script></body></html>`;
+}
+
 function folderKey(s) {
   return s.project || L('Unknown folder');
 }
@@ -745,6 +1381,7 @@ function rebuildSessions() {
       : undefined;
   }
   sessionsWebview.post();
+  refreshBoards();
 }
 
 class Provider {
@@ -943,7 +1580,7 @@ function onTabsChanged() {
   if (tabTimer.unref) tabTimer.unref();
 }
 
-function sessionRow(s, tabs) {
+function sessionRow(s, tabs, team) {
   const st = stateOf(s);
   const codex = s.agent === 'codex';
   const canOpen = codex ? UUID_RE.test(codexId(s.sid)) : inWorkspace(s);
@@ -958,7 +1595,9 @@ function sessionRow(s, tabs) {
   const add = m ? m.files.reduce((a, f) => a + (f.add || 0), 0) : 0;
   const del = m ? m.files.reduce((a, f) => a + (f.del || 0), 0) : 0;
   const tab = !!(tabs && tabs.has(s.sid));
+  const role = team && team.members[s.sid] ? team.members[s.sid].role : '';
   return {
+    team: team ? team.id : '', role,
     sid: s.sid, title: s.title, state: st.key, meta, tip: (tab ? L('Shown in a tab right now') + '\n' : '') + sessionTooltip(s, st) + '\n' + hint, canOpen, alive: !!s.alive, codex, tab,
     files: m ? m.files.length : 0, add, del, now: [subText(s, st), nowText(s, st)].filter(Boolean).join(' · '), folder: inWorkspace(s) ? '' : s.project || '', worktree: s.worktree || '',
     overlap: m ? m.files.filter((f) => f.overlap).length : 0,
@@ -982,6 +1621,9 @@ function sessionsPayload() {
     lgBusy: L('Working'), lgWaiting: L('Waiting for you (approval or answer)'), lgDone: L('Just finished (less than 10 minutes ago)'), lgIdle: L('Idle'), lgOff: L('Off (no Claude process)'),
     lgA: L('Created in this session'), lgM: L('Modified in this session'), lgD: L('Not on disk anymore (deleted)'), lgQ: L('Guessed from shell commands (not certain)'),
     lgTab: L('Shown in a tab right now'),
+    thisFolder: L('This folder'), addToGroup: L('Put in a group'), removeFromGroup: L('Remove from group'), setRole: L('Set role'),
+    openBoard: L('Open the group board'), renameGroup: L('Rename group'), deleteGroup: L('Delete group'),
+    teamEmpty: L('No sessions yet: use the group button on a session row'), teamTip: L('Group: {0} session(s). The board shows them all in one place.', '{0}'),
     lgNow: L('What it is doing now'), lgDiff: L('Lines added / removed within the time range of the Changed files view'),
     // 변경 규모는 변경 파일 창의 "보는 기간" 안에서, 고칠 때마다 더한 합계(같은 줄을 여러 번 고치면 여러 번 셈)
     diffTip: L('Last {0}: {1} lines added, {2} removed (each edit counted)', spanLong(cfg().lookbackHours), '{1}', '{2}'),
@@ -992,11 +1634,27 @@ function sessionsPayload() {
   const tabs = openTabSids(sessionsModel.concat(archivedModel));
   tabKey = claudeTabLabels().sort().join('\n');
   const rowOf = (s) => sessionRow(s, tabs);
+  // 사용자가 만든 그룹: 맨 위에 묶어 보여 주고, 그 세션은 폴더 칸·보관함에서 뺀다(한 세션은 한 곳에만)
+  const teamList = loadGroups().groups;
+  groupsRendered = groupsMemo.mtimeMs;
+  const teamOf = new Map();
+  for (const g of teamList) for (const sid of Object.keys(g.members)) teamOf.set(sid, g);
+  const all = sessionsModel.concat(archivedModel);
+  const free = (s) => !teamOf.has(s.sid);
+  const teams = teamList.map((g) => {
+    const items = all.filter((s) => teamOf.get(s.sid) === g);
+    return {
+      id: g.id, name: g.name, desc: groupDescription(items, false), waiting: items.some((s) => s.alive && s.status === 'waiting'),
+      total: Object.keys(g.members).length, rows: items.map((s) => sessionRow(s, tabs, g)),
+    };
+  });
+  const folderGroups = groups.map(([key, items]) => [key, items.filter(free)]).filter(([, items]) => items.length);
   return {
+    teams,
     strings,
     compact: !cfg().sessionDetails,
     reading: stillReading ? L('Reading more logs…') : '',
-    archived: archivedModel.map(rowOf),
+    archived: archivedModel.filter(free).map(rowOf),
     archivedTip: autoArchiveDays() <= 0 ? L('Sessions you archived here.')
       : followsClaudeArchive()
         ? L('Sessions with no conversation for {0} day(s) (the Claude Code setting "Archive Inactive Sessions") and sessions you archived here.', autoArchiveDays())
@@ -1004,9 +1662,9 @@ function sessionsPayload() {
     // 단추의 숫자는 이 폴더에서 열려 있는 세션 수(머리말의 작업·멈춤·쉼 합과 같다). 다른 폴더는 설명에만 적는다
     openHere: mine.filter((s) => s.alive).length,
     openElsewhere: groups.reduce((n, [, items]) => n + items.filter((s) => s.alive).length, 0),
-    mine: mine.map(rowOf),
-    noneHere: mine.length ? '' : L('No sessions in this folder'),
-    groups: groups.map(([key, items]) => ({
+    mine: mine.filter(free).map(rowOf),
+    noneHere: mine.filter(free).length || teams.length ? '' : L('No sessions in this folder'),
+    groups: folderGroups.map(([key, items]) => ({
       key,
       desc: groupDescription(items, false),
       waiting: items.some((s) => s.alive && s.status === 'waiting'),
@@ -1047,6 +1705,12 @@ class SessionsWebview {
       else if (m.type === 'pickArchive') pickArchiveAfter();
       else if (m.type === 'rename' && typeof m.sid === 'string') renameSession(m.sid);
       else if (m.type === 'searchText' && typeof m.q === 'string') searchConversations(m.q);
+      else if (m.type === 'group' && typeof m.sid === 'string') addToGroup(m.sid);
+      else if (m.type === 'ungroup' && typeof m.sid === 'string') removeFromGroup(m.sid);
+      else if (m.type === 'role' && typeof m.sid === 'string') setSessionRole(m.sid);
+      else if (m.type === 'board' && typeof m.team === 'string') openGroupBoard(m.team);
+      else if (m.type === 'renameGroup' && typeof m.team === 'string') renameGroup(m.team);
+      else if (m.type === 'deleteGroup' && typeof m.team === 'string') deleteGroup(m.team);
     });
     view.onDidChangeVisibility(() => { if (view.visible) { requestScan(false); this.post(); } });
     view.onDidDispose(() => { if (this.view === view) { this.view = undefined; sessionsView = null; this.ready = false; } });
@@ -1120,6 +1784,16 @@ function sessionsHtml(webview) {
   /* 폴더 묶음 머리줄은 세션 줄과 한눈에 구별되게: 구역 이름 + 폴더 그림 + 작은 글씨 */
   .sect { margin-top: 10px; padding: 9px 10px 3px; border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.25))); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--vscode-descriptionForeground); }
   details.grp > summary { min-height: 26px; font-size: 12px; }
+  /* 사용자가 만든 그룹: 폴더 묶음보다 눈에 띄게(조금 큰 글씨, 아래 선) */
+  details.team { margin-bottom: 4px; }
+  details.team > summary { min-height: 30px; font-size: 12.5px; border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.25))); }
+  details.team > summary .gname { opacity: 1; }
+  details.team > summary .tacts { display: none; }
+  details.team > summary:hover .tacts, details.team > summary:focus-within .tacts { display: inline-flex; }
+  .tag.role { color: var(--vscode-foreground); background: transparent; border: 1px solid var(--vscode-textLink-foreground); flex-shrink: 1; min-width: 0; max-width: 7em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .l1 .title { min-width: 5.5em; } /* 꼬리표가 많아도 제목이 몇 글자는 보이게 */
+  .row .tag.role { min-width: 2.6em; }
+  .l1 .meta { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* 자리가 모자라면 오른쪽 글자부터 줄인다 */
   details.arch { margin-top: 8px; padding-top: 4px; border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.25))); }
   .gicon { flex-shrink: 0; display: inline-flex; color: var(--vscode-descriptionForeground); }
   .gname { color: var(--vscode-foreground); font-weight: 600; opacity: 0.85; }
@@ -1203,11 +1877,18 @@ function sessionsHtml(webview) {
   const restoreIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M3 8.5v4h10v-4"/><path d="M8 10V2.5"/><path d="M5.5 5 8 2.5 10.5 5"/></svg>';
   const folderIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M1.5 4.5v8h13v-6.5h-6l-1.5-1.5z"/></svg>';
   const pencilIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M11 2.5 13.5 5 5.5 13H3v-2.5z"/><path d="M9.5 4 12 6.5"/></svg>';
+  const teamIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><circle cx="5.5" cy="6" r="2.2"/><circle cx="11" cy="6.5" r="1.8"/><path d="M1.8 13c.4-2.3 1.9-3.6 3.7-3.6s3.3 1.3 3.7 3.6"/><path d="M9.6 10.3c.5-.4 1-.6 1.6-.6 1.4 0 2.5 1 2.9 3"/></svg>';
+  const groupAddIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="6" cy="6" r="2.3"/><path d="M2 13c.4-2.3 2-3.6 4-3.6 1 0 1.9.3 2.6.9"/><path d="M12 9v5M9.5 11.5h5"/></svg>';
+  const groupOutIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="6" cy="6" r="2.3"/><path d="M2 13c.4-2.3 2-3.6 4-3.6 1 0 1.9.3 2.6.9"/><path d="M9.5 11.5h5"/></svg>';
+  const tagIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M2 2.5h5.5L14 9l-5 5-6.5-6.5z"/><circle cx="5.2" cy="5.7" r="1"/></svg>';
+  const boardIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="11" rx="1"/><path d="M2 6h12M6.5 6v7.5"/></svg>';
+  const trashIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.7 9h6.6l.7-9"/></svg>';
   const gearIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/></svg>';
   function row(r, inArchive) {
     const btn = (act, label, svg) => '<button class="act" data-act="' + act + '" data-sid="' + esc(r.sid) + '" title="' + esc(label) + '" aria-label="' + esc(label) + '">' + svg + '</button>';
     // 보는 기간 안에 바꾼 파일이 없는 세션은 "불러오기" 단추(그 세션의 마지막 작업분을 읽어 온다)
-    const acts = (r.codex ? '' : btn('rename', strings.rename, pencilIcon))
+    const acts = (r.team ? btn('role', strings.setRole, tagIcon) + btn('ungroup', strings.removeFromGroup, groupOutIcon) : btn('group', strings.addToGroup, groupAddIcon))
+      + (r.codex ? '' : btn('rename', strings.rename, pencilIcon))
       + (inArchive ? '' : r.files ? btn('review', strings.review, reviewIcon) + btn('reveal', strings.showChanges, icon) : btn('reveal', strings.loadChanges, icon))
       + (inArchive ? btn('unarchive', strings.unarchive, restoreIcon) : btn('archive', strings.archive, archiveIcon));
     const ds = diffstat(r.add || 0, r.del || 0);
@@ -1215,6 +1896,7 @@ function sessionsHtml(webview) {
     const sub = !(last && last.compact) && (r.now || ds) ? '<div class="sub"><span class="now ' + esc(r.state) + '">' + esc(r.now) + '</span>' + ds + '</div>' : '';
     return '<div class="row' + (r.canOpen ? '' : ' other') + (r.tab ? ' tab' : '') + '" role="listitem" tabindex="0" data-sid="' + esc(r.sid) + '" data-open="' + (r.canOpen ? '1' : '') + '" title="' + esc(r.tip) + '">'
       + '<div class="l1"><span class="dot ' + esc(r.state) + '"></span><span class="title">' + esc(r.title) + '</span>'
+      + (r.role ? '<span class="tag role">' + esc(r.role) + '</span>' : '')
       + (r.codex ? '<span class="tag">Codex</span>' : '')
       + (r.overlap ? '<span class="tag warn" title="' + esc(String(strings.overlapTip || '').replace('{0}', r.overlap)) + '">⚠ ' + r.overlap + '</span>' : '')
       + (inArchive && r.folder ? '<span class="tag">' + esc(r.folder) + '</span>' : '')
@@ -1265,9 +1947,26 @@ function sessionsHtml(webview) {
     const keep = (r) => (!saved.active || r.alive) && (!needle || String(r.title).toLowerCase().includes(needle));
     const filtering = saved.active || !!needle;
     const mine = (p.mine || []).filter(keep);
-    let h = mine.map((r) => row(r, false)).join('');
+    let h = '';
+    let shown = 0;
+    // 사용자가 만든 그룹(맨 위, 처음에는 펼침)
+    const sbtn = (act, label, svg, id) => '<button class="sact" data-act="' + act + '" data-team="' + esc(id) + '" title="' + esc(label) + '" aria-label="' + esc(label) + '">' + svg + '</button>';
+    for (const t of p.teams || []) {
+      const rows = t.rows.filter(keep);
+      if (filtering && !rows.length) continue;
+      shown += rows.length;
+      const key = 'team:' + t.id;
+      const open = needle ? rows.length > 0 : saved.open[key] !== false;
+      h += '<details class="grp team" data-key="' + esc(key) + '"' + (open ? ' open' : '') + '><summary title="' + esc(String(strings.teamTip || '').replace('{0}', t.total)) + '"><span class="chev">›</span>'
+        + '<span class="gicon">' + teamIcon + '</span>' + (t.waiting ? '<span class="bell"></span>' : '') + '<span class="gname">' + esc(t.name) + '</span><span class="gdesc">' + esc(t.desc) + '</span>'
+        + '<span class="tacts">' + sbtn('renameGroup', strings.renameGroup, pencilIcon, t.id) + sbtn('deleteGroup', strings.deleteGroup, trashIcon, t.id) + '</span>'
+        + sbtn('board', strings.openBoard, boardIcon, t.id) + '</summary>'
+        + (rows.length ? rows.map((r) => row(r, false)).join('') : '<div class="msg">' + esc(strings.teamEmpty) + '</div>') + '</details>';
+    }
+    if ((p.teams || []).length && mine.length) h += '<div class="sect">' + esc(strings.thisFolder) + '</div>';
+    h += mine.map((r) => row(r, false)).join('');
     if (p.noneHere && !filtering) h += '<div class="msg">' + esc(p.noneHere) + '</div>';
-    let shown = mine.length;
+    shown += mine.length;
     let sect = false;
     for (const g of p.groups || []) {
       const rows = g.rows.filter(keep);
@@ -1294,7 +1993,7 @@ function sessionsHtml(webview) {
   }
   root.addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-act]');
-    if (btn) { e.stopPropagation(); e.preventDefault(); vscode.postMessage({ type: btn.dataset.act, sid: btn.dataset.sid }); return; }
+    if (btn) { e.stopPropagation(); e.preventDefault(); vscode.postMessage({ type: btn.dataset.act, sid: btn.dataset.sid, team: btn.dataset.team }); return; }
     const r = e.target.closest('.row');
     if (r && r.dataset.open) vscode.postMessage({ type: 'open', sid: r.dataset.sid });
   });
@@ -1923,6 +2622,7 @@ function workingHere() {
 function startTimer() {
   if (timer) clearInterval(timer);
   timer = setInterval(() => {
+    if (groupsChangedOnDisk()) rebuildSessions(); // 다른 VS Code 창이 그룹을 바꿨다
     if ((treeView && treeView.visible) || (sessionsView && sessionsView.visible)) { requestScan(false); return; }
     const bg = backgroundWanted();
     if (bg && (workingHere() || bgTicks++ % BG_EVERY === 0)) requestScan(false);
@@ -2074,6 +2774,13 @@ function activate(context) {
     vscode.commands.registerCommand('claudeSessionChanges.pickArchiveAfter', pickArchiveAfter),
     vscode.commands.registerCommand('claudeSessionChanges.searchConversations', (q) => searchConversations(typeof q === 'string' ? q : '')),
     vscode.commands.registerCommand('claudeSessionChanges.renameSession', (arg) => renameSession(arg)),
+    vscode.commands.registerCommand('claudeSessionChanges.createGroup', () => createGroup()),
+    vscode.commands.registerCommand('claudeSessionChanges.addToGroup', (arg, id) => addToGroup(arg, typeof id === 'string' ? id : undefined)),
+    vscode.commands.registerCommand('claudeSessionChanges.removeFromGroup', (arg) => removeFromGroup(arg)),
+    vscode.commands.registerCommand('claudeSessionChanges.setSessionRole', (arg) => setSessionRole(arg)),
+    vscode.commands.registerCommand('claudeSessionChanges.openGroupBoard', (id) => openGroupBoard(typeof id === 'string' ? id : undefined)),
+    vscode.commands.registerCommand('claudeSessionChanges.renameGroup', (id) => renameGroup(typeof id === 'string' ? id : undefined)),
+    vscode.commands.registerCommand('claudeSessionChanges.deleteGroup', (id) => deleteGroup(typeof id === 'string' ? id : undefined)),
     vscode.commands.registerCommand('claudeSessionChanges.copySummary', (arg) => copySummary(arg)),
     vscode.commands.registerCommand('claudeSessionChanges.copyFolderSummary', () => copyFolderSummary()),
     vscode.commands.registerCommand('claudeSessionChanges.sessionsForFile', (uri) => sessionsForFile(uri)),
@@ -2108,6 +2815,8 @@ function deactivate() {
   if (timer) clearInterval(timer);
   if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; }
   if (tabTimer) { clearTimeout(tabTimer); tabTimer = null; }
+  if (boardTimer) { clearTimeout(boardTimer); boardTimer = null; }
+  for (const b of boards.values()) if (b.watched) fs.unwatchFile(b.watched, b.onMemo);
   stopSpin();
   if (searchWorker) { try { searchWorker.terminate(); } catch { /* 이미 끝남 */ } searchWorker = null; }
   const w = worker;

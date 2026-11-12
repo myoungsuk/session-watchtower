@@ -2,7 +2,7 @@
   "name": "session-watchtower",
   "displayName": "Session Watchtower for Claude Code",
   "description": "%description%",
-  "version": "0.16.1",
+  "version": "0.17.0",
   "scripts": {
     "test": "node --test test/*.test.js",
     "shot": "bash tools/screenshot/run.sh"
@@ -159,6 +159,40 @@
         "title": "%command.renameSession%",
         "category": "Session Watchtower",
         "icon": "$(edit)"
+      },
+      {
+        "command": "claudeSessionChanges.createGroup",
+        "title": "%command.createGroup%",
+        "category": "Session Watchtower",
+        "icon": "$(add)"
+      },
+      {
+        "command": "claudeSessionChanges.openGroupBoard",
+        "title": "%command.openGroupBoard%",
+        "category": "Session Watchtower",
+        "icon": "$(layout)"
+      },
+      {
+        "command": "claudeSessionChanges.renameGroup",
+        "title": "%command.renameGroup%",
+        "category": "Session Watchtower"
+      },
+      {
+        "command": "claudeSessionChanges.deleteGroup",
+        "title": "%command.deleteGroup%",
+        "category": "Session Watchtower"
+      },
+      {
+        "command": "claudeSessionChanges.addToGroup",
+        "title": "%command.addToGroup%"
+      },
+      {
+        "command": "claudeSessionChanges.removeFromGroup",
+        "title": "%command.removeFromGroup%"
+      },
+      {
+        "command": "claudeSessionChanges.setSessionRole",
+        "title": "%command.setSessionRole%"
       }
     ],
     "menus": {
@@ -205,6 +239,18 @@
         },
         {
           "command": "claudeSessionChanges.renameSession",
+          "when": "false"
+        },
+        {
+          "command": "claudeSessionChanges.addToGroup",
+          "when": "false"
+        },
+        {
+          "command": "claudeSessionChanges.removeFromGroup",
+          "when": "false"
+        },
+        {
+          "command": "claudeSessionChanges.setSessionRole",
           "when": "false"
         }
       ],
@@ -253,6 +299,16 @@
           "command": "claudeSessionChanges.copyFolderSummary",
           "when": "view == claudeSessionChanges.tree",
           "group": "2_copy"
+        },
+        {
+          "command": "claudeSessionChanges.createGroup",
+          "when": "view == claudeSessionChanges.sessions",
+          "group": "0_groups@1"
+        },
+        {
+          "command": "claudeSessionChanges.openGroupBoard",
+          "when": "view == claudeSessionChanges.sessions",
+          "group": "0_groups@2"
         }
       ],
       "view/item/context": [
@@ -320,6 +376,11 @@
           "command": "claudeSessionChanges.renameSession",
           "when": "view == claudeSessionChanges.tree && viewItem =~ /^session/",
           "group": "3_archive@0"
+        },
+        {
+          "command": "claudeSessionChanges.addToGroup",
+          "when": "view == claudeSessionChanges.tree && viewItem =~ /^session/",
+          "group": "3_archive@2"
         }
       ],
       "explorer/context": [

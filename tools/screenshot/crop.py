@@ -11,6 +11,8 @@ if scene == 'side':
     box = (0, 60, left, H)
 elif scene == 'explorer':        # side bar with the file Explorer, plus the start of the editor tabs
     box = (0, 60, left + 520, 60 + 760)
+elif scene == 'groups':          # the whole window: side bar with the group and the board
+    box = (0, 0, W, H)
 elif scene == 'tabs':            # side bar plus the editor tabs above the editor
     box = (0, 0, min(W, left + 1000), 1000)
 elif scene == 'toasts':

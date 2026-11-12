@@ -20,6 +20,7 @@ If you run several Claude Code sessions at once, you lose track quickly: which o
 - **In the file Explorer too**: the file a session is editing right now gets a turning badge and a green name, also on its editor tab.
 - **Notifications**: when a session waits for your approval or answer, when two sessions change the same file, and when a working session goes quiet.
 - **Find things**: search what you wrote in any session, or ask which sessions changed a file.
+- **Groups and a board per group**: put the sessions that work together (for example a watcher, a developer and a deployer) in a group, give each a role, and watch them on one board.
 - **Housekeeping**: archive, rename, copy a summary of the changes as Markdown.
 - **Codex too**: Codex sessions appear next to Claude Code sessions.
 
@@ -30,6 +31,7 @@ It never touches your project files and nothing leaves your machine.
 - [The Sessions view](#the-sessions-view)
 - [The Changed files view](#the-changed-files-view)
 - [In the file Explorer](#in-the-file-explorer)
+- [Groups and the group board](#groups-and-the-group-board)
 - [Review a whole session](#review-a-whole-session)
 - [Notifications](#notifications)
 - [Open a session from another program](#open-a-session-from-another-program)
@@ -109,6 +111,31 @@ Good to know:
 - VS Code does not let an extension change or animate the file icon itself. The badge next to the name is what turns. With VS Code's *Reduce Motion* setting on, it is a still dot.
 - The badge sits next to git's own (`◐, M`). While a file is being edited its name is green instead of git's color; a file with errors keeps its error color.
 - Turn it off with the `explorerMarks` setting.
+
+## Groups and the group board
+
+<img src="media/readme/groups.png" width="760" alt="A group of four sessions at the top of the Sessions view, and its board: waiting sessions, a table of the sessions with roles, uncommitted files, your messages with times, and the shared memo">
+
+If you run several sessions as a team, each with its own job, put them in a **group**.
+
+- **Make a group and fill it.** Hover a session and press the group button, then pick a group or "New group…". A session belongs to one group at a time. The board's *Add sessions…* adds several at once, also from other folders.
+- **Roles.** Give each session a role such as *watch*, *develop* or *deploy*. It shows as a tag next to the name.
+- **The group stays together at the top** of the Sessions view; its sessions no longer repeat further down.
+- Groups are stored for this computer, so every VS Code window on it shows the same groups.
+
+The **board** button on a group opens its board, a page for the whole group:
+
+| Part | What it shows |
+|---|---|
+| Waiting for you | Sessions waiting for your approval or answer, with the command they want to run |
+| Sessions | Role, state, what each is doing now, files changed, files **not committed yet**, commits and the last conversation |
+| Changes no session log explains | Uncommitted files in the group's repositories that no session changed within the time range: edited by hand, by another tool or by a session outside the time range. Check these before you build a release |
+| What you said | Your messages to the group's sessions, newest first. *Copy with time* copies one as `11-12 15:31:15 KST "…" (session)`, the way a decision log records it |
+| Shared memo | A Markdown file the sessions also read and write, such as a coordination board with decisions and handoff notes. Link an existing file, or create one in the extension's storage. It is shown as rendered Markdown and refreshes when the file changes |
+
+*Copy board as Markdown* puts a snapshot of the board on the clipboard, for example to paste into the shared memo.
+
+The board only shows and copies. It never types into a session or approves anything for it.
 
 ## Review a whole session
 
@@ -215,6 +242,7 @@ Everything stays on your machine. The extension makes no network requests and co
 
 - **It reads** `~/.claude/projects`, `~/.claude/sessions` and `~/.codex/sessions`, and runs `git` in your repositories (`git log`, `git status`, `git show`).
 - **It keeps** its own files in VS Code's private storage for this extension: a read cache, the list of archived sessions, the files you silenced for overlap warnings, and an index of the messages you typed (for the conversation search).
+- **Groups** (names, members, roles and the linked memo file) are kept in the same private storage. A memo file you create from a board is created there too; a memo file you link is only read.
 - **It writes outside that storage only when you rename a session**: one title line is appended to that session's log, exactly as Claude Code does it. Your project files are never changed.
 
 ## Requirements and limitations
@@ -225,6 +253,7 @@ Everything stays on your machine. The extension makes no network requests and co
 - **"Being edited right now."** Edit tools finish in well under a second, so the spinner is shown for 30 seconds after a change while the session keeps working.
 - **"May be stuck."** A command that runs for a long time without output looks the same as a stuck session.
 - **Explorer marks.** They appear a few seconds after the edit starts (the logs are checked every `pollSeconds`) and stay for 30 seconds after the last change. Only files inside the folder open in this window are marked. A Codex session is noticed within a minute when no Claude Code session is working in this folder and the side bar is hidden.
+- **Groups.** Roles and members are matched by session ID: a new conversation (after `/clear` or *New session*) is a new session and has to be added again. A session from another folder is listed on the board but its conversation opens only from a window with that folder. "Changes no session log explains" only knows the sessions within the time range, so a short range lists more files there.
 - **Shown in a tab.** Claude Code's tabs carry only the session name (cut to 24 characters and `…` when longer), so tabs are matched to sessions by name. When several sessions in this folder have the name, the running ones are marked, otherwise the most recent one. A conversation open in the Claude Code side bar instead of a tab is not marked.
 - **Archive.** Sessions you archived or restored by hand inside Claude Code cannot be detected (Claude Code keeps that list private), and neither can its "unread" mark. If you archive by hand in Claude Code, set the archive time to something short such as 1 day so finished sessions leave the list here too. Sessions started by scripts through the SDK are left out of the list, as in Claude Code.
 - **Search.** Only your own messages are indexed, up to 2,000 characters each, and only Claude Code sessions.
@@ -262,6 +291,7 @@ Available from the Command Palette under **Session Watchtower**, and from the me
 
 | Command | What it does |
 |---|---|
+| New group / Open a group board / Rename a group / Delete a group | Work with groups (deleting a group leaves its sessions as they are). |
 | Search conversations | Find a session by what you wrote in it. |
 | Which sessions changed this file? | List the sessions that changed the current or selected file. |
 | Copy a summary of all sessions' changes in this folder | Markdown summary on the clipboard. |
@@ -275,7 +305,7 @@ Available from the Command Palette under **Session Watchtower**, and from the me
 
 No build step and no dependencies. Run the tests with `npm test` (Node 20 or newer). They use a fake home folder with made-up session logs and a stub of the VS Code API, so they never read your real `~/.claude`.
 
-`npm run shot` (Linux) takes the real screenshots used in this page: it starts desktop VS Code on a virtual display (Xvfb) with the extension and made-up demo sessions, and writes pictures to `.shots/`. Scenes: `side`, `toasts`, `search`, `file`, `review`, `summary`, `explorer` and `gif`, for example `npm run shot -- side light`. It needs desktop VS Code, `xvfb-run`, ImageMagick and Python 3 with Pillow.
+`npm run shot` (Linux) takes the real screenshots used in this page: it starts desktop VS Code on a virtual display (Xvfb) with the extension and made-up demo sessions, and writes pictures to `.shots/`. Scenes: `side`, `toasts`, `search`, `file`, `review`, `summary`, `explorer`, `tabs`, `groups` and `gif`, for example `npm run shot -- side light`. It needs desktop VS Code, `xvfb-run`, ImageMagick and Python 3 with Pillow.
 
 ## Feedback and contact
 
@@ -290,6 +320,7 @@ Claude Code 세션을 여러 개 돌릴 때 **어느 세션이 일하는 중이�
 - **파일 탐색기에도**: 세션이 지금 고치는 파일은 VS Code 파일 탐색기와 편집기 탭에서 도는 배지와 초록 이름으로 보입니다. 그 파일이 든 폴더에는 초록 점이 붙습니다.
 - **알림**: 세션이 승인이나 답을 기다릴 때, 두 세션이 같은 파일을 고쳤을 때, 작업 중인 세션이 10분 넘게 조용할 때 알려 줍니다.
 - **찾기**: 내가 세션에 쓴 말로 세션을 찾고, 파일을 우클릭해 그 파일을 고친 세션을 봅니다.
+- **그룹과 보드**: 함께 일하는 세션(감시·개발·배포 등)을 그룹으로 묶고 역할을 붙입니다. 그룹 보드 한 화면에서 기다리는 세션, 세션별 현황(커밋 안 한 파일 포함), 세션 기록으로 설명되지 않는 변경, 내가 한 말(시각과 함께 복사), 공유 메모 파일을 봅니다.
 - **정리**: 보관함, 세션 이름 바꾸기, 변경 요약을 마크다운으로 복사.
 - **바깥에서 열기**: 데스크톱 알림 같은 다른 프로그램이 `vscode://kms-labs.session-watchtower/open?title=…` 주소로 그 세션의 대화를 열 수 있습니다.
 - **Codex** 세션도 함께 나옵니다.
