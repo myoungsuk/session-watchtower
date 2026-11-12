@@ -389,3 +389,77 @@ test('Claude Code가 만든 git worktree 세션은 저장소 이름으로 묶는
   assert.deepStrictEqual([s.project, s.worktree, s.cwd], [path.basename(project), 'fix-login-ab12cd', wt]);
 });
 
+test('스크립트로 고친 파일: 명령이 돈 시간대에 바뀐(커밋 안 된) 파일을 추정으로 넣는다', (t) => {
+  try { execFileSync('git', ['--version'], { stdio: 'ignore' }); } catch { t.skip('git 없음'); return; }
+  const repo = path.join(home, 'work', 'script-repo');
+  fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', ...args], { stdio: 'ignore' });
+  const tracked = path.join(repo, 'src', 'patched.js');     // 스크립트가 고친 파일
+  const fresh = path.join(repo, 'generated.txt');            // 스크립트가 새로 만든 파일
+  const before = path.join(repo, 'src', 'earlier.js');       // 명령보다 먼저 바뀐 파일(이 명령 탓이 아님)
+  const byEdit = path.join(repo, 'src', 'edited.js');        // 같은 때 다른 세션이 편집 도구로 고친 파일(이미 설명됨)
+  const whileReading = path.join(repo, 'src', 'reading.js'); // 읽기만 하는 명령이 도는 동안 바뀐 파일
+  const ignored = path.join(repo, 'out.log');                // .gitignore 에 걸린 파일
+  for (const f of [tracked, before, byEdit, whileReading]) fs.writeFileSync(f, 'v1\n');
+  fs.writeFileSync(path.join(repo, '.gitignore'), '*.log\n');
+  git('init', '-q'); git('add', '-A'); git('commit', '-q', '-m', 'seed');
+
+  const T = Date.now();
+  const at = (f, ms) => { fs.writeFileSync(f, 'v2 ' + ms + '\n'); fs.utimesSync(f, new Date(ms), new Date(ms)); };
+  at(before, T - 120000);
+  at(tracked, T - 40000);
+  at(byEdit, T - 39000);
+  at(ignored, T - 38000);
+  at(whileReading, T - 10000);
+  fs.writeFileSync(fresh, 'new\n'); // 지금 만들어짐(둘째 스크립트 명령이 도는 시간대)
+  const SID_S = '5c219700-aaaa-4aaa-8aaa-000000000001';
+  const SID_E = '5c219700-bbbb-4bbb-8bbb-000000000002';
+  fx.claudeSession(home, repo, SID_S, [
+    rec.user(repo, T - 70000, 'Patch things with a script'),
+    // 세션의 작업 폴더는 다른 곳이고 명령이 "cd <저장소> &&"로 들어가서 고친다
+    rec.toolUse(project, T - 60000, 'tu_py', 'Bash', { command: `cd ${repo} && python3 - <<'PY'\nopen('src/patched.js','w').write('v2')\nPY`, description: 'Patch with python' }),
+    rec.toolResult(T - 30000, 'tu_py', rec.bashResult({})),
+    rec.toolUse(repo, T - 15000, 'tu_cat', 'Bash', { command: 'cat src/reading.js | head -3', description: 'Look at a file' }),
+    rec.toolResult(T - 5000, 'tu_cat', rec.bashResult({})),
+    rec.toolUse(repo, T - 2000, 'tu_gen', 'Bash', { command: 'node scripts/gen.js', description: 'Generate a file' }),
+    rec.toolResult(Date.now() + 500, 'tu_gen', rec.bashResult({})),
+  ]);
+  fx.claudeSession(home, repo, SID_E, [
+    rec.user(repo, T - 50000, 'Edit with the tool'),
+    rec.toolUse(repo, T - 39500, 'tu_e', 'Edit', { file_path: byEdit, old_string: 'v1', new_string: 'v2' }),
+    rec.toolResult(T - 39000, 'tu_e', rec.editResult(byEdit, 'v1\n', 'v1', 'v2')),
+  ]);
+  const r = S.createModel().scan(base());
+  const s = find(r, SID_S);
+  const got = (p) => s.changes.filter((c) => c.path === p).map((c) => [c.kind, c.via, c.created]);
+  assert.deepStrictEqual(got(tracked), [['shell', 'mtime', false]], '스크립트가 고친 파일');
+  assert.deepStrictEqual(got(fresh), [['shell', 'mtime', true]], '스크립트가 만든 파일은 새 파일로');
+  assert.deepStrictEqual(got(before), [], '명령보다 먼저 바뀐 파일은 넣지 않는다');
+  assert.deepStrictEqual(got(byEdit), [], '다른 세션의 편집 기록으로 설명되는 파일은 넣지 않는다');
+  assert.deepStrictEqual(got(whileReading), [], '읽기만 하는 명령이 도는 동안 바뀐 파일은 넣지 않는다');
+  assert.deepStrictEqual(got(ignored), [], 'gitignore 된 파일은 넣지 않는다');
+  assert.ok(find(r, SID_E).changes.some((c) => c.path === byEdit && c.kind === 'edit'));
+  assert.deepStrictEqual([S.looksReadOnly('git status --short; ls | head'), S.looksReadOnly('echo hi > a.txt'), S.looksReadOnly('npm test')], [true, false, false]);
+});
+
+test('불러온 세션: 보는 기간 밖이어도 그 세션의 마지막 작업 구간 변경을 읽는다', () => {
+  const sid = '91aaed00-cccc-4ccc-8ccc-000000000003';
+  const old = now - 3 * 24 * 60 * MIN;
+  const f = path.join(project, 'long-ago.js');
+  const file = fx.claudeSession(home, project, sid, [
+    rec.user(project, old - 5 * MIN, 'Work from three days ago'),
+    rec.aiTitle(sid, 'Three days ago'),
+    rec.toolUse(project, old - 2 * MIN, 'tu_old', 'Write', { file_path: f, content: 'x\n' }),
+    rec.toolResult(old - 2 * MIN + 400, 'tu_old', rec.writeResult(f, 'x\n')),
+    rec.user(project, old, 'thanks'),
+  ]);
+  fs.utimesSync(file, new Date(old + 1000), new Date(old + 1000));
+  const model = S.createModel();
+  const opts = { ...base(), listDays: 14, workspaceDirs: [project] };
+  const listed = find(model.scan(opts), sid);
+  assert.deepStrictEqual([listed.metaOnly, listed.changes.length], [true, 0], '평소에는 목록에만 보인다');
+  const loaded = find(model.scan({ ...opts, pinned: { [sid]: old - 60 * MIN } }), sid);
+  assert.deepStrictEqual([loaded.metaOnly, loaded.pinned, loaded.changes.map((c) => c.path)], [false, true, [f]], '불러오면 변경이 나온다');
+  assert.ok(!find(model.scan({ ...opts, pinned: { [sid]: old - 60 * MIN } }), SID_B).pinned, '다른 세션은 그대로');
+});
+

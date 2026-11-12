@@ -2,9 +2,10 @@
   "name": "session-watchtower",
   "displayName": "Session Watchtower for Claude Code",
   "description": "%description%",
-  "version": "0.11.6",
+  "version": "0.12.0",
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "shot": "bash tools/screenshot/run.sh"
   },
   "publisher": "kms-labs",
   "license": "MIT",
@@ -296,6 +297,11 @@
           "type": "boolean",
           "default": true,
           "description": "%config.statusBar%"
+        },
+        "claudeSessionChanges.notifyWaiting": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.notifyWaiting%"
         },
         "claudeSessionChanges.sessionDetails": {
           "type": "boolean",

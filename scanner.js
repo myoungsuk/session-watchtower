@@ -12,7 +12,7 @@ const HOME = os.homedir();
 const PROJECTS = path.join(HOME, '.claude', 'projects');
 const REGISTRY = path.join(HOME, '.claude', 'sessions');
 const CODEX_SESSIONS = path.join(HOME, '.codex', 'sessions');
-const CACHE_VERSION = 5; // 4: 마지막 대화 시각(lastMsgTs)·목록용 요약 읽기 추가 — 옛 저장 파일은 버리고 한 번 새로 읽음
+const CACHE_VERSION = 6; // 4: 마지막 대화 시각(lastMsgTs)·목록용 요약 읽기 추가 — 옛 저장 파일은 버리고 한 번 새로 읽음
 const CACHE_SAVE_MS = 20000;
 const CODEX_ACTIVE_MS = 90000;
 // "지금 고치는 중"으로 보는 시간: 마지막으로 바뀐 뒤 이만큼
@@ -76,6 +76,73 @@ function recentlyTouched(changes, now) {
     } catch { /* 지워진 파일 */ }
   }
   return out.sort();
+}
+
+// 읽기만 하는 명령인가(ls·cat·grep·git status 등으로만 이루어짐). 이런 명령이 도는 동안 바뀐 파일은 이 명령 탓이 아니다
+const RO_CMDS = new Set(['ls', 'cat', 'head', 'tail', 'grep', 'egrep', 'fgrep', 'rg', 'wc', 'stat', 'file', 'du', 'df', 'pwd', 'cd', 'which', 'type', 'echo', 'printf', 'sleep',
+  'ps', 'pgrep', 'uptime', 'date', 'whoami', 'id', 'printenv', 'sha256sum', 'md5sum', 'diff', 'cmp', 'jq', 'sort', 'uniq', 'cut', 'tr', 'column', 'tree', 'realpath', 'basename',
+  'dirname', 'readlink', 'nproc', 'free', 'ss', 'true', 'false', 'test', '[']);
+const RO_GIT = new Set(['status', 'log', 'diff', 'show', 'branch', 'remote', 'rev-parse', 'ls-files', 'blame', 'describe', 'cat-file', 'check-ignore', 'shortlog', 'reflog', 'tag']);
+function looksReadOnly(cmd) {
+  const src = stripHeredocBodies(String(cmd || ''));
+  if (!src.trim()) return true;
+  if (/<<-?\s*['"]?\w/.test(src)) return false; // 여기 문서로 스크립트를 넘김
+  if (/(^|[^0-9&>])>>?\s*(?!&|\s*\/dev\/null)/.test(src)) return false; // 파일로 내보냄
+  for (const seg of src.split(/&&|\|\||[;|\n]/)) {
+    const words = seg.trim().split(/\s+/).filter((w) => w && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
+    const w0 = (words[0] || '').replace(/^.*\//, '');
+    if (!w0) continue;
+    if (w0 === 'git') {
+      const sub = words.slice(1).find((w) => !w.startsWith('-') && !/[=/]/.test(w)) || '';
+      if (!RO_GIT.has(sub)) return false;
+    } else if (w0 === 'find') {
+      if (/\s-(?:delete|exec|execdir|ok)\b/.test(seg)) return false;
+    } else if (w0 === 'sed' || w0 === 'awk') {
+      if (/\s-i\b|\s--in-place/.test(seg)) return false;
+    } else if (!RO_CMDS.has(w0)) return false;
+  }
+  return true;
+}
+
+// 폴더가 git 저장소 안인가(위로 올라가며 .git을 찾는다). 임시 폴더처럼 저장소가 아닌 곳마다 git을 띄우지 않으려고 먼저 본다
+const gitTreeMemo = new Map();
+function inGitTree(dir) {
+  const seen = [];
+  let cur = dir;
+  let hit = false;
+  for (let i = 0; i < 40 && cur; i++) {
+    if (gitTreeMemo.has(cur)) { hit = gitTreeMemo.get(cur); break; }
+    seen.push(cur);
+    if (fs.existsSync(path.join(cur, '.git'))) { hit = true; break; }
+    const up = path.dirname(cur);
+    if (up === cur) break;
+    cur = up;
+  }
+  for (const d of seen) gitTreeMemo.set(d, hit);
+  return hit;
+}
+
+// 저장소에서 지금 "커밋되지 않은" 파일과 그 파일이 마지막으로 바뀐 시각(스크립트가 고친 파일을 찾는 데 쓴다)
+const dirtyCache = new Map();
+function repoDirty(top, now) {
+  const hit = dirtyCache.get(top);
+  if (hit && now - hit.at < 2000) return hit.files;
+  let out = '';
+  try {
+    out = execFileSync('git', ['--no-optional-locks', '-C', top, 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames'],
+      { encoding: 'utf8', timeout: 8000, maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch { out = ''; }
+  const files = [];
+  for (const ent of out.split('\0')) {
+    if (ent.length < 4 || files.length >= 3000) continue;
+    const p = path.join(top, ent.slice(3));
+    let s;
+    try { s = fs.statSync(p); } catch { continue; }
+    // isNew: 아직 git이 모르는 파일(??)이거나 새로 추가한 파일(A). 원래 있던 파일을 고친 것과 구별한다
+    if (s.isFile()) files.push({ path: p, mtimeMs: s.mtimeMs, birthMs: s.birthtimeMs || 0, isNew: ent.startsWith('??') || ent[0] === 'A' });
+  }
+  dirtyCache.set(top, { at: now, files });
+  return files;
 }
 
 function noteTool(st, tool) {
@@ -280,6 +347,7 @@ function newFileState(d) {
     changes: [],
     pendingBash: new Map(),
     pendingCx: {}, // Codex: 결과를 기다리는 도구 호출(호출 ID → 패치·명령)
+    bashWins: [], // 바뀐 파일 기록이 없는 셸 명령이 돈 시간대(그 사이에 바뀐 파일을 추정으로 넣는다)
     rootSid: d.rootSid || null, // Codex 하위 스레드가 속한 뿌리 세션
     commits: [],
     commitWins: [],
@@ -470,6 +538,24 @@ function tsBefore(line) {
 }
 
 // 커밋 명령이 실행된 git 폴더(앞의 cd, git -C 반영)
+// 명령이 실제로 돈 폴더들: 시작 폴더에서 출발해 "cd X &&"를 따라간다(cd만 하고 지나간 폴더는 뺀다)
+function dirsFor(cmd, cwd) {
+  let cur = cwd;
+  const used = new Set();
+  for (const raw of stripHeredocBodies(String(cmd || '')).split(/\n|&&|\|\||;|\|/)) {
+    const s = raw.trim().replace(/^\(\s*/, '');
+    if (!s) continue;
+    const cd = /^cd\s+(.+)$/.exec(s);
+    if (cd) {
+      const d = resolveTarget(tokenize(cd[1])[0], cur);
+      if (d) cur = d;
+      continue;
+    }
+    if (cur) used.add(cur);
+  }
+  return [...used].slice(0, 4);
+}
+
 function gitDirFor(cmd, cwd) {
   let cur = cwd;
   for (const raw of stripHeredocBodies(cmd).split(/\n|&&|\|\||;|\|/)) {
@@ -771,6 +857,7 @@ function codexToolDone(st, id, line) {
       if (!s.isFile() || s.mtimeMs < pend.ts - 2000) continue;
       pushChange(st, { kind: 'shell', path: t, ts: pend.ts, add: 0, del: 0, created: false, cmd: shortCmd(c.cmd), cwd });
     }
+    if (!looksReadOnly(c.cmd)) (st.bashWins || (st.bashWins = [])).push({ from: pend.ts, to: doneTs, dirs: dirsFor(c.cmd, cwd), cwd, cmd: shortCmd(c.cmd), resolved: false });
     if (COMMIT_CMD_RE.test(c.cmd)) {
       const single = !/\b(?:merge|cherry-pick|revert|am|rebase)\b/.test(c.cmd);
       st.commitWins.push({ dir: gitDirFor(c.cmd, cwd), from: pend.ts - 3000, to: doneTs + 3000, at: doneTs, single, resolved: false });
@@ -848,6 +935,11 @@ function handleLine(st, line, absOffset, headOnly) {
           try { s = fs.statSync(t); } catch { continue; }
           if (!s.isFile() || s.mtimeMs < bash.ts - 2000) continue;
           pushChange(st, { kind: 'shell', path: t, ts: bash.ts, add: 0, del: 0, created: false, cmd: bash.cmd, cwd: bash.cwd });
+        }
+        // Claude Code가 바뀐 파일을 적어 두지 않은 명령(python·node 스크립트 등): 명령이 돈 시간대를 적어 두고,
+        // 나중에 그 시간대에 바뀐 저장소 파일을 추정으로 넣는다(build에서)
+        if (bash.full && !looksReadOnly(bash.full)) {
+          (st.bashWins || (st.bashWins = [])).push({ from: bash.ts, to: Math.max(tsBefore(line) || 0, bash.ts), dirs: dirsFor(bash.full, bash.cwd || st.cwd), cwd: bash.cwd || st.cwd, cmd: bash.cmd, resolved: false });
         }
       }
       let sha = null;
@@ -1266,7 +1358,7 @@ function serializeState(st) {
   const pending = [...st.pendingBash].filter(([, b]) => b.ts >= dayAgo).map(([id, b]) => [id, { ...b, full: String(b.full || '').slice(0, 20000) }]);
   const cx = {};
   for (const [id, v] of Object.entries(st.pendingCx || {})) if (v && v.ts >= dayAgo) cx[id] = v;
-  return { ...st, pendingBash: pending, pendingCx: cx, seenSha: [...st.seenSha] };
+  return { ...st, pendingBash: pending, pendingCx: cx, bashWins: (st.bashWins || []).filter((w) => !w.resolved && w.to >= Date.now() - 7 * 86400e3), seenSha: [...st.seenSha] };
 }
 
 function deserializeState(o) {
@@ -1385,7 +1477,9 @@ function createModel() {
       if (!st) { st = newFileState(d); files.set(d.file, st); }
       let s;
       try { s = fs.statSync(d.file); } catch { continue; }
-      if (d.meta) {
+      const pin = Number((opts.pinned || {})[st.rootSid || d.sid]) || 0;
+      const fileSince = pin ? Math.min(since, pin) : since;
+      if (d.meta && !pin) {
         // 오래된 세션: 목록용 요약만. 이미 제대로 읽어 둔 파일이면 그대로 쓴다
         if (st.scanFrom != null && !st.metaOnly) continue;
         if (!st.metaOnly || s.size !== st.size || s.mtimeMs !== st.mtimeMs) { bytes += scanMeta(st); dirty = true; }
@@ -1393,9 +1487,9 @@ function createModel() {
       }
       if (st.metaOnly) Object.assign(st, newFileState(d)); // 요약만 읽어 둔 파일이 보는 기간 안으로 들어옴 → 제대로 읽는다
       // 보는 기간이 늘어 이미 읽은 구간보다 앞이 필요해지면 그 파일만 다시 읽는다
-      if (st.scanFrom > 0 && since - SEEK_MARGIN_MS < st.coveredSince - 60000) Object.assign(st, newFileState(d));
+      if (st.scanFrom > 0 && fileSince - SEEK_MARGIN_MS < st.coveredSince - 60000) Object.assign(st, newFileState(d));
       if (s.size !== st.offset || s.mtimeMs !== st.mtimeMs || (st.ino && s.ino !== st.ino) || st.scanFrom == null) {
-        const n = scanAppended(st, since, opts.seekMinBytes);
+        const n = scanAppended(st, fileSince, opts.seekMinBytes);
         bytes += n;
         dirty = true;
         if (n > 0 && opts.onProgress && Date.now() - lastProgress > (opts.progressMs == null ? 800 : opts.progressMs)) {
@@ -1430,9 +1524,26 @@ function createModel() {
       bySid.get(key).push(st);
     }
 
+    // 다른 기록으로 이미 설명되는 변경(편집 도구·기록된 셸 변경·Codex 패치): 경로 → 시각들. 추정에 다시 넣지 않는다
+    const exact = new Map();
+    if (!partial) {
+      for (const st of files.values()) {
+        for (const c of st.changes) {
+          if (!c.path || (c.kind !== 'edit' && c.kind !== 'bash' && c.kind !== 'cxedit')) continue;
+          if (!exact.has(c.path)) exact.set(c.path, []);
+          exact.get(c.path).push(c.ts);
+        }
+      }
+    }
+    const explained = (p, at) => (exact.get(p) || []).some((ts) => Math.abs(ts - at) <= 3000);
+    const pins = opts.pinned && typeof opts.pinned === 'object' ? opts.pinned : {};
+
     const sessions = [];
     for (const [sid, sts] of bySid) {
       const main = sts.find((x) => !x.sub) || sts[0];
+      // 사용자가 불러온 세션은 그 세션의 마지막 작업 구간까지 본다
+      const pinSince = Number(pins[sid]) || 0;
+      const sSince = pinSince ? Math.min(since, pinSince) : since;
       if (partial && main.scanFrom == null && main.offset === 0) continue;
       const reg = registry.get(sid) || null;
       const projectCwd = main.cwd || (reg && reg.cwd) || null;
@@ -1443,10 +1554,10 @@ function createModel() {
         lastWrite = Math.max(lastWrite, st.mtimeMs);
         lastActivity = Math.max(lastActivity, st.lastMsgTs || 0);
         for (const c of partial ? [] : st.commits) {
-          if (c.resolved || c.ts < since) continue;
+          if (c.resolved || c.ts < sSince) continue;
           c.resolved = true;
           dirty = true;
-          const res = resolveCommit(c, [projectCwd], since);
+          const res = resolveCommit(c, [projectCwd], sSince);
           if (!res) {
             st.changes.push({ kind: 'commit', path: null, ts: c.ts, add: 0, del: 0, sha: c.sha, msg: c.msg, unresolved: true, sub: st.sub, file: st.file, scratch: false });
             continue;
@@ -1454,15 +1565,34 @@ function createModel() {
           addCommitEntries(st, res, c.ts, c.msg);
         }
         for (const w of partial ? [] : st.commitWins) {
-          if (w.resolved || w.to < since) continue;
+          if (w.resolved || w.to < sSince) continue;
           w.resolved = true;
           dirty = true;
-          let hits = commitsInWindow(w, projectCwd, since);
+          let hits = commitsInWindow(w, projectCwd, sSince);
           // 커밋 하나만 만드는 명령인데 같은 시간대에 여러 개가 있으면(다른 세션 커밋) 끝난 시각에 가장 가까운 것만
           if (w.single && hits.length > 1) hits = [hits.reduce((a, b) => (Math.abs(a.ts - w.at) <= Math.abs(b.ts - w.at) ? a : b))];
           for (const hit of hits) addCommitEntries(st, { top: hit.top, full: hit.sha, subject: hit.subject, files: hit.files }, hit.ts, hit.subject);
         }
-        for (const c of st.changes) if (c.ts >= since) changes.push(c);
+        // 셸 명령이 돈 시간대에 바뀐(아직 커밋되지 않은) 저장소 파일을 추정으로 넣는다
+        for (const w of partial ? [] : st.bashWins || []) {
+          if (w.resolved || w.to < sSince) continue;
+          w.resolved = true;
+          dirty = true;
+          // 명령이 돈 폴더들이 속한 저장소(같은 저장소는 한 번만)
+          const tops = new Set();
+          for (const d of w.dirs && w.dirs.length ? w.dirs : [w.cwd]) { const info = d && inGitTree(d) ? gitInfo(d) : null; if (info) tops.add(info.top); }
+          let n = 0;
+          for (const top of tops) {
+            for (const f of repoDirty(top, t0)) {
+              if (n >= 200) break;
+              if (f.mtimeMs < w.from - 500 || f.mtimeMs > w.to + 1500 || explained(f.path, f.mtimeMs)) continue;
+              if (st.changes.some((c) => c.path === f.path && c.kind === 'shell' && c.ts >= w.from - 1000 && c.ts <= w.to + 1500)) continue;
+              pushChange(st, { kind: 'shell', path: f.path, ts: Math.round(f.mtimeMs), add: 0, del: 0, created: f.isNew && f.birthMs >= w.from - 1000, cmd: w.cmd, cwd: w.cwd, via: 'mtime' });
+              n++;
+            }
+          }
+        }
+        for (const c of st.changes) if (c.ts >= sSince) changes.push(c);
       }
       const codex = main.agent === 'codex';
       // 뿌리 세션 기록은 보는 기간 밖이고 하위 스레드(검토 등)만 걸린 Codex 세션: 바꾼 파일이 없으면 보여 줄 것이 없다
@@ -1499,6 +1629,7 @@ function createModel() {
         cwd: projectCwd,
         lastActivity,
         metaOnly: !!main.metaOnly,
+        pinned: !!pinSince,
         projectDir: main.project || null, // ~/.claude/projects 아래 폴더 이름
         programmatic: !!main.programmatic,
         ...state,
@@ -1522,4 +1653,4 @@ function scanOne(file, agent, sinceMs, seekMinBytes) {
   return st;
 }
 
-module.exports = { LIVE_MS, codexPatchText, createModel, shellTargets, stripHeredocBodies, hunkCounts, isScratch, readRegistry, parsePatch, attentionMarker, scanOne };
+module.exports = { LIVE_MS, codexPatchText, looksReadOnly, createModel, shellTargets, stripHeredocBodies, hunkCounts, isScratch, readRegistry, parsePatch, attentionMarker, scanOne };

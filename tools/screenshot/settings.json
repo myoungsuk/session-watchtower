@@ -1,0 +1,15 @@
+{
+  "workbench.colorTheme": "Default Dark Modern",
+  "workbench.startupEditor": "none",
+  "telemetry.telemetryLevel": "off",
+  "update.mode": "none",
+  "extensions.autoUpdate": false,
+  "extensions.autoCheckUpdates": false,
+  "security.workspace.trust.enabled": false,
+  "window.commandCenter": false,
+  "workbench.layoutControl.enabled": false,
+  "chat.commandCenter.enabled": false,
+  "workbench.tips.enabled": false,
+  "git.enabled": false,
+  "window.titleBarStyle": "custom"
+}

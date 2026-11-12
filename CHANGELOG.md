@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.12.0
+
+- **Files changed by scripts are listed before they are committed.** When a session runs a command that Claude Code keeps no file record for (python, node, a formatter …), uncommitted files in that repository that changed while the command ran are added as a guess (`?`). Commands that only read (`ls`, `cat`, `grep`, `git status` …) are left out, and so are changes already explained by another record. Codex commands are handled the same way.
+- **Load older work on demand.** A session with no changes inside the time range now has a button that loads the files it changed in its last stretch of work.
+- **Waiting notification.** A notification appears when a session in this folder starts waiting for your approval or answer (setting `notifyWaiting`, on by default).
+- **Shorter session rows in the Changed files view**: file count first, then the time — the icon already shows the state. Only "needs approval / needs answer" keeps its words.
+- New Marketplace picture, now a real screenshot. `npm run shot` takes it: desktop VS Code on a virtual display with made-up demo sessions. The dark and light themes were both checked this way.
+- Fixed: numbers in two tooltips could come out as "undefined".
+
 ## 0.11.6
 
 - **Clicking a Codex session now opens it**: it continues in a terminal with the Codex CLI (`codex resume <id>`), started in that session's folder, so it also works for sessions from other folders. Needs the `codex` command on the machine.

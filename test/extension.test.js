@@ -142,6 +142,8 @@ test('세션 창: 상태·지금 하는 일·변경 규모·다른 폴더 묶음
   assert.ok(g && g.rows[0].canOpen === false && g.rows[0].state === 'idle');
   assert.match(web.view.description, /Working 1 · Waiting 0 · Idle 1/, '머리말은 이 폴더 세션만 센다');
   assert.deepStrictEqual([web.lastPayload().openHere, web.lastPayload().openElsewhere], [2, 1], '열린 세션 단추의 숫자도 이 폴더만(다른 폴더는 따로)');
+  const str = web.lastPayload().strings;
+  assert.ok(/\{0\}.*\{1\}/.test(str.activeTip) && /\{0\}/.test(str.worktreeTip) && !/undefined/.test(JSON.stringify(str)), '화면에서 채울 자리표시자가 그대로 넘어가야 함');
 });
 
 test('한 줄 보기 설정을 끄면 둘째 줄을 그리지 않는다', async () => {
@@ -232,6 +234,10 @@ test('시간은 마지막 대화 기준: 다시 연 세션이 "방금 끝남"으
   const rest = p.mine.find((r) => r.sid === SID_REST);
   assert.strictEqual(rest.state, 'idle', '상태 시각이 방금이어도 대화가 6시간 전이면 쉬는 중');
   assert.strictEqual(rest.meta, '6h', '쉰 시간은 마지막 대화부터');
+  // 변경 파일 창의 세션 줄 설명: 파일 수 → 시간(상태 글자는 뺀다)
+  const restEl = roots().find((e) => e.t === 'session' && e.s.sid === SID_REST);
+  assert.strictEqual(item(restEl).description, '1 file · 6h');
+  assert.match(item(sessionA()).description, /^(needs approval · )?\d+ files · (just now|\d+m)$/);
 });
 
 test('보관: 목록·변경 파일 창에서 빠지고 보관함으로, 꺼내면 돌아온다', async () => {
@@ -281,6 +287,14 @@ test('지금 고치는 파일: 작업 중인 세션이 고치는 파일에만 �
   await refresh();
   await waitFor(() => icon('new.js') === 'bell-dot', '승인을 기다리는 동안은 종 표시');
   assert.match(item(fileOf('new.js')).tooltip, /Waiting for your approval/);
+  assert.match(item(sessionA()).description, /^needs approval · \d+ files · /, '기다림만 글자를 붙인다');
+  // 기다림이 이어지면(두 번 연속 확인) 한 번 알린다
+  await sleep(0);
+  const waitNote = () => stub.calls.filter((c) => c[0] === 'info' && /"Refactor auth" is waiting for you: needs approval/.test(c[1]));
+  const had = waitNote().length;
+  await waitFor(() => waitNote().length === had + 1, '기다림 알림', 9000);
+  await sleep(2600);
+  assert.strictEqual(waitNote().length, had + 1, '같은 대기를 거듭 알리지 않는다');
   fx.registerSession(home, process.pid, SID_A, { status: 'busy', cwd: project, name: 'demo-a1', nameSource: 'derived' });
 
   // (나) 방금 바꾼 파일: 28.5초 전 변경 → 도는 표시, 30초가 지나면 새 기록 없이도 스스로 꺼진다

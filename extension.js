@@ -50,6 +50,7 @@ function cfg() {
     pollSeconds: Math.max(2, Number(c.get('pollSeconds', 5)) || 5),
     sessionDetails: c.get('sessionDetails', true) !== false,
     sessionListDays: Math.max(0, Math.min(365, Number(c.get('sessionListDays', 90)) || 0)),
+    notifyWaiting: c.get('notifyWaiting', true) !== false,
     archiveAfter: String(c.get('archiveAfter', 'claude')),
     statusBar: c.get('statusBar', true) !== false,
     includeCodex: c.get('includeCodex', true) !== false,
@@ -73,6 +74,7 @@ function workerOpts(extra) {
     cacheFile: ctx ? path.join(ctx.globalStorageUri.fsPath, 'scan-cache-v2.json') : '',
     listDays: o.sessionListDays,
     otherListDays: otherListDays(),
+    pinned: Object.fromEntries(pinned),
     workspaceDirs: (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath),
     ...extra,
   };
@@ -122,7 +124,7 @@ function stateOf(s) {
   if (s.status === 'busy') {
     const quietMin = Math.floor((Date.now() - s.lastActivity) / 60000);
     const quiet = quietMin >= 10 ? ` · ${L('no log for {0}m', quietMin)}` : '';
-    return { key: 'busy', label: L('Working'), short: L('Working'), time: sinceShort, text: `${L('Working')}${since}${quiet}`, icon: new vscode.ThemeIcon('loading~spin', new vscode.ThemeColor('charts.green')) };
+    return { note: quiet.slice(3), key: 'busy', label: L('Working'), short: L('Working'), time: sinceShort, text: `${L('Working')}${since}${quiet}`, icon: new vscode.ThemeIcon('loading~spin', new vscode.ThemeColor('charts.green')) };
   }
   if (s.status === 'waiting') {
     const what = s.waitingFor === 'permission prompt' ? L('needs approval') : s.waitingFor === 'input needed' ? L('needs answer') : L('waiting');
@@ -203,6 +205,7 @@ function sessionTooltip(s, st) {
     s.title,
     L('Status: {0}', st.label) + (s.statusSince ? ' ' + L('(since {0})', fmtTime(s.statusSince, true)) : ''),
     now ? L('Now: {0}', now) : null,
+    s.pinned ? L("Loaded on request: changes from the last {0}h of this session's work.", cfg().lookbackHours) : null,
     s.address ? L('Address: {0}', s.address) : null,
     s.cwd ? L('Folder: {0}', s.cwd) : null,
     L('Last log: {0}', fmtTime(s.lastActivity, true)),
@@ -538,7 +541,9 @@ class Provider {
       const it = new vscode.TreeItem(s.title, s.alive && s.files.length ? N.Expanded : N.Collapsed);
       it.id = 's:' + s.sid;
       const st = stateOf(s);
-      it.description = [s.agent === 'codex' ? 'Codex' : '', st.text, L('{0} files', s.files.length)].filter(Boolean).join(' · ');
+      // 설명은 파일 수 → 시간 순서. 상태는 앞의 그림이 보여 주므로 글자는 사용자가 할 일이 있는 "기다림"일 때만 붙인다(좁은 창에서 덜 잘리게)
+      const nFiles = s.files.length === 1 ? L('1 file') : L('{0} files', s.files.length);
+      it.description = [s.agent === 'codex' ? 'Codex' : '', st.key === 'waiting' ? st.short : '', nFiles, st.time, st.note || ''].filter(Boolean).join(' · ');
       it.iconPath = st.icon;
       it.tooltip = sessionTooltip(s, st);
       it.contextValue = s.files.length ? 'session' : 'sessionEmpty';
@@ -635,10 +640,12 @@ function sessionsPayload() {
   const strings = {
     showChanges: L('Show changed files'), review: L('Review all changes'), newSession: L('New session'), active: L('Open'),
     // "열린 세션" = 지금 프로세스가 떠 있는 세션(작업 중·기다림·쉼). 작업 중인 것만 세는 숫자가 아니다
-    activeTip: L('Show only sessions that are open right now (working, waiting or idle). The number counts this folder: {0}. Other folders: {1}.'),
+    // 숫자는 화면 쪽에서 채운다 → 자리표시자를 그대로 넘겨 번역 함수가 건드리지 않게 한다
+    activeTip: L('Show only sessions that are open right now (working, waiting or idle). The number counts this folder: {0}. Other folders: {1}.', '{0}', '{1}'),
     search: L('Search sessions'), noMatch: L('No matching sessions'), legend: L('What the colors mean'),
     archive: L('Archive'), unarchive: L('Restore from archive'), archivedTitle: L('Archived'), archiveRule: L('Choose when sessions move to Archived'),
-    otherFolders: L('Other folders'), worktreeTip: L('Runs in a git worktree: {0}'),
+    loadChanges: L("Load this session's changed files"),
+    otherFolders: L('Other folders'), worktreeTip: L('Runs in a git worktree: {0}', '{0}'),
     lgSessions: L('Sessions'), lgFiles: L('Changed files'), lgRow: L('Under each session'),
     lgBusy: L('Working'), lgWaiting: L('Waiting for you (approval or answer)'), lgDone: L('Just finished (less than 10 minutes ago)'), lgIdle: L('Idle'), lgOff: L('Off (no Claude process)'),
     lgA: L('Created in this session'), lgM: L('Modified in this session'), lgD: L('Not on disk anymore (deleted)'), lgQ: L('Guessed from shell commands (not certain)'),
@@ -854,7 +861,8 @@ function sessionsHtml(webview) {
   const gearIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/></svg>';
   function row(r, inArchive) {
     const btn = (act, label, svg) => '<button class="act" data-act="' + act + '" data-sid="' + esc(r.sid) + '" title="' + esc(label) + '" aria-label="' + esc(label) + '">' + svg + '</button>';
-    const acts = (r.files && !inArchive ? btn('review', strings.review, reviewIcon) + btn('reveal', strings.showChanges, icon) : '')
+    // 보는 기간 안에 바꾼 파일이 없는 세션은 "불러오기" 단추(그 세션의 마지막 작업분을 읽어 온다)
+    const acts = (inArchive ? '' : r.files ? btn('review', strings.review, reviewIcon) + btn('reveal', strings.showChanges, icon) : btn('reveal', strings.loadChanges, icon))
       + (inArchive ? btn('unarchive', strings.unarchive, restoreIcon) : btn('archive', strings.archive, archiveIcon));
     const ds = diffstat(r.add || 0, r.del || 0);
     // 둘째 줄: 지금 하는 일(작업 중·기다림일 때)과 변경 규모. 둘 다 없으면 한 줄짜리
@@ -1028,10 +1036,26 @@ async function newClaudeSession() {
   }
 }
 
-async function revealSession(arg) {
+// 사용자가 "변경 파일"을 눌러 불러온 세션: 세션 → 읽기 시작 시각. 보는 기간 밖이어도 그 세션의 마지막 작업 구간을 읽는다(이 창을 다시 불러올 때까지)
+const pinned = new Map();
+let pendingReveal = null;
+
+async function revealSession(arg, afterLoad) {
   const sid = sidOf(arg);
   const s = model.find((x) => x.sid === sid);
-  if (!s || !treeView) {
+  const hasFiles = !!s && (s.files.length > 0 || s.unresolved.length > 0);
+  if (!hasFiles && !afterLoad && !aliveOnly && !pinned.has(sid)) {
+    // 보는 기간 안에 바꾼 파일이 없는 세션: 그 세션이 마지막으로 일한 구간(보는 기간만큼)을 읽어 온다
+    const r = raw.find((x) => x.sid === sid);
+    if (r) {
+      pinned.set(sid, (r.lastActivity || Date.now()) - cfg().lookbackHours * 3600000);
+      pendingReveal = sid;
+      requestScan(true);
+      return undefined;
+    }
+  }
+  if (!s || !treeView || (afterLoad && !hasFiles)) {
+    if (afterLoad) return vscode.window.showInformationMessage(L("No recorded file changes in the last {0}h of this session's work.", cfg().lookbackHours));
     return vscode.window.showInformationMessage(aliveOnly ? L('This session is hidden by the "open only" filter.') : L('This session has no changed files in the last {0}h.', cfg().lookbackHours));
   }
   try {
@@ -1331,6 +1355,7 @@ function onWorkerMessage(m) {
     // 실행 중 목록만 읽은 결과 + 마지막 전체 읽기에서 본 Codex 작업 중 세션
     statusSessions = (m.sessions || []).concat(raw.filter((s) => s.agent === 'codex' && s.alive));
     updateStatusBar();
+    checkWaiting(statusSessions);
     return;
   }
   inflight = false;
@@ -1347,11 +1372,14 @@ function onWorkerMessage(m) {
     statusSessions = raw.filter((s) => s.alive);
     rebuild();
     updateStatusBar();
+    if (pendingReveal) { const sid = pendingReveal; pendingReveal = null; revealSession(sid, true); }
   } else if (m.type === 'same' && Date.now() - lastFire > 60000) {
     provider.fire(); // "N분 전·N분째" 글자만 새로
     sessionsWebview.post();
     updateStatusBar();
   }
+  // 달라진 것이 없다는 답("same")에도 확인한다: 기다림이 이어지는지는 시간이 지나야 알 수 있다
+  checkWaiting(statusSessions);
   if (pending) {
     const p = pending;
     pending = null;
@@ -1363,7 +1391,7 @@ function startTimer() {
   if (timer) clearInterval(timer);
   timer = setInterval(() => {
     if ((treeView && treeView.visible) || (sessionsView && sessionsView.visible)) requestScan(false);
-    else if (cfg().statusBar) requestStatus();
+    else if (cfg().statusBar || cfg().notifyWaiting) requestStatus();
   }, cfg().pollSeconds * 1000);
 }
 
@@ -1381,6 +1409,26 @@ function requestStatus() {
   } catch {
     statusInflight = false;
   }
+}
+
+// 이 폴더의 세션이 승인·답을 기다리기 시작하면 한 번 알린다. 금방 풀리는 대기(자동 승인 등)는 알리지 않으려고 두 번 연속 확인될 때만
+const waitingSeen = new Map(); // 세션 → 처음 본 시각 또는 'done'(이미 알림)
+function checkWaiting(list) {
+  if (!cfg().notifyWaiting) { waitingSeen.clear(); return; }
+  const now = new Set();
+  for (const s of list) {
+    if (!s.alive || s.status !== 'waiting' || !inWorkspace(s)) continue;
+    now.add(s.sid);
+    const seen = waitingSeen.get(s.sid);
+    if (seen === 'done') continue;
+    if (!seen) { waitingSeen.set(s.sid, Date.now()); continue; }
+    if (Date.now() - seen < 1500) continue;
+    waitingSeen.set(s.sid, 'done');
+    const what = s.waitingFor === 'permission prompt' ? L('needs approval') : s.waitingFor === 'input needed' ? L('needs answer') : L('waiting');
+    const open = L('Open conversation');
+    Promise.resolve(vscode.window.showInformationMessage(L('"{0}" is waiting for you: {1}', s.title, what), open)).then((pick) => { if (pick === open) openClaudeSession(s.sid); });
+  }
+  for (const sid of [...waitingSeen.keys()]) if (!now.has(sid)) waitingSeen.delete(sid);
 }
 
 function updateStatusBar() {
@@ -1478,7 +1526,7 @@ function activate(context) {
   );
   startTimer();
   if (treeView.visible) requestScan(true);
-  else if (cfg().statusBar) requestStatus();
+  else if (cfg().statusBar || cfg().notifyWaiting) requestStatus();
 }
 
 // 끌 때 읽은 결과를 한 번 저장하고 스레드를 닫는다

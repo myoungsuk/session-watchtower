@@ -35,5 +35,6 @@
   "config.archiveAfter.d7": "7 days",
   "config.archiveAfter.d14": "14 days",
   "config.archiveAfter.d30": "30 days",
-  "config.archiveAfter.never": "Never"
+  "config.archiveAfter.never": "Never",
+  "config.notifyWaiting": "Show a notification when a session in this folder starts waiting for your approval or answer."
 }

@@ -35,5 +35,6 @@
   "config.archiveAfter.d7": "7일",
   "config.archiveAfter.d14": "14일",
   "config.archiveAfter.d30": "30일",
-  "config.archiveAfter.never": "안 함"
+  "config.archiveAfter.never": "안 함",
+  "config.notifyWaiting": "이 폴더의 세션이 승인이나 답을 기다리기 시작하면 알림을 띄웁니다."
 }

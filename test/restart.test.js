@@ -23,6 +23,16 @@ function old(sid, title, ago) {
 }
 old(SID_3H, 'Three hours ago', 3 * HOUR);
 old(SID_20D, 'Twenty days ago', 20 * 24 * HOUR);
+// 5시간 전에 파일을 바꾼 세션: 보는 기간(1시간) 밖이라 평소에는 바뀐 파일이 안 보인다
+const SID_5H = 'abab0000-7777-4777-8777-777777777777';
+const f5h = path.join(project, 'five-hours.js');
+{
+  const t5 = Date.now() - 5 * HOUR;
+  const f = fx.claudeSession(home, project, SID_5H, [rec.user(project, t5 - 120000, 'Five hours ago'), rec.aiTitle(SID_5H, 'Five hours ago'),
+    rec.toolUse(project, t5 - 60000, 't5', 'Write', { file_path: f5h, content: 'x\n' }), rec.toolResult(t5 - 59000, 't5', rec.writeResult(f5h, 'x\n')), rec.user(project, t5, 'ok')]);
+  fs.writeFileSync(f5h, 'x\n');
+  fs.utimesSync(f, new Date(t5), new Date(t5));
+}
 // 다른 폴더의 세션: 3시간 전·이틀 전·20일 전
 const other = path.join(home, 'work', 'other-app');
 fs.mkdirSync(other, { recursive: true });
@@ -58,7 +68,7 @@ test.after(async () => { await ext.deactivate(); });
 
 test('실행 중인 세션이 없어도 이 폴더 세션은 목록에, 오래된 세션은 보관함에 보인다', () => {
   const p = web.lastPayload();
-  assert.deepStrictEqual(p.mine.map((r) => [r.sid, r.state, r.meta]), [[SID_3H, 'off', '3h ago']]);
+  assert.deepStrictEqual(p.mine.map((r) => [r.sid, r.state, r.meta, r.files]), [[SID_3H, 'off', '3h ago', 0], [SID_5H, 'off', '5h ago', 0]]);
   assert.deepStrictEqual(p.archived.map((r) => r.sid), [SID_20D]);
   assert.strictEqual(stub.trees['claudeSessionChanges.tree'].provider.getChildren().filter((e) => e.t === 'session').length, 0, '보는 기간(1시간) 안에 바꾼 파일이 없으니 변경 파일 창은 비어 있음');
 });
@@ -74,9 +84,23 @@ test('다른 폴더도 실행 중이 아닌 최근 세션을 묶음에 보여 �
   await waitFor(() => rowsOf().length === 2, '기준 되돌림');
 });
 
+test('보는 기간 밖 세션: "변경 파일"을 누르면 그 세션의 마지막 작업분을 읽어 온다', async () => {
+  const tree = () => stub.trees['claudeSessionChanges.tree'].provider;
+  web.send({ type: 'reveal', sid: SID_5H });
+  await waitFor(() => (web.lastPayload().mine.find((r) => r.sid === SID_5H) || {}).files === 1, '불러온 뒤 파일 수');
+  const el = tree().getChildren().find((e) => e.t === 'session' && e.s.sid === SID_5H);
+  assert.ok(el && el.s.files[0].path === f5h, '변경 파일 창에 그 세션과 파일이 나온다');
+  assert.match(tree().getTreeItem(el).tooltip, /Loaded on request/);
+  // 바꾼 파일이 아예 없는 세션은 없다고 알려 준다
+  stub.calls.length = 0;
+  web.send({ type: 'reveal', sid: SID_3H });
+  await waitFor(() => stub.calls.find((c) => c[0] === 'info' && /No recorded file changes in the last 1h of this session/.test(c[1])), '없음 안내');
+});
+
 test('목록의 세션을 전부 보관해도 보관함은 보여서 다시 꺼낼 수 있다', async () => {
   web.send({ type: 'archive', sid: SID_3H });
-  const p = await waitFor(() => { const x = web.lastPayload(); return x.archived && x.archived.length === 2 ? x : null; }, '둘 다 보관함에');
+  web.send({ type: 'archive', sid: SID_5H });
+  const p = await waitFor(() => { const x = web.lastPayload(); return x.archived && x.archived.length === 3 ? x : null; }, '셋 다 보관함에');
   assert.ok(!p.message && p.mine.length === 0);
   web.send({ type: 'unarchive', sid: SID_3H });
   await waitFor(() => web.lastPayload().mine && web.lastPayload().mine.length === 1, '다시 꺼내기');
