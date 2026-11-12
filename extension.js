@@ -1041,7 +1041,7 @@ function boardStrings() {
     setRole: L('Set role'), remove: L('Remove from group'), open: L('Open conversation'), otherFolder: L('From another folder ({0}): open it from a VS Code window with that folder.', '{0}'),
     unknownTitle: L('Changes no session log explains (last {0})', '{0}'), unknownTip: L('Uncommitted files in these repositories that changed within the time range but are not in any session log: edited by hand or by another tool. Older uncommitted files (backups, files never added to git) are left out.'),
     said: L('Instructions and results'), saidTip: L('What you typed to these sessions, newest first, with the first line of each session\'s last answer to it. Messages from other sessions and system notes are left out; the same message sent to several sessions is shown once.'),
-    saidNone: L('Nothing yet.'), saidBusy: L('Reading your messages…'), copyQuote: L('Copy with time'), noReply: L('(no written answer)'),
+    saidNone: L('Nothing yet.'), saidBusy: L('Reading your messages…'), moreTip: L('Click to see the whole text'), noReply: L('(no written answer)'),
     memo: L('Shared memo'), memoNone: L('No memo file linked. Link a Markdown file the sessions also read and write (like a coordination board), or create a new one.'),
     linkMemo: L('Link a file…'), newMemo: L('Create a memo file'), openMemo: L('Open in editor'), unlinkMemo: L('Unlink'),
     addSessions: L('Add sessions…'), copyBoard: L('Copy board as Markdown'), refresh: L('Refresh'), empty: L('No sessions in this group yet. Use "Add sessions…" or the group button on a session row.'),
@@ -1198,9 +1198,6 @@ async function openGroupBoard(id) {
     else if (m.type === 'copyBoard' && b.lastPayload && !b.lastPayload.gone) {
       const md = boardMarkdown(b.lastPayload);
       Promise.resolve(vscode.env.clipboard.writeText(md)).then(() => vscode.window.showInformationMessage(L('Copied the board as Markdown.')));
-    } else if (m.type === 'copyQuote' && Number.isInteger(m.i) && b.said[m.i]) {
-      const x = b.said[m.i];
-      vscode.env.clipboard.writeText(`${x.stamp} "${x.text.replace(/\s+/g, ' ').trim()}" (${x.titles.join(', ')})`);
     }
   });
   panel.onDidDispose(() => {
@@ -1257,15 +1254,14 @@ function boardHtml(webview) {
   .warnbox code, .paths code { font-size: 12px; }
   .paths { margin: 6px 0 0; padding-left: 18px; max-height: 160px; overflow: auto; }
   .said { border-top: 1px solid var(--vscode-widget-border, rgba(128,128,128,.18)); }
-  .said .it { display: grid; grid-template-columns: 9.5em 12em 1fr auto; gap: 2px 12px; padding: 6px 4px; border-bottom: 1px solid var(--vscode-widget-border, rgba(128,128,128,.18)); align-items: baseline; }
+  .said .it { display: grid; grid-template-columns: 9em 11em minmax(0, 1fr); gap: 2px 12px; padding: 6px 4px; cursor: pointer; border-bottom: 1px solid var(--vscode-widget-border, rgba(128,128,128,.18)); align-items: baseline; }
   .said .it:hover { background: var(--vscode-list-hoverBackground); }
   .said .ts { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--vscode-descriptionForeground); font-size: 12px; }
   .said .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--vscode-descriptionForeground); }
-  .said .txt { word-break: break-word; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .said .rep { grid-column: 3; font-size: 12px; color: var(--vscode-descriptionForeground); word-break: break-word; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .said .txt { word-break: break-word; white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .said .rep { grid-column: 3; font-size: 12px; color: var(--vscode-descriptionForeground); word-break: break-word; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .said .it.open .txt, .said .it.open .rep { display: block; -webkit-line-clamp: unset; }
   .said .rep b { font-weight: 600; }
-  .said .cp { visibility: hidden; }
-  .said .it:hover .cp, .said .cp:focus-visible { visibility: visible; }
   .memo { margin-top: 6px; padding: 4px 16px; border: 1px solid var(--vscode-widget-border, rgba(128,128,128,.3)); border-radius: 4px; max-height: 70vh; overflow: auto; }
   .memo table { width: auto; }
   .memo td, .memo th { border: 1px solid var(--vscode-widget-border, rgba(128,128,128,.3)); }
@@ -1331,9 +1327,8 @@ function boardHtml(webview) {
         const who = x.titles.join(', ');
         const many = x.replies.length > 1;
         const rep = x.replies.map((r) => (many ? '<b>' + esc(r.title) + ':</b> ' : '') + (r.reply ? esc(r.reply) : esc(S.noReply))).join('<br>');
-        h += '<div class="it"><span class="ts">' + esc(x.stamp) + '</span><span class="who" title="' + esc(who) + '">' + esc(who) + '</span>'
-          + '<span class="txt" title="' + esc(x.text) + '">' + esc(x.text) + '</span>'
-          + '<button class="link cp" data-act="copyQuote" data-i="' + i + '">' + esc(S.copyQuote) + '</button>'
+        h += '<div class="it' + (opened.has(x.ts + '|' + x.text) ? ' open' : '') + '" data-key="' + esc(x.ts + '|' + x.text) + '" title="' + esc(S.moreTip) + '"><span class="ts">' + esc(x.stamp) + '</span><span class="who" title="' + esc(who) + '">' + esc(who) + '</span>'
+          + '<span class="txt">' + esc(x.text) + '</span>'
           + '<span class="rep">→ ' + rep + '</span></div>';
       });
       h += '</div>';
@@ -1347,7 +1342,15 @@ function boardHtml(webview) {
     }
     root.innerHTML = h;
   }
+  const opened = new Set();
   root.addEventListener('click', (e) => {
+    const it = e.target.closest('.said .it');
+    if (it && !e.target.closest('[data-act]')) {
+      const k = it.dataset.key;
+      if (opened.has(k)) opened.delete(k); else opened.add(k);
+      it.classList.toggle('open', opened.has(k));
+      return;
+    }
     const el = e.target.closest('[data-act]');
     if (!el) return;
     e.preventDefault();

@@ -146,11 +146,9 @@ test('그룹 보드: 기다리는 세션, 세션 현황(커밋 안 한 파일), 
   assert.deepStrictEqual([...restart.titles].sort(), ['Developer', 'Watcher'], '두 세션에 보낸 같은 말은 세션을 함께 적는다');
   assert.strictEqual(said.find((x) => x.text === 'Prepare the release').replies[0].reply, 'Release prepared.', '다른 세션이 보낸 말 뒤의 답은 내 말의 답이 아니다');
   assert.ok(!said.some((x) => x.text === 'Something unrelated'), '그룹 밖 세션에 한 말은 넣지 않는다');
-  assert.match(panel.webview.html, /\.said \.it:hover \.cp/, '복사 단추는 마우스를 올린 줄에만');
-  panel.send({ type: 'copyQuote', i: 0 });
-  await waitFor(() => /^\d\d-\d\d \d\d:\d\d:\d\d \S+ "ship it" \(Watcher\)$/.test(stub.state.clipboard || ''), '원문·시각 복사');
-  panel.send({ type: 'copyQuote', i: said.indexOf(restart) });
-  await waitFor(() => /"restart now" \((Developer, Watcher|Watcher, Developer)\)$/.test(stub.state.clipboard || ''), '여러 세션이면 함께');
+  assert.ok(!/copyQuote/.test(panel.webview.html), '복사 단추는 없다(쓸 일이 없어 글 칸을 넓혔다, 11-12 사용자)');
+  assert.match(panel.webview.html, /grid-template-columns: 9em 11em minmax\(0, 1fr\)/, '시각·세션 다음 칸이 남는 폭을 다 쓴다');
+  assert.match(panel.webview.html, /\.said \.it\.open \.txt/, '누르면 글 전체를 펼친다');
 
   // 보드 전체를 마크다운으로
   panel.send({ type: 'copyBoard' });
