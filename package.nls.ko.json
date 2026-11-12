@@ -20,7 +20,7 @@
   "config.showShellGuesses": "셸 명령 글자(>, >>, tee, sed -i, cp, mv 등)에서 추정한 파일도 보여 줍니다. 회색 ? 표시로 구분합니다.",
   "config.hideScratchpadFiles": "/tmp/claude-*/…/scratchpad 아래 임시 파일을 숨깁니다. 그 안의 git worktree 파일은 계속 보여 줍니다.",
   "config.includeSubagents": "하위 에이전트가 바꾼 파일도 부모 세션 아래에 보여 줍니다.",
-  "config.pollSeconds": "창이 열려 있을 때 대화 기록을 다시 확인하는 간격(초). 새로 추가된 부분만 읽습니다.",
+  "config.pollSeconds": "대화 기록을 다시 확인하는 간격(초). 새로 추가된 부분만 읽습니다. Session Watchtower 창이 안 보일 때는 이 폴더에서 일하는 세션이 있을 때만 이 간격으로 읽고, 없으면 1분에 한 번쯤 읽습니다.",
   "config.statusBar": "아래 상태 표시줄에 요약(작업 중 · 기다림 · 방금 끝남)을 보여 줍니다. 누르면 세션 상태 창이 열립니다.",
   "config.sessionDetails": "세션마다 둘째 줄(지금 하는 일, 변경 규모)을 보여 줍니다. 끄면 한 줄짜리 짧은 목록이 됩니다.",
   "config.sessionListDays": "세션 상태 창에 이 폴더의 최근 N일 세션을 Claude Code 세션 목록처럼 보여 줍니다. 실행 중이 아니어도 나옵니다(0 = 실행 중인 세션과 보는 기간 안에 변경이 있는 세션만). Claude Code 설정 \"Archive Inactive Sessions\"(기본 14일)보다 오래 대화가 없던 세션은 보관함에 보입니다. Claude Code 안에서 직접 보관하거나 꺼낸 세션은 알아낼 수 없으니, 그런 세션은 여기 보관 단추로 옮기세요.",
@@ -45,5 +45,6 @@
   "config.notifyOverlap": "이 폴더의 세션이 다른 세션도 고친 파일을 고치면 알림을 띄웁니다. 끄더라도 변경 파일 창의 표시는 그대로 나옵니다.",
   "config.overlapIgnore": "겹침 경고를 하지 않을 파일(glob 패턴, **는 폴더를 넘어 일치). 알림에서 \"알리지 않기\"로 고른 파일은 따로 기억합니다.",
   "config.notifyStuckMinutes": "이 폴더의 세션이 작업 중인데 이만큼(분) 동안 새 기록이 없으면 알립니다(0 = 끔). 오래 걸리는 명령도 똑같이 보일 수 있습니다.",
-  "command.renameSession": "세션 이름 바꾸기"
+  "command.renameSession": "세션 이름 바꾸기",
+  "config.explorerMarks": "세션이 지금 고치는 파일을 파일 탐색기와 편집기 탭에 표시합니다: 도는 배지와 초록 이름(승인을 기다리는 수정은 파란 !). 그 파일이 든 폴더에도 색이 번집니다. VS Code는 확장이 파일 그림 자체를 바꾸거나 움직이게 할 수 없어서 배지가 돕니다. \"움직임 줄이기\"를 켜면 배지는 멈춘 점입니다."
 }

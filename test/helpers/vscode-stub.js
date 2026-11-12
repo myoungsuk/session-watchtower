@@ -5,14 +5,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-function install({ extDir, language = 'en', workspace, config = {} }) {
+function install({ extDir, language = 'en', workspace, config = {}, workspaceScheme = 'file', workspaceAuthority = '' }) {
   const calls = [];
   const commands = new Map();
   const trees = {};
   const webviewProviders = {};
   const statusItems = [];
   const reveals = [];
-  const state = { contentProvider: null, decoProvider: null, config: { ...config } };
+  const state = { contentProvider: null, decoProvider: null, decoProviders: [], config: { ...config } };
   const bundle = language === 'ko' ? JSON.parse(fs.readFileSync(path.join(extDir, 'l10n', 'bundle.l10n.ko.json'), 'utf8')) : {};
 
   class EventEmitter { constructor() { this.ls = []; this.event = (f) => { this.ls.push(f); return { dispose() {} }; }; } fire(v) { this.ls.forEach((f) => f(v)); } }
@@ -22,9 +22,11 @@ function install({ extDir, language = 'en', workspace, config = {} }) {
   class ThemeColor { constructor(id) { this.id = id; } }
   class FileDecoration { constructor(badge, tooltip, color) { this.badge = badge; this.tooltip = tooltip; this.color = color; } }
   class MarkdownString { constructor(v) { this.value = v || ''; } appendMarkdown(s) { this.value += s; return this; } }
+  // scheme·authority만 바꾼 사본을 만들 수 있는 가짜 주소(원격 창에서는 탐색기가 vscode-remote 주소로 파일을 가리킨다)
+  const mkUri = (scheme, authority, p) => ({ scheme, authority, path: p, fsPath: p, with(c) { return mkUri(c.scheme || scheme, c.authority === undefined ? authority : c.authority, c.path || p); }, toString() { return `${scheme}://${authority}${p}`; } });
   const Uri = {
     from: (o) => ({ ...o, toString() { return `${o.scheme}:${o.path}${o.query ? '?' + o.query : ''}`; } }),
-    file: (p) => ({ scheme: 'file', path: p, fsPath: p, toString() { return 'file://' + p; } }),
+    file: (p) => mkUri('file', '', p),
     parse: (s) => ({ scheme: String(s).split(':')[0], path: s, toString() { return s; } }),
   };
   const disposable = () => ({ dispose() {} });
@@ -46,7 +48,7 @@ function install({ extDir, language = 'en', workspace, config = {} }) {
         trees[id] = view;
         return view;
       },
-      registerFileDecorationProvider: (p) => { state.decoProvider = p; return disposable(); },
+      registerFileDecorationProvider: (p) => { state.decoProviders.push(p); if (!state.decoProvider) state.decoProvider = p; return disposable(); },
       registerWebviewViewProvider: (id, p) => { webviewProviders[id] = p; return disposable(); },
       createStatusBarItem: (id) => { const it = { id, text: '', show() { this.visible = true; }, hide() { this.visible = false; }, dispose() {} }; statusItems.push(it); return it; },
       showTextDocument: async (u) => { calls.push(['show', String(u)]); },
@@ -69,7 +71,7 @@ function install({ extDir, language = 'en', workspace, config = {} }) {
       withProgress: async (o, fn) => fn({ report() {} }),
     },
     workspace: {
-      workspaceFolders: workspace ? [{ uri: { fsPath: workspace } }] : [],
+      workspaceFolders: workspace ? [{ uri: mkUri(workspaceScheme, workspaceAuthority, workspace) }] : [],
       getConfiguration: () => ({ get: (k, d) => (k in state.config ? state.config[k] : d), update: async (k, v) => { state.config[k] = v; } }),
       registerTextDocumentContentProvider: (scheme, p) => { state.contentProvider = p; return disposable(); },
       onDidChangeConfiguration: (cb) => { state.onConfig = cb; return disposable(); },
@@ -109,7 +111,13 @@ function install({ extDir, language = 'en', workspace, config = {} }) {
     if (state.onConfig) state.onConfig({ affectsConfiguration: (k) => k === 'claudeSessionChanges' || k === 'claudeSessionChanges.' + key });
   }
 
-  return { vscode, context, calls, commands, trees, statusItems, reveals, state, openWebview, changeConfig };
+  // 다른 묶음의 설정(예: workbench.reduceMotion)을 바꾸고 알린다
+  function changeSetting(fullKey, value) {
+    state.config[fullKey.split('.').pop()] = value;
+    if (state.onConfig) state.onConfig({ affectsConfiguration: (k) => k === fullKey || fullKey.startsWith(k + '.') });
+  }
+
+  return { vscode, context, calls, commands, trees, statusItems, reveals, state, openWebview, changeConfig, changeSetting, mkUri };
 }
 
 module.exports = { install };

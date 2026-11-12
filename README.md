@@ -17,6 +17,7 @@ If you run several Claude Code sessions at once, you lose track quickly: which o
 
 - **Sessions view**: every session of this folder with its state, what it is doing right now and how much it changed. Sessions of other folders are grouped below.
 - **Changed files view**: the files each session changed, with line counts, a diff on click, and a spinner on the file being edited right now.
+- **In the file Explorer too**: the file a session is editing right now gets a turning badge and a green name, also on its editor tab.
 - **Notifications**: when a session waits for your approval or answer, when two sessions change the same file, and when a working session goes quiet.
 - **Find things**: search what you wrote in any session, or ask which sessions changed a file.
 - **Housekeeping**: archive, rename, copy a summary of the changes as Markdown.
@@ -28,6 +29,7 @@ It never touches your project files and nothing leaves your machine.
 
 - [The Sessions view](#the-sessions-view)
 - [The Changed files view](#the-changed-files-view)
+- [In the file Explorer](#in-the-file-explorer)
 - [Review a whole session](#review-a-whole-session)
 - [Notifications](#notifications)
 - [Find a session by what you wrote](#find-a-session-by-what-you-wrote)
@@ -87,6 +89,25 @@ Each session with the files it changed inside the selected time range (24 hours 
 
 A session with no changes inside the time range is not listed here. In the Sessions view such a row has a button that **loads the files it changed in its last stretch of work**.
 
+## In the file Explorer
+
+<img src="media/readme/explorer.gif" width="609" alt="The file Explorer: package.json has a turning badge and a green name, the test folder has a green dot">
+
+You do not have to keep the Session Watchtower side bar open. While a session is editing a file, VS Code's own Explorer shows it:
+
+- **A turning badge and a green name** on the file, and on its editor tab.
+- **A green dot on the folders above it**, so you also notice edits inside a collapsed folder.
+- **A blue `!`** when an edit to that file waits for your approval.
+- Hover the file to see which session it is.
+
+"Editing" means the same as in the Changed files view: the file changed in the last 30 seconds while the session is working, or an edit has not finished.
+
+Good to know:
+
+- VS Code does not let an extension change or animate the file icon itself. The badge next to the name is what turns. With VS Code's *Reduce Motion* setting on, it is a still dot.
+- The badge sits next to git's own (`◐, M`). While a file is being edited its name is green instead of git's color; a file with errors keeps its error color.
+- Turn it off with the `explorerMarks` setting.
+
 ## Review a whole session
 
 The *Review all changes* button opens every file a session changed in one multi-file diff.
@@ -112,7 +133,7 @@ About the overlap warning:
 - Files that several sessions share on purpose can be silenced one by one from the notification, or with glob patterns in `overlapIgnore`. Claude Code's memory folder is ignored by default.
 - It warns after the fact, a few seconds after the change. It cannot stop an edit.
 
-Each notification is shown once per event and only for sessions of the folder open in this window, so several windows do not repeat each other.
+Each notification is shown once per event and only for sessions of the folder open in this window, so several windows do not repeat each other. They also work while the Session Watchtower side bar is hidden: as long as a session is working in this folder, its log is read every few seconds in the background.
 
 ## Find a session by what you wrote
 
@@ -183,6 +204,7 @@ Everything stays on your machine. The extension makes no network requests and co
 - **Guesses (`?`).** Files changed by scripts are found by their modification time: only inside a git repository, only while they are uncommitted and not git-ignored, and only the last change of each file. Another session, or you, may have saved the file while the command ran, so they stay marked as guesses.
 - **"Being edited right now."** Edit tools finish in well under a second, so the spinner is shown for 30 seconds after a change while the session keeps working.
 - **"May be stuck."** A command that runs for a long time without output looks the same as a stuck session.
+- **Explorer marks.** They appear a few seconds after the edit starts (the logs are checked every `pollSeconds`) and stay for 30 seconds after the last change. Only files inside the folder open in this window are marked. A Codex session is noticed within a minute when no Claude Code session is working in this folder and the side bar is hidden.
 - **Archive.** Sessions you archived or restored by hand inside Claude Code cannot be detected (Claude Code keeps that list private), and neither can its "unread" mark. If you archive by hand in Claude Code, set the archive time to something short such as 1 day so finished sessions leave the list here too. Sessions started by scripts through the SDK are left out of the list, as in Claude Code.
 - **Search.** Only your own messages are indexed, up to 2,000 characters each, and only Claude Code sessions.
 - **Which sessions changed this file** and the summaries only cover the selected time range.
@@ -200,12 +222,13 @@ All settings start with `claudeSessionChanges.`
 | `showShellGuesses` | true | Show files that are only guesses (`?`). |
 | `hideScratchpadFiles` | true | Hide Claude's throwaway scratchpad files (git worktrees inside it stay visible). |
 | `includeSubagents` | true | Include files changed by subagents under their parent session. |
-| `pollSeconds` | 5 | How often to check for new log lines while a view is visible. |
+| `pollSeconds` | 5 | How often to check for new log lines. |
 | `statusBar` | true | Show the status bar summary. |
 | `notifyWaiting` | true | Notify when a session in this folder starts waiting for you. |
 | `notifyOverlap` | true | Notify when a session changes a file that another session also changed. |
 | `overlapIgnore` | Claude's memory folder | Glob patterns of files that never get an overlap warning. |
 | `notifyStuckMinutes` | 10 | Notify when a working session has written nothing new for this many minutes (0 = off). |
+| `explorerMarks` | true | Mark the file a session is editing right now in the Explorer and on editor tabs. |
 | `sessionDetails` | true | Show the second line under each session. Turn off for a compact list. |
 | `archiveAfter` | Same as Claude Code | When a quiet session moves to Archived: same as Claude Code, 1 to 30 days, or never. |
 | `sessionListDays` | 90 | List this folder's sessions from the last N days even when they are not running (0 = only running sessions and sessions with changes in the time range). |
@@ -231,7 +254,7 @@ Available from the Command Palette under **Session Watchtower**, and from the me
 
 No build step and no dependencies. Run the tests with `npm test` (Node 20 or newer). They use a fake home folder with made-up session logs and a stub of the VS Code API, so they never read your real `~/.claude`.
 
-`npm run shot` (Linux) takes the real screenshots used in this page: it starts desktop VS Code on a virtual display (Xvfb) with the extension and made-up demo sessions, and writes pictures to `.shots/`. Scenes: `side`, `toasts`, `search`, `file`, `review`, `summary` and `gif`, for example `npm run shot -- side light`. It needs desktop VS Code, `xvfb-run`, ImageMagick and Python 3 with Pillow.
+`npm run shot` (Linux) takes the real screenshots used in this page: it starts desktop VS Code on a virtual display (Xvfb) with the extension and made-up demo sessions, and writes pictures to `.shots/`. Scenes: `side`, `toasts`, `search`, `file`, `review`, `summary`, `explorer` and `gif`, for example `npm run shot -- side light`. It needs desktop VS Code, `xvfb-run`, ImageMagick and Python 3 with Pillow.
 
 ## Feedback and contact
 
@@ -243,6 +266,7 @@ Claude Code 세션을 여러 개 돌릴 때 **어느 세션이 일하는 중이�
 
 - **세션 상태 창**: 이 폴더의 세션마다 상태(작업 중·기다림·방금 끝남·쉼·꺼짐), 지금 하는 일, 변경 규모가 나옵니다. 실행 중이 아니어도 나오고, 다른 폴더 세션은 아래에 묶여 나옵니다.
 - **변경 파일 창**: 세션이 바꾼 파일과 줄 수가 나오고, 누르면 비교 화면이 열립니다. 지금 고치는 파일에는 초록 회전 표시가 붙습니다. 색은 git과 같습니다: 초록 A 새 파일, 노랑 M 수정, 빨강 D 지워짐, 회색 ? 추정.
+- **파일 탐색기에도**: 세션이 지금 고치는 파일은 VS Code 파일 탐색기와 편집기 탭에서 도는 배지와 초록 이름으로 보입니다. 그 파일이 든 폴더에는 초록 점이 붙습니다.
 - **알림**: 세션이 승인이나 답을 기다릴 때, 두 세션이 같은 파일을 고쳤을 때, 작업 중인 세션이 10분 넘게 조용할 때 알려 줍니다.
 - **찾기**: 내가 세션에 쓴 말로 세션을 찾고, 파일을 우클릭해 그 파일을 고친 세션을 봅니다.
 - **정리**: 보관함, 세션 이름 바꾸기, 변경 요약을 마크다운으로 복사.

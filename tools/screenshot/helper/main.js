@@ -16,6 +16,15 @@ exports.activate = async () => {
   await sleep(300);
   await run('workbench.action.focusActiveEditorGroup');
   if (scene === 'side' || scene === 'toasts') return;
+  if (scene === 'explorer') {
+    // the built-in file Explorer, with one edited file visible and another inside a collapsed folder; the edited file is also open in a tab
+    await sleep(6000);
+    await run('workbench.view.explorer');
+    await vscode.window.showTextDocument(vscode.Uri.file(demo.files.auth), { preview: false });
+    await run('revealInExplorer', vscode.Uri.file(demo.files.auth));
+    await run('workbench.action.focusActiveEditorGroup');
+    return;
+  }
   await sleep(9000); // let the extension read the demo sessions first
   if (scene === 'search') await run('claudeSessionChanges.searchConversations', 'token refresh');
   if (scene === 'file') run('claudeSessionChanges.sessionsForFile', vscode.Uri.file(demo.files.doc1));

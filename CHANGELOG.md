@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.0
+
+- **Marks in the file Explorer.** The file a session is editing right now gets a turning badge and a green name in VS Code's own Explorer and on its editor tab; the folders above it get a green dot, and an edit that waits for your approval gets a blue `!`. VS Code does not let extensions animate the file icon itself, so the badge is what turns (a still dot with *Reduce Motion* on). Setting `explorerMarks`, on by default.
+- **The side bar no longer has to be open.** While a session is working in this folder, its log is now read every few seconds even when the Session Watchtower views are hidden (a few milliseconds per check). Before, the overlap warning only appeared while one of the views was visible.
+- Fixed: with the views hidden, a session that was working normally could be reported as "may be stuck" after 10 minutes, because the time of its last log line was not refreshed.
+- Fixed: turning off `notifyWaiting` also turned off the "may be stuck" notification.
+
 ## 0.13.0
 
 - **Overlap warning.** When a session changes a file that another session also changed, the file is marked `⚠ <session name> too`, the session row gets a `⚠ n` tag, and a notification offers *Compare both changes* and *Don't warn for this file*. Only certain changes count (not guesses), and a closed session whose change is already committed does not count. Settings `notifyOverlap` and `overlapIgnore` (glob patterns; Claude Code's memory folder is ignored by default). The command *Warn about overlapping edits for every file again* forgets the files you silenced.

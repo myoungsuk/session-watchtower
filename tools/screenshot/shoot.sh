@@ -1,7 +1,7 @@
 #!/bin/bash
 # Take a real screenshot of the extension: desktop VS Code on a virtual display (Xvfb), with made-up demo sessions in a throwaway home folder.
 # Usage: xvfb-run -a -s "-screen 0 2400x2400x24" tools/screenshot/shoot.sh "<theme name>" <full.png> [scene]
-# Scenes: side (default), toasts, search, file, review, summary — see helper/main.js. "gif" writes numbered frames next to <full.png>.
+# Scenes: side (default), toasts, search, file, review, summary — see helper/main.js. "gif" and "explorer" write numbered frames next to <full.png>.
 # Needs: desktop VS Code (CODE_BIN), xvfb-run, ImageMagick (import), node, python3.
 set -u
 V="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$V/../.." && pwd)"
@@ -12,6 +12,8 @@ RUN="$REPO/.shots/run-$$"; mkdir -p "$RUN/home" "$RUN/ws/web-app" "$RUN/ws/mobil
 sed "s/Default Dark Modern/$THEME/" "$V/settings.json" > "$RUN/ud/User/settings.json"
 # Notifications fade after a few seconds, so that scene polls faster and is taken early.
 if [ "$SCENE" = toasts ] || [ "$SCENE" = gif ]; then sed -i 's/^{/{\n  "claudeSessionChanges.pollSeconds": 2,/' "$RUN/ud/User/settings.json"; WAIT1="${WAIT1:-9}"; WAIT2="${WAIT2:-5}"; fi
+# The Explorer scene shows the marks next to git's own marks, and its badge turns, so it polls faster too.
+if [ "$SCENE" = explorer ]; then sed -i -e 's/"git.enabled": false/"git.enabled": true/' -e 's/^{/{\n  "claudeSessionChanges.pollSeconds": 2,/' "$RUN/ud/User/settings.json"; fi
 # There is no window manager on the virtual display, so the side bar width and window size are written in advance.
 python3 -I - "$RUN/ud/User/globalStorage" "${SIDEBAR:-300}" "${WIN_W:-1200}" "${WIN_H:-1200}" <<'PY'
 import sqlite3, sys, json, os
@@ -38,6 +40,19 @@ if [ "$SCENE" = gif ]; then
     case "$i" in 04) node "$V/demo-live.js" "$REPO" "$RUN/home" edit-auth;; 09) node "$V/demo-live.js" "$REPO" "$RUN/home" approve;; 13) node "$V/demo-live.js" "$REPO" "$RUN/home" overlap;; 18) node "$V/demo-live.js" "$REPO" "$RUN/home" finish;; esac
     import -window root "${OUT%.png}-$i.png"; sleep 1
   done
+  kill $CODE 2>/dev/null; sleep 1; kill $(echo "$PIDS" | tr ',' ' ') 2>/dev/null
+  [ "${KEEP:-0}" = 1 ] || { cd "$REPO" && rm -r ".shots/run-$$"; }
+  exit 0
+fi
+if [ "$SCENE" = explorer ]; then
+  # the file Explorer while a session edits two files (the Session Watchtower views are hidden): several frames, because the badge turns
+  sleep "${WAIT1:-18}"
+  node "$V/demo-live.js" "$REPO" "$RUN/home" edit-auth
+  echo "// refreshed" >> "$RUN/ws/web-app/src/middleware/auth.ts"
+  # a script-made change to a file the session already changed (no log record: found by its modification time), also changed for git
+  printf '{\n  "name": "web-app",\n  "private": true\n}\n' > "$RUN/ws/web-app/package.json"
+  sleep "${WAIT2:-6}"
+  for i in $(seq -w 1 "${FRAMES:-10}"); do import -window root "${OUT%.png}-$i.png"; sleep 0.2; done
   kill $CODE 2>/dev/null; sleep 1; kill $(echo "$PIDS" | tr ',' ' ') 2>/dev/null
   [ "${KEEP:-0}" = 1 ] || { cd "$REPO" && rm -r ".shots/run-$$"; }
   exit 0

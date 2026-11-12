@@ -2,7 +2,7 @@
   "name": "session-watchtower",
   "displayName": "Session Watchtower for Claude Code",
   "description": "%description%",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "scripts": {
     "test": "node --test test/*.test.js",
     "shot": "bash tools/screenshot/run.sh"
@@ -397,6 +397,11 @@
           "minimum": 0,
           "maximum": 240,
           "description": "%config.notifyStuckMinutes%"
+        },
+        "claudeSessionChanges.explorerMarks": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.explorerMarks%"
         },
         "claudeSessionChanges.sessionDetails": {
           "type": "boolean",

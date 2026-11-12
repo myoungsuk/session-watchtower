@@ -177,5 +177,7 @@
   "Could not rename the session: {0}": "세션 이름을 바꾸지 못했습니다: {0}",
   "Rename session": "세션 이름 바꾸기",
   "{0} too": "{0}도 고침",
-  "Other folders: working {0} · waiting {1}": "다른 폴더: 작업 {0} · 멈춤 {1}"
+  "Other folders: working {0} · waiting {1}": "다른 폴더: 작업 {0} · 멈춤 {1}",
+  "\"{0}\" is waiting for your approval to edit this file · Session Watchtower": "\"{0}\" 세션이 이 파일을 고치려고 승인을 기다리는 중 · Session Watchtower",
+  "Being edited now by \"{0}\" · Session Watchtower": "\"{0}\" 세션이 지금 고치는 중 · Session Watchtower"
 }

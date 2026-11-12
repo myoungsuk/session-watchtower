@@ -20,7 +20,7 @@
   "config.showShellGuesses": "Also show files guessed from shell commands (>, >>, tee, sed -i, cp, mv …), marked with a grey ?.",
   "config.hideScratchpadFiles": "Hide Claude's throwaway scratchpad files under /tmp/claude-*. Git worktrees inside the scratchpad stay visible.",
   "config.includeSubagents": "Show files changed by subagents under their parent session.",
-  "config.pollSeconds": "How often (seconds) to check for new log lines while the view is visible. Only newly appended lines are read.",
+  "config.pollSeconds": "How often (seconds) to check for new log lines. Only newly appended lines are read. While the Session Watchtower views are hidden, logs are read at this pace only if a session is working in this folder, otherwise about once a minute.",
   "config.statusBar": "Show a status bar summary (working · waiting · just finished). Clicking it opens the Sessions view.",
   "config.sessionDetails": "Show a second line under each session with its current step and the size of its changes. Turn off for a compact one-line list.",
   "config.sessionListDays": "List this folder's sessions from the last N days in the Sessions view, like Claude Code's own session list, even when they are not running (0 = only running sessions and sessions with changes in the time range). Sessions with no conversation for longer than Claude Code's \"Archive Inactive Sessions\" setting (14 days by default) go to the Archived section. Sessions you archived or restored by hand inside Claude Code cannot be detected; use the Archive button here for those.",
@@ -45,5 +45,6 @@
   "config.notifyOverlap": "Show a notification when a session in this folder changes a file that another session also changed. The file is marked in the Changed files view either way.",
   "config.overlapIgnore": "Files that never get an overlap warning, as glob patterns (** crosses folders). Files you silence from a notification are remembered separately.",
   "config.notifyStuckMinutes": "Notify when a session in this folder has been working this many minutes without writing anything new to its log (0 = off). A long-running command can look the same.",
-  "command.renameSession": "Rename session"
+  "command.renameSession": "Rename session",
+  "config.explorerMarks": "Mark the file a session is editing right now in the Explorer and on editor tabs: a rotating badge and a green name (a blue ! while an edit waits for your approval). Folders that contain such a file are tinted too. VS Code does not let extensions change or animate the file icon itself, so the badge is what turns. With \"Reduce Motion\" on, the badge is a still dot."
 }

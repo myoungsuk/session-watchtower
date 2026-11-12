@@ -54,6 +54,7 @@ function cfg() {
     notifyOverlap: c.get('notifyOverlap', true) !== false,
     overlapIgnore: Array.isArray(c.get('overlapIgnore')) ? c.get('overlapIgnore').map(String) : ['**/.claude/projects/*/memory/**'],
     notifyStuckMinutes: Math.max(0, Number(c.get('notifyStuckMinutes', 10)) || 0),
+    explorerMarks: c.get('explorerMarks', true) !== false,
     archiveAfter: String(c.get('archiveAfter', 'claude')),
     statusBar: c.get('statusBar', true) !== false,
     includeCodex: c.get('includeCodex', true) !== false,
@@ -175,7 +176,7 @@ function scheduleLiveExpiry() {
     }
   }
   if (next === Infinity) return;
-  liveTimer = setTimeout(() => { liveTimer = null; provider.fire(); scheduleLiveExpiry(); }, next + 200);
+  liveTimer = setTimeout(() => { liveTimer = null; provider.fire(); updateExplorerMarks(); scheduleLiveExpiry(); }, next + 200);
   if (liveTimer.unref) liveTimer.unref();
 }
 
@@ -306,6 +307,7 @@ function rebuild() {
   }
   rebuildSessions();
   provider.fire();
+  updateExplorerMarks();
   scheduleLiveExpiry();
   checkOverlaps();
 }
@@ -1591,6 +1593,88 @@ async function openSessionChanges(arg) {
   });
 }
 
+// ---------- 탐색기 표시(지금 고치는 파일) ----------
+// VS Code는 확장이 탐색기의 파일 그림을 바꾸거나 움직이게 하는 길을 주지 않는다. 줄 수 있는 것은 글자 배지(2자 이하)·이름 색·마우스 설명뿐이다.
+// 그래서 배지 글자를 반달 모양 넷으로 번갈아 바꿔 도는 것처럼 보이게 한다("움직임 줄이기"를 켠 사람에게는 멈춘 점).
+// 표시는 파일을 품은 폴더에도 색과 점으로 번진다(접힌 폴더 안에서 고치는 중인 것도 보이게).
+
+const SPIN_FRAMES = ['◐', '◓', '◑', '◒'];
+const SPIN_MS = 400;
+const SPIN_MAX_FILES = 20; // 한꺼번에 많은 파일이 바뀌면(포매터 등) 돌리지 않고 멈춘 점으로: 0.4초마다 수백 줄을 다시 그리게 하지 않는다
+const explorerEvents = new vscode.EventEmitter();
+let explorerLive = new Map(); // 경로 열쇠 → { state: 'editing' | 'approval', title, uri }
+let spinFrame = 0;
+let spinTimer = null;
+const pathKey = (p) => (process.platform === 'win32' ? String(p).toLowerCase() : String(p));
+
+// 작업 폴더 안의 파일이면 탐색기가 쓰는 주소로 바꾼다(원격 창은 작업 폴더와 같은 scheme·authority). 폴더 밖이면 null
+function workspaceUri(p) {
+  const k = pathKey(p);
+  for (const f of vscode.workspace.workspaceFolders || []) {
+    const r = pathKey(f.uri.fsPath);
+    if (!k.startsWith(r.endsWith(path.sep) ? r : r + path.sep)) continue;
+    const u = vscode.Uri.file(p);
+    return f.uri.scheme && f.uri.scheme !== 'file' ? u.with({ scheme: f.uri.scheme, authority: f.uri.authority }) : u;
+  }
+  return null;
+}
+
+function stopSpin() {
+  if (spinTimer) { clearInterval(spinTimer); spinTimer = null; }
+}
+
+function updateExplorerMarks() {
+  const next = new Map();
+  if (cfg().explorerMarks) {
+    for (const s of model) {
+      if (!s.alive) continue;
+      for (const f of s.files) {
+        const state = liveState(s, f);
+        if (!state) continue;
+        const k = pathKey(f.path);
+        const had = next.get(k);
+        if (had && (had.state === 'approval' || state !== 'approval')) continue; // 승인을 기다리는 쪽이 먼저
+        const uri = had ? had.uri : workspaceUri(f.path);
+        if (uri) next.set(k, { state, title: String(s.title).replace(/\s+/g, ' ').slice(0, 60), uri });
+      }
+    }
+  }
+  const changed = [];
+  for (const [k, v] of next) { const o = explorerLive.get(k); if (!o || o.state !== v.state || o.title !== v.title) changed.push(v.uri); }
+  for (const [k, v] of explorerLive) if (!next.has(k)) changed.push(v.uri);
+  explorerLive = next;
+  const editing = () => [...explorerLive.values()].filter((v) => v.state === 'editing').map((v) => v.uri);
+  const n = editing().length;
+  const spin = n > 0 && n <= SPIN_MAX_FILES && vscode.workspace.getConfiguration('workbench').get('reduceMotion') !== 'on';
+  const was = !!spinTimer;
+  if (!spin) stopSpin();
+  else if (!spinTimer) {
+    spinTimer = setInterval(() => {
+      spinFrame = (spinFrame + 1) % SPIN_FRAMES.length;
+      const uris = editing();
+      if (uris.length) explorerEvents.fire(uris); else stopSpin();
+    }, SPIN_MS);
+    if (spinTimer.unref) spinTimer.unref();
+  }
+  // 도는 모양 ↔ 멈춘 점으로 표시 방식이 바뀌면, 이미 표시된 파일도 다시 그리게 한다
+  if (was !== !!spinTimer && n) explorerEvents.fire(editing());
+  if (changed.length) explorerEvents.fire(changed);
+}
+
+const explorerMarks = {
+  onDidChangeFileDecorations: explorerEvents.event,
+  provideFileDecoration(uri) {
+    if (!explorerLive.size || !uri || uri.scheme === ITEM_SCHEME || uri.scheme === DIFF_SCHEME || !uri.fsPath) return undefined;
+    const e = explorerLive.get(pathKey(uri.fsPath));
+    if (!e || uri.scheme !== e.uri.scheme) return undefined;
+    const d = e.state === 'approval'
+      ? new vscode.FileDecoration('!', L('"{0}" is waiting for your approval to edit this file · Session Watchtower', e.title), new vscode.ThemeColor('charts.blue'))
+      : new vscode.FileDecoration(spinTimer ? SPIN_FRAMES[spinFrame] : '●', L('Being edited now by "{0}" · Session Watchtower', e.title), new vscode.ThemeColor('charts.green'));
+    d.propagate = true;
+    return d;
+  },
+};
+
 // ---------- 파일 장식(A/M/C/S 글자) ----------
 
 const decorations = {
@@ -1652,6 +1736,8 @@ function onWorkerMessage(m) {
     statusSessions = (m.sessions || []).concat(raw.filter((s) => s.agent === 'codex' && s.alive));
     updateStatusBar();
     checkWaiting(statusSessions);
+    // 이 폴더의 세션이 일하기 시작했으면 다음 주기를 기다리지 않고 기록을 읽는다(멈춤은 여기서 판단하지 않는다: 이 목록의 기록 시각은 낡았을 수 있다)
+    if (backgroundWanted() && workingHere()) requestScan(false);
     return;
   }
   inflight = false;
@@ -1674,8 +1760,9 @@ function onWorkerMessage(m) {
     sessionsWebview.post();
     updateStatusBar();
   }
-  // 달라진 것이 없다는 답("same")에도 확인한다: 기다림이 이어지는지는 시간이 지나야 알 수 있다
+  // 달라진 것이 없다는 답("same")에도 확인한다: 기다림이 이어지는지, 조용한 지 얼마나 됐는지는 시간이 지나야 알 수 있다
   checkWaiting(statusSessions);
+  if (m.type === 'result' || m.type === 'same') checkStuck(raw.filter((s) => s.alive)); // 방금 기록을 읽은 결과로만 판단한다
   if (pending) {
     const p = pending;
     pending = null;
@@ -1683,11 +1770,26 @@ function onWorkerMessage(m) {
   }
 }
 
+// 이 확장의 창이 안 보일 때(사용자가 파일 탐색기를 보고 있을 때)도 탐색기 표시·겹침 알림·멈춤 알림은 대화 기록을 읽어야 맞게 나온다.
+// 가벼운 확인(실행 중 목록만)의 "마지막 기록 시각"은 마지막으로 기록을 읽은 때에 멈춰 있어서, 그것만으로 판단하면 틀린다.
+// 이 폴더에서 일하는 세션이 있으면 확인 때마다, 없으면 BG_EVERY번에 한 번만 기록을 읽는다(달라진 줄만 읽어 한 번에 몇 ms).
+const BG_EVERY = 12;
+let bgTicks = 0;
+function backgroundWanted() {
+  const o = cfg();
+  return o.explorerMarks || o.notifyOverlap || o.notifyStuckMinutes > 0;
+}
+function workingHere() {
+  return statusSessions.some((s) => s.alive && (s.status === 'busy' || s.status === 'waiting') && inWorkspace(s));
+}
+
 function startTimer() {
   if (timer) clearInterval(timer);
   timer = setInterval(() => {
-    if ((treeView && treeView.visible) || (sessionsView && sessionsView.visible)) requestScan(false);
-    else if (cfg().statusBar || cfg().notifyWaiting) requestStatus();
+    if ((treeView && treeView.visible) || (sessionsView && sessionsView.visible)) { requestScan(false); return; }
+    const bg = backgroundWanted();
+    if (bg && (workingHere() || bgTicks++ % BG_EVERY === 0)) requestScan(false);
+    else if (bg || cfg().statusBar || cfg().notifyWaiting) requestStatus();
   }, cfg().pollSeconds * 1000);
 }
 
@@ -1725,7 +1827,6 @@ function checkWaiting(list) {
     Promise.resolve(vscode.window.showInformationMessage(L('"{0}" is waiting for you: {1}', s.title, what), open)).then((pick) => { if (pick === open) openClaudeSession(s.sid); });
   }
   for (const sid of [...waitingSeen.keys()]) if (!now.has(sid)) waitingSeen.delete(sid);
-  checkStuck(list);
 }
 
 // 작업 중인데 한참 동안 새 기록이 없는 세션(멈췄을 수 있다)을 한 번 알린다. 기록이 다시 생기면 다음에 또 알릴 수 있다
@@ -1820,6 +1921,7 @@ function activate(context) {
     vscode.commands.registerCommand('claudeSessionChanges.openClaudeSession', (arg) => openClaudeSession(arg)),
     vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, contentProvider),
     vscode.window.registerFileDecorationProvider(decorations),
+    vscode.window.registerFileDecorationProvider(explorerMarks),
     vscode.commands.registerCommand('claudeSessionChanges.refresh', () => requestScan(true)),
     vscode.commands.registerCommand('claudeSessionChanges.showAliveOnly', () => setAliveOnly(true)),
     vscode.commands.registerCommand('claudeSessionChanges.showAll', () => setAliveOnly(false)),
@@ -1843,6 +1945,7 @@ function activate(context) {
     treeView.onDidChangeVisibility((e) => { if (e.visible) requestScan(false); }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('claudeCode.archiveInactiveSessions')) requestScan(true); // 다른 폴더 세션을 읽는 기간도 함께 바뀐다
+      if (e.affectsConfiguration('workbench.reduceMotion')) updateExplorerMarks();
       if (!e.affectsConfiguration(CFG)) return;
       startTimer();
       if (['lookbackHours', 'includeCodex', 'attentionMarkerDir', 'sessionListDays', 'archiveAfter'].some((k) => e.affectsConfiguration(CFG + '.' + k))) requestScan(true);
@@ -1852,13 +1955,14 @@ function activate(context) {
   );
   startTimer();
   if (treeView.visible) requestScan(true);
-  else if (cfg().statusBar || cfg().notifyWaiting) requestStatus();
+  else if (backgroundWanted() || cfg().statusBar || cfg().notifyWaiting) requestStatus();
 }
 
 // 끌 때 읽은 결과를 한 번 저장하고 스레드를 닫는다
 function deactivate() {
   if (timer) clearInterval(timer);
   if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; }
+  stopSpin();
   if (searchWorker) { try { searchWorker.terminate(); } catch { /* 이미 끝남 */ } searchWorker = null; }
   const w = worker;
   worker = null;

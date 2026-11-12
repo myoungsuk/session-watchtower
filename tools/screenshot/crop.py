@@ -9,6 +9,8 @@ W, H = im.size
 left = (48 + side) * 2 + 2      # activity bar + side bar
 if scene == 'side':
     box = (0, 60, left, H)
+elif scene == 'explorer':        # side bar with the file Explorer, plus the start of the editor tabs
+    box = (0, 60, left + 520, 60 + 760)
 elif scene == 'toasts':
     box = (W - 940, H - 640, W, H - 44)
 elif scene in ('search', 'file'):
