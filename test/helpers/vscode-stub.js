@@ -116,9 +116,9 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
     if (state.onConfig) state.onConfig({ affectsConfiguration: (k) => k === 'claudeSessionChanges' || k === 'claudeSessionChanges.' + key });
   }
 
-  // 편집기 탭을 바꾸고 알린다. tabs: [{ label, viewType }] (viewType이 없으면 글 편집기 탭)
-  function setTabs(tabs) {
-    vscode.window.tabGroups.all = [{ isActive: true, tabs: tabs.map((t) => ({ label: t.label, input: t.viewType ? { viewType: t.viewType } : { uri: Uri.file('/x/' + t.label) } })) }];
+  // 편집기 탭을 바꾸고 알린다. groups: [[{ label, viewType, active }]] — 탭 묶음마다 탭 목록(viewType이 없으면 글 편집기 탭, active는 그 묶음에서 앞에 보이는 탭)
+  function setTabs(groups) {
+    vscode.window.tabGroups.all = groups.map((tabs, gi) => ({ isActive: gi === 0, tabs: tabs.map((t) => ({ label: t.label, isActive: !!t.active, input: t.viewType ? { viewType: t.viewType } : { uri: Uri.file('/x/' + t.label) } })) }));
     tabEvents.fire({ opened: [], closed: [], changed: [] });
   }
 

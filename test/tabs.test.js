@@ -1,5 +1,5 @@
 'use strict';
-// 이 창에 탭으로 열린 Claude 대화를 세션 창에서 다른 색으로 보여 주는지 시험한다.
+// 지금 탭에 띄워 둔 Claude 대화만 세션 창에서 다른 색으로 보여 주는지 시험한다(뒤에 깔린 탭은 칠하지 않는다).
 // Claude Code 탭에는 세션 ID가 없고 이름만 있다(25자를 넘으면 앞 24자 + "…").
 const test = require('node:test');
 const assert = require('node:assert');
@@ -29,9 +29,9 @@ function session(cwd, title, ago, reg) {
   if (reg) fx.registerSession(home, reg, sid, { status: 'idle', cwd, name: 'n' + n, nameSource: 'derived', statusUpdatedAt: now - ago });
   return sid;
 }
-ids.watch = session(project, 'Watcher', 3 * MIN, process.pid);         // 실행 중, 탭 열림
+ids.watch = session(project, 'Watcher', 3 * MIN, process.pid);         // 실행 중
 ids.long = session(project, LONG, 20 * MIN);                           // 꺼짐, 긴 이름(탭에는 줄인 이름)
-ids.quiet = session(project, 'Quiet one', 30 * MIN, process.ppid);     // 실행 중, 탭 없음
+ids.quiet = session(project, 'Quiet one', 30 * MIN, process.ppid);     // 실행 중
 ids.sameOld = session(project, 'Same name', 90 * MIN);                 // 같은 이름 둘(둘 다 꺼짐): 최근 것만
 ids.sameNew = session(project, 'Same name', 40 * MIN);
 ids.elsewhere = session(other, 'Watcher', 5 * MIN, 1);                 // 다른 폴더의 같은 이름: 이 창 탭이 아니다
@@ -63,38 +63,60 @@ test.before(async () => {
 });
 test.after(async () => { await ext.deactivate(); });
 
-test('탭으로 열린 대화는 세션 창에서 다르게 보이고, 탭을 닫으면 원래대로 돌아온다', async () => {
+test('앞에 띄워 둔 대화 탭만 다르게 보이고, 뒤에 깔린 탭은 칠하지 않는다', async () => {
   assert.deepStrictEqual(tabbed(), [], '탭이 없으면 표시도 없다');
-  const posts = web.posted.length;
+  const shortLong = LONG.substring(0, 24) + '…';
+  const claude = (label, active) => ({ label, viewType: CLAUDE, active });
+
+  // 사용자 화면과 같은 모양: Claude 탭 셋이 한 묶음에 있고 가운데 것만 앞에 보인다. 옆 묶음은 글 편집기
+  let posts = web.posted.length;
   stub.setTabs([
-    { label: 'Watcher', viewType: CLAUDE },
-    { label: LONG.substring(0, 24) + '…', viewType: CLAUDE },
-    { label: 'Same name', viewType: CLAUDE },
-    { label: 'Claude Code', viewType: CLAUDE },          // 이름 없는 새 대화
-    { label: 'Quiet one', viewType: 'mainThreadWebview-markdown.preview' }, // 다른 확장의 화면
-    { label: 'README' },                                 // 글 편집기
+    [claude('Watcher', false), claude('Quiet one', true), claude('Same name', false)],
+    [{ label: 'README', active: true }],
   ]);
   await waitFor(() => web.posted.length > posts, '탭이 바뀌면 다시 그린다', 3000);
-  assert.deepStrictEqual(tabbed(), [ids.watch, ids.long, ids.sameNew].sort(),
-    '실행 중인 같은 이름 세션, 줄인 이름, 같은 이름 중 최근 것만. 다른 폴더·다른 화면·글 편집기는 아니다');
-  const watch = rows().find((r) => r.sid === ids.watch);
-  assert.match(watch.tip, /^Open in a tab in this window\n/);
-  assert.strictEqual(web.lastPayload().strings.lgTab, 'Open in a tab in this window', '색 설명에도 나온다');
+  assert.deepStrictEqual(tabbed(), [ids.quiet], '앞에 보이는 탭 하나만');
+  const quiet = rows().find((r) => r.sid === ids.quiet);
+  assert.match(quiet.tip, /^Shown in a tab right now\n/);
+  assert.strictEqual(web.lastPayload().strings.lgTab, 'Shown in a tab right now', '색 설명에도 나온다');
 
-  // 탭과 상관없는 변화(같은 이름들)에는 다시 그리지 않는다
-  const quiet = web.posted.length;
+  // 다른 탭을 누르면 표시가 옮겨 간다
+  posts = web.posted.length;
   stub.setTabs([
-    { label: 'Watcher', viewType: CLAUDE },
-    { label: LONG.substring(0, 24) + '…', viewType: CLAUDE },
-    { label: 'Same name', viewType: CLAUDE },
-    { label: 'Claude Code', viewType: CLAUDE },
-    { label: 'notes.md' },
+    [claude('Watcher', true), claude('Quiet one', false), claude('Same name', false)],
+    [{ label: 'README', active: true }],
+  ]);
+  await waitFor(() => web.posted.length > posts && tabbed().join() === ids.watch, '표시가 옮겨 감', 3000);
+
+  // 탭 묶음 둘에 대화가 하나씩 보이면 둘 다. 줄인 이름도 맞춘다. 다른 폴더의 같은 이름은 아니다
+  stub.setTabs([
+    [claude('Watcher', true), claude('Same name', false)],
+    [claude(shortLong, true), { label: 'notes.md', active: false }],
+  ]);
+  await waitFor(() => tabbed().length === 2, '묶음마다 앞에 보이는 대화', 3000);
+  assert.deepStrictEqual(tabbed(), [ids.watch, ids.long].sort());
+
+  // 같은 이름이 여럿(둘 다 꺼짐)이면 최근 것만. 이름 없는 새 대화·다른 확장 화면·글 편집기는 대화가 아니다
+  stub.setTabs([
+    [claude('Same name', true)],
+    [claude('Claude Code', true)],
+    [{ label: 'Quiet one', viewType: 'mainThreadWebview-markdown.preview', active: true }],
+    [{ label: 'README', active: true }],
+  ]);
+  await waitFor(() => tabbed().join() === ids.sameNew, '같은 이름은 최근 것만', 3000);
+
+  // 앞에 보이는 Claude 탭이 그대로면(뒤의 탭만 바뀌면) 다시 그리지 않는다
+  const still = web.posted.length;
+  stub.setTabs([
+    [claude('Same name', true), claude('Watcher', false)],
+    [claude('Claude Code', true)],
+    [{ label: 'notes.md', active: true }],
   ]);
   await sleep(400);
-  assert.strictEqual(web.posted.length, quiet, 'Claude 탭이 그대로면 다시 그리지 않는다');
+  assert.strictEqual(web.posted.length, still, '뒤에 깔린 탭 변화로는 다시 그리지 않는다');
 
-  stub.setTabs([{ label: 'README' }]);
-  await waitFor(() => tabbed().length === 0, '탭을 닫으면 표시가 사라진다', 3000);
+  stub.setTabs([[{ label: 'README', active: true }]]);
+  await waitFor(() => tabbed().length === 0, '대화 탭을 모두 닫으면 표시가 사라진다', 3000);
 });
 
 test('세션 창 화면 코드에 탭 표시 모양이 들어 있다', () => {

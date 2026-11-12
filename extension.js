@@ -891,7 +891,8 @@ class Provider {
 const provider = new Provider();
 
 // 맨 위 "세션 상태" 창: 트리 대신 웹뷰로 그려 Claude 세션 목록처럼 큰 줄로 보여 준다.
-// ---------- 이 창에 탭으로 열린 Claude 대화 ----------
+// ---------- 지금 탭에 띄워 둔 Claude 대화 ----------
+// 탭 묶음마다 앞에 보이는 탭(isActive)만 센다. 뒤에 깔린 탭까지 칠하면 거의 모든 줄이 칠해져 구별이 안 된다(11-12 사용자 지적).
 // Claude Code는 대화 탭(웹뷰 claudeVSCodePanel)에 세션 이름을 붙인다: 25자를 넘으면 앞 24자 + "…", 이름이 없으면 "Claude Code"(2.1.322 기준).
 // 탭에는 세션 ID가 없어서 이름으로 맞춘다. 같은 이름이 여럿이면 실행 중인 세션을, 그것도 없으면 가장 최근 세션을 고른다.
 const CLAUDE_PANEL_RE = /claudeVSCodePanel$/;
@@ -900,7 +901,7 @@ function claudeTabLabels() {
   const groups = (vscode.window.tabGroups && vscode.window.tabGroups.all) || [];
   for (const g of groups) {
     for (const t of g.tabs || []) {
-      if (t && t.input && typeof t.input.viewType === 'string' && CLAUDE_PANEL_RE.test(t.input.viewType) && t.label && t.label !== 'Claude Code') out.push(String(t.label));
+      if (t && t.isActive && t.input && typeof t.input.viewType === 'string' && CLAUDE_PANEL_RE.test(t.input.viewType) && t.label && t.label !== 'Claude Code') out.push(String(t.label));
     }
   }
   return out;
@@ -927,7 +928,7 @@ function openTabSids(list) {
   return out;
 }
 
-// 탭이 열리고 닫히거나 이름이 바뀌면 세션 창을 다시 그린다(입력 중 저장 표시 같은 다른 탭 변화에는 그리지 않는다)
+// 앞에 보이는 Claude 탭이 바뀌면(탭 전환·열기·닫기·이름 바뀜) 세션 창을 다시 그린다. 다른 탭 변화에는 그리지 않는다
 let tabKey = '';
 let tabTimer = null;
 function onTabsChanged() {
@@ -958,7 +959,7 @@ function sessionRow(s, tabs) {
   const del = m ? m.files.reduce((a, f) => a + (f.del || 0), 0) : 0;
   const tab = !!(tabs && tabs.has(s.sid));
   return {
-    sid: s.sid, title: s.title, state: st.key, meta, tip: (tab ? L('Open in a tab in this window') + '\n' : '') + sessionTooltip(s, st) + '\n' + hint, canOpen, alive: !!s.alive, codex, tab,
+    sid: s.sid, title: s.title, state: st.key, meta, tip: (tab ? L('Shown in a tab right now') + '\n' : '') + sessionTooltip(s, st) + '\n' + hint, canOpen, alive: !!s.alive, codex, tab,
     files: m ? m.files.length : 0, add, del, now: [subText(s, st), nowText(s, st)].filter(Boolean).join(' · '), folder: inWorkspace(s) ? '' : s.project || '', worktree: s.worktree || '',
     overlap: m ? m.files.filter((f) => f.overlap).length : 0,
   };
@@ -980,7 +981,7 @@ function sessionsPayload() {
     lgSessions: L('Sessions'), lgFiles: L('Changed files'), lgRow: L('Under each session'),
     lgBusy: L('Working'), lgWaiting: L('Waiting for you (approval or answer)'), lgDone: L('Just finished (less than 10 minutes ago)'), lgIdle: L('Idle'), lgOff: L('Off (no Claude process)'),
     lgA: L('Created in this session'), lgM: L('Modified in this session'), lgD: L('Not on disk anymore (deleted)'), lgQ: L('Guessed from shell commands (not certain)'),
-    lgTab: L('Open in a tab in this window'),
+    lgTab: L('Shown in a tab right now'),
     lgNow: L('What it is doing now'), lgDiff: L('Lines added / removed within the time range of the Changed files view'),
     // 변경 규모는 변경 파일 창의 "보는 기간" 안에서, 고칠 때마다 더한 합계(같은 줄을 여러 번 고치면 여러 번 셈)
     diffTip: L('Last {0}: {1} lines added, {2} removed (each edit counted)', spanLong(cfg().lookbackHours), '{1}', '{2}'),
@@ -1090,7 +1091,7 @@ function sessionsHtml(webview) {
   .row:hover { background: var(--vscode-list-hoverBackground); }
   .row:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
   .row.other { cursor: default; }
-  /* 이 창에 탭으로 열린 대화: 옅은 선택 색 바탕 + 왼쪽 막대(상태 색과 겹치지 않는 중립 색) */
+  /* 지금 탭에 띄워 둔 대화: 옅은 선택 색 바탕 + 왼쪽 막대(상태 색과 겹치지 않는 중립 색) */
   .row.tab, .tabkey { background: var(--vscode-list-inactiveSelectionBackground); box-shadow: inset 2px 0 0 color-mix(in srgb, var(--vscode-foreground) 65%, transparent); }
   .row.tab:hover { background: var(--vscode-list-hoverBackground); }
   .row.tab + .row.tab { margin-top: 2px; } /* 탭으로 열린 줄이 이어져도 한 덩어리로 보이지 않게 */

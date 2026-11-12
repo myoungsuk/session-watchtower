@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.1
+
+- Only the conversation you have in front of you is shaded now: the Claude Code tab that is showing (one per editor group). In 0.16.0 every open conversation tab was shaded, which marked almost the whole list.
+
 ## 0.16.0
 
 - **Sessions open in a tab stand out.** In the Sessions view, a conversation that is open in an editor tab of this window gets a shaded row with a bar on the left, and the color legend explains it. Claude Code's tabs only show the session name, so tabs are matched by name (also when Claude Code cuts a long name short with `…`).
