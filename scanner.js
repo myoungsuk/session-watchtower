@@ -1405,7 +1405,7 @@ function discover(sinceMs, registry, includeCodex, listSinceMs, projectDirs, oth
 
 // ---------- 내가 보낸 말 색인(대화 내용으로 세션 찾기) ----------
 // 대화 기록은 수 GB라 찾을 때마다 다 읽을 수 없다. 사용자가 직접 쓴 말만 따로 모아 두고(기록 파일이 자란 만큼만 더 읽음) 그 안에서 찾는다.
-const PROMPT_INDEX_VERSION = 1;
+const PROMPT_INDEX_VERSION = 2; // 2: 세션이 답한 마지막 말의 첫 줄(reply)도 모은다, 시스템이 끼워 넣은 말은 뺀다
 const PROMPT_MAX = 2000;
 const K_ISMETA = B('"isMeta":true');
 
@@ -1417,6 +1417,19 @@ function cleanPrompt(text) {
   t = t.replace(/<command-name>([^<]*)<\/command-name>/g, '$1 ');
   t = t.replace(/\s+/g, ' ').trim();
   return t.length > PROMPT_MAX ? t.slice(0, PROMPT_MAX) : t;
+}
+
+// 사용자가 친 것이 아니라 Claude Code가 끼워 넣은 user 기록(중단 표시, 긴 대화 요약, 명령 안내)
+const NOT_TYPED_RE = /^(\[Request interrupted by user|This session is being continued from a previous conversation|Caveat: The messages below were generated)/;
+const K_TEXTPART = B('"type":"text"');
+
+// 세션이 답한 글의 첫 줄(마크다운 꾸밈은 걷어 낸다). 사용자의 세션들은 첫 줄에 결론을 쓴다
+function replyHead(text) {
+  for (const raw of String(text || '').split('\n')) {
+    const t = raw.replace(/^\s*(#{1,6}\s+|[-*]\s+|>\s*)/, '').replace(/\*\*|__|`/g, '').replace(/\s+/g, ' ').trim();
+    if (t) return t.length > 300 ? t.slice(0, 300) + '…' : t;
+  }
+  return '';
 }
 
 function createPromptIndex() {
@@ -1461,16 +1474,33 @@ function createPromptIndex() {
           try { const o = JSON.parse(line.toString('utf8')); if (o.type === 'custom-title' && o.customTitle) { e.title = String(o.customTitle); e.custom = true; } else if (o.type === 'ai-title' && o.aiTitle && !e.custom) e.title = String(o.aiTitle); } catch { /* 깨진 줄 */ }
           return;
         }
+        // 세션의 답: 마지막 말 다음에 나온 assistant 글. 차례가 끝날 때까지 덮어써서 마지막 답의 첫 줄이 남는다
+        if (e.open && e.prompts.length && line.length < 400000 && line.indexOf(K_ASSISTANT) >= 0 && line.indexOf(K_TEXTPART) >= 0 && line.subarray(0, 48).indexOf(K_APIREQ) < 0) {
+          let a;
+          try { a = JSON.parse(line.toString('utf8')); } catch { return; }
+          if (!a || a.type !== 'assistant' || a.isSidechain || !a.message || !Array.isArray(a.message.content)) return;
+          const txt = a.message.content.filter((x) => x && x.type === 'text' && typeof x.text === 'string').map((x) => x.text).join('\n');
+          const head = replyHead(txt);
+          if (head) { const last = e.prompts[e.prompts.length - 1]; last.reply = head; last.replyTs = Date.parse(a.timestamp) || 0; }
+          return;
+        }
         // 사용자가 쓴 말: user 기록이면서 도구 결과가 아니고, 시스템이 끼워 넣은 것(isMeta)이 아닌 줄
-        if (line.length > 400000 || line.indexOf(K_USER) < 0 || line.indexOf(K_TOOLUSEID) >= 0 || line.indexOf(K_ISMETA) >= 0) return;
+        if (line.length > 400000 || line.indexOf(K_USER) < 0 || line.indexOf(K_TOOLUSEID) >= 0) return;
         if (line.subarray(0, 48).indexOf(K_APIREQ) >= 0) return;
         let o;
         try { o = JSON.parse(line.toString('utf8')); } catch { return; }
-        if (!o || o.type !== 'user' || o.isMeta || o.toolUseResult || o.isSidechain) return;
+        if (!o || o.type !== 'user' || o.toolUseResult || o.isSidechain) return;
+        // 차례 경계: 다른 세션이 보낸 말(peer)·작업 알림·명령 뒤에 나온 답은 그 일에 대한 것이라 앞의 내 말에 붙이지 않는다.
+        // 그림 첨부 같은 isMeta 기록과 긴 대화 요약은 같은 차례 안의 것이라 경계로 보지 않는다
+        const kind = o.origin && typeof o.origin === 'object' && typeof o.origin.kind === 'string' ? o.origin.kind : '';
+        if (o.isMeta) { if (kind === 'peer') e.open = false; return; }
+        if (o.isCompactSummary) return;
+        if (kind && kind !== 'human') { e.open = false; return; }
         if (o.cwd && !e.cwd) e.cwd = o.cwd;
         const text = cleanPrompt(allTextOfUser(o));
-        if (text.length < 2 || text[0] === '<') return;
+        if (text.length < 2 || text[0] === '<' || NOT_TYPED_RE.test(text)) { e.open = false; return; }
         e.prompts.push({ ts: Date.parse(o.timestamp) || 0, text });
+        e.open = true;
       };
       while (pos < stat.size) {
         const n = fs.readSync(fd, buf, 0, Math.min(CHUNK, stat.size - pos), pos);
@@ -1548,7 +1578,7 @@ function createPromptIndex() {
     const out = [];
     for (const e of idx.values()) {
       if (!want.has(e.sid)) continue;
-      for (const p of e.prompts) out.push({ sid: e.sid, title: e.title || '', ts: p.ts, text: p.text });
+      for (const p of e.prompts) out.push({ sid: e.sid, title: e.title || '', ts: p.ts, text: p.text, reply: p.reply || '', replyTs: p.replyTs || 0 });
     }
     out.sort((a, b) => b.ts - a.ts);
     return { results: out.slice(0, o.max || 50), total: out.length, stats };

@@ -37,6 +37,16 @@ if [ "$SCENE" = groups ]; then
     const members = Object.fromEntries([m("Refactor auth middleware", "develop"), m("Add payment webhooks", "deploy"), m("Fix flaky e2e tests", "test"), m("Offline sync for drafts", "mobile")]);
     fs.writeFileSync(out, JSON.stringify({ groups: [{ id: "gdemo", name: "Release crew", memo, members, at: Date.now() }] }));
   ' "$RUN/home/demo.json" "$GS/session-groups.json" "$RUN/home/board.md"
+  node -e '
+    const fs = require("fs"); const d = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const now = Date.now(); const M = 60000;
+    const iso = (t) => new Date(t).toISOString();
+    const add = (title, recs) => fs.appendFileSync(d.logs[title], recs.map((r) => JSON.stringify(r)).join("\n") + "\n");
+    const me = (t, text) => ({ type: "user", message: { role: "user", content: text }, cwd: d.web, timestamp: iso(t), origin: { kind: "human" } });
+    const say = (t, text) => ({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text }] }, cwd: d.web, timestamp: iso(t) });
+    add("Fix flaky e2e tests", [me(now - 4 * M, "Rerun the checkout test 20 times and tell me if it still fails"), say(now - 2 * M, "**The checkout test passed 20 of 20 runs after the wait fix.** The flake came from a missing wait on the payment frame.")]);
+    add("Add payment webhooks", [me(now - 12 * M, "Use the retry helper for the webhook client, then build"), say(now - 9 * M, "**Retries are in; the build needs your approval to clear build/ first.**")]);
+    add("Refactor auth middleware", [me(now - 15 * M, "go with the session store"), say(now - 13 * M, "**Switched to the session store; 3 files changed, tests next.**")]);
+  ' "$RUN/home/demo.json"
   echo "// wip: token refresh" >> "$RUN/ws/web-app/src/middleware/auth.ts"
   mkdir -p "$RUN/ws/web-app/notes" && echo "scratch" > "$RUN/ws/web-app/notes/scratch.txt"
 fi

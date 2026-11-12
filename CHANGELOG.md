@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.17.2
+
+- The board's "What you said" is now **Instructions and results**: each message you typed to the group comes with the first line of the session's last answer to it. Notes that Claude Code inserts (interruptions, summaries of long conversations) and messages from other sessions are left out, the same message sent to several sessions is shown once, and *Copy with time* appears only on the row under the mouse.
+- *Copy board as Markdown* includes the ten latest instructions and results.
+
 ## 0.17.1
 
 - Fixed: the board's "Changes no session log explains" listed every uncommitted file no session had touched, including backups and files that had sat outside git for weeks. It now lists only files changed within the time range.

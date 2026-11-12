@@ -37,11 +37,19 @@ for (const f of [app, path.join(project, 'stray.txt')]) fs.utimesSync(f, new Dat
 
 const sleeper = spawn('sleep', ['120'], { stdio: 'ignore' });
 const SID = { w: 'a0b00000-1111-4111-8111-111111111111', d: 'a0b00000-2222-4222-8222-222222222222', v: 'a0b00000-3333-4333-8333-333333333333', o: 'a0b00000-4444-4444-8444-444444444444', x: 'a0b00000-5555-4555-8555-555555555555' };
-fx.claudeSession(home, project, SID.w, [rec.user(project, now - 40 * MIN, 'Watch the other sessions every half hour'), rec.aiTitle(SID.w, 'Watcher'), rec.user(project, now - 6 * MIN, 'ship it')]);
-fx.claudeSession(home, project, SID.d, [rec.user(project, now - 30 * MIN, 'Prepare the release'), rec.aiTitle(SID.d, 'Deployer'),
+// 세션의 답(글), 다른 세션이 보낸 말(isMeta + origin peer), Claude Code가 끼워 넣은 중단 표시·긴 대화 요약
+const say = (ts, text) => ({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] }, cwd: project, timestamp: new Date(ts).toISOString() });
+const peer = (ts, text) => ({ type: 'user', isMeta: true, origin: { kind: 'peer' }, message: { role: 'user', content: text }, cwd: project, timestamp: new Date(ts).toISOString() });
+const summary = (ts) => ({ type: 'user', isCompactSummary: true, message: { role: 'user', content: 'This session is being continued from a previous conversation that ran out of context.' }, cwd: project, timestamp: new Date(ts).toISOString() });
+fx.claudeSession(home, project, SID.w, [rec.user(project, now - 40 * MIN, 'Watch the other sessions every half hour'), rec.aiTitle(SID.w, 'Watcher'),
+  rec.user(project, now - 8 * MIN, 'restart now'), rec.user(project, now - 7 * MIN, '[Request interrupted by user]'), summary(now - 6.5 * MIN),
+  rec.user(project, now - 6 * MIN, 'ship it'), say(now - 5.9 * MIN, 'Working on it'), say(now - 5.8 * MIN, '**Shipped.** All good\n\nDetails follow.')]);
+fx.claudeSession(home, project, SID.d, [rec.user(project, now - 30 * MIN, 'Prepare the release'), rec.aiTitle(SID.d, 'Deployer'), say(now - 29 * MIN, '## Release prepared.'),
+  peer(now - 28 * MIN, 'Another Claude session sent a message: check the logs'), say(now - 27 * MIN, 'Peer handled.'),
   rec.toolUse(project, now - 2 * MIN, 't_rel', 'Bash', { command: 'scripts/release.sh promote' })]);
 fx.claudeSession(home, project, SID.v, [rec.user(project, now - 25 * MIN, 'Fix the parser'), rec.aiTitle(SID.v, 'Developer'),
-  rec.toolUse(project, now - 21 * MIN, 't_e', 'Edit', { file_path: app, old_string: 'v1', new_string: 'v2' }), rec.toolResult(now - 21 * MIN + 400, 't_e', rec.editResult(app, 'v1\n', 'v1', 'v2'))]);
+  rec.toolUse(project, now - 21 * MIN, 't_e', 'Edit', { file_path: app, old_string: 'v1', new_string: 'v2' }), rec.toolResult(now - 21 * MIN + 400, 't_e', rec.editResult(app, 'v1\n', 'v1', 'v2')),
+  rec.user(project, now - 8 * MIN + 20000, 'restart now')]);
 fx.claudeSession(home, other, SID.o, [rec.user(other, now - 10 * MIN, 'Check the other app'), rec.aiTitle(SID.o, 'Outside')]);
 fx.claudeSession(home, project, SID.x, [rec.user(project, now - 50 * MIN, 'Something unrelated'), rec.aiTitle(SID.x, 'Loner')]);
 fx.registerSession(home, process.pid, SID.w, { status: 'idle', cwd: project, name: 'w', nameSource: 'derived', statusUpdatedAt: now - 5 * MIN });
@@ -127,19 +135,29 @@ test('그룹 보드: 기다리는 세션, 세션 현황(커밋 안 한 파일), 
   assert.strictEqual(out.canOpen, false, '다른 폴더 세션은 이 창에서 열 수 없다고 알린다');
   assert.strictEqual(p.members.find((m) => m.title === 'Watcher').role, 'watch');
 
-  // 내가 한 말: 최근 것부터, 결정 기록에 쓰는 모양(시각 + 원문 + 세션)으로 복사
-  const said = await waitFor(() => { const x = panel.lastPayload(); return x && x.said && x.said.length >= 5 ? x.said : null; }, '내가 한 말', 15000);
+  // 지시와 결과: 내가 친 말(최근 것부터) + 세션이 마지막으로 답한 글의 첫 줄. 결정 기록에 쓰는 모양(시각 + 원문 + 세션)으로 복사
+  const said = await waitFor(() => { const x = panel.lastPayload(); return x && x.said && x.said.length >= 6 ? x.said : null; }, '지시와 결과', 15000);
+  assert.strictEqual(said.length, 6, '같은 말을 두 세션에 보낸 것은 한 줄: ' + said.map((x) => x.text).join(' | '));
   assert.strictEqual(said[0].text, 'ship it', '가장 최근에 한 말이 맨 위');
   assert.match(said[0].stamp, /^\d\d-\d\d \d\d:\d\d:\d\d (KST|UTC[+−]\d+(:\d\d)?)$/);
+  assert.strictEqual(said[0].replies[0].reply, 'Shipped. All good', '그 차례의 마지막 답, 첫 줄만, 꾸밈 글자는 걷어 냄');
+  assert.ok(!said.some((x) => /Request interrupted|being continued/.test(x.text)), 'Claude Code가 끼워 넣은 말은 내 말이 아니다');
+  const restart = said.find((x) => x.text === 'restart now');
+  assert.deepStrictEqual([...restart.titles].sort(), ['Developer', 'Watcher'], '두 세션에 보낸 같은 말은 세션을 함께 적는다');
+  assert.strictEqual(said.find((x) => x.text === 'Prepare the release').replies[0].reply, 'Release prepared.', '다른 세션이 보낸 말 뒤의 답은 내 말의 답이 아니다');
   assert.ok(!said.some((x) => x.text === 'Something unrelated'), '그룹 밖 세션에 한 말은 넣지 않는다');
+  assert.match(panel.webview.html, /\.said \.it:hover \.cp/, '복사 단추는 마우스를 올린 줄에만');
   panel.send({ type: 'copyQuote', i: 0 });
   await waitFor(() => /^\d\d-\d\d \d\d:\d\d:\d\d \S+ "ship it" \(Watcher\)$/.test(stub.state.clipboard || ''), '원문·시각 복사');
+  panel.send({ type: 'copyQuote', i: said.indexOf(restart) });
+  await waitFor(() => /"restart now" \((Developer, Watcher|Watcher, Developer)\)$/.test(stub.state.clipboard || ''), '여러 세션이면 함께');
 
   // 보드 전체를 마크다운으로
   panel.send({ type: 'copyBoard' });
   await waitFor(() => /### Waiting for you\n- Deployer: needs approval — `/.test(stub.state.clipboard || ''), '마크다운 복사');
-  assert.match(stub.state.clipboard, /\| watch \| Watcher \| Just finished \| 6m ago \| 0 \| 0 \|/);
+  assert.match(stub.state.clipboard, /\| watch \| Watcher \| Just finished \| \d+m ago \| 0 \| 0 \|/);
   assert.match(stub.state.clipboard, /stray\.txt/);
+  assert.match(stub.state.clipboard, /### Instructions and results\n- \S+ \S+ \S+ · Watcher: "ship it" → Shipped\. All good/);
 });
 
 test('공유 메모: 파일을 연결하면 보드에 보이고, 파일이 바뀌면 다시 그린다. 그룹에서 빼면 보드와 목록에서 빠진다', async () => {

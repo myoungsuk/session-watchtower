@@ -220,7 +220,6 @@
   "From another folder ({0}): open it from a VS Code window with that folder.": "다른 폴더({0})의 세션: 그 폴더를 연 VS Code 창에서 여세요.",
   "Changes no session log explains (last {0})": "세션 기록으로 설명되지 않는 변경(최근 {0})",
   "Uncommitted files in these repositories that changed within the time range but are not in any session log: edited by hand or by another tool. Older uncommitted files (backups, files never added to git) are left out.": "이 저장소들의 커밋 안 한 파일 가운데 보는 기간 안에 바뀌었는데 어느 세션 기록에도 없는 것: 사람이 직접 고쳤거나 다른 도구가 고친 것입니다. 오래전부터 커밋 안 한 채 있는 파일(백업, git에 안 올린 파일)은 넣지 않습니다.",
-  "What you said to these sessions": "이 세션들에 내가 한 말",
   "Nothing yet.": "아직 없습니다.",
   "Reading your messages…": "내가 쓴 말을 읽는 중…",
   "Copy with time": "시각과 함께 복사",
@@ -250,5 +249,8 @@
   "Open the group board": "그룹 보드 열기",
   "Rename group": "그룹 이름 바꾸기",
   "No sessions yet: use the group button on a session row": "아직 세션이 없습니다: 세션 줄의 그룹 단추로 넣으세요",
-  "Group: {0} session(s). The board shows them all in one place.": "그룹: 세션 {0}개. 보드에서 한눈에 봅니다."
+  "Group: {0} session(s). The board shows them all in one place.": "그룹: 세션 {0}개. 보드에서 한눈에 봅니다.",
+  "Instructions and results": "지시와 결과",
+  "What you typed to these sessions, newest first, with the first line of each session's last answer to it. Messages from other sessions and system notes are left out; the same message sent to several sessions is shown once.": "이 세션들에 내가 친 말을 최근 것부터 보여 주고, 그 말에 세션이 마지막으로 답한 글의 첫 줄을 붙입니다. 다른 세션이 보낸 말과 시스템 안내는 빼고, 같은 말을 여러 세션에 보낸 것은 한 줄로 합칩니다.",
+  "(no written answer)": "(글로 된 답 없음)"
 }

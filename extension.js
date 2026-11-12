@@ -1040,7 +1040,8 @@ function boardStrings() {
     role: L('Role'), session: L('Session'), state: L('State'), now: L('Doing now'), changed: L('Changed'), uncommitted: L('Not committed'), commits: L('Commits'), last: L('Last talk'),
     setRole: L('Set role'), remove: L('Remove from group'), open: L('Open conversation'), otherFolder: L('From another folder ({0}): open it from a VS Code window with that folder.', '{0}'),
     unknownTitle: L('Changes no session log explains (last {0})', '{0}'), unknownTip: L('Uncommitted files in these repositories that changed within the time range but are not in any session log: edited by hand or by another tool. Older uncommitted files (backups, files never added to git) are left out.'),
-    said: L('What you said to these sessions'), saidNone: L('Nothing yet.'), saidBusy: L('Reading your messages…'), copyQuote: L('Copy with time'),
+    said: L('Instructions and results'), saidTip: L('What you typed to these sessions, newest first, with the first line of each session\'s last answer to it. Messages from other sessions and system notes are left out; the same message sent to several sessions is shown once.'),
+    saidNone: L('Nothing yet.'), saidBusy: L('Reading your messages…'), copyQuote: L('Copy with time'), noReply: L('(no written answer)'),
     memo: L('Shared memo'), memoNone: L('No memo file linked. Link a Markdown file the sessions also read and write (like a coordination board), or create a new one.'),
     linkMemo: L('Link a file…'), newMemo: L('Create a memo file'), openMemo: L('Open in editor'), unlinkMemo: L('Unlink'),
     addSessions: L('Add sessions…'), copyBoard: L('Copy board as Markdown'), refresh: L('Refresh'), empty: L('No sessions in this group yet. Use "Add sessions…" or the group button on a session row.'),
@@ -1056,6 +1057,13 @@ function boardMarkdown(p) {
   lines.push('', `### ${L('Sessions')}`, '', `| ${L('Role')} | ${L('Session')} | ${L('State')} | ${L('Doing now')} | ${L('Not committed')} | ${L('Commits')} |`, '|---|---|---|---|---|---|');
   const cell = (t) => String(t == null ? '' : t).replace(/\|/g, '\\|').replace(/\s+/g, ' ');
   for (const r of p.members) lines.push(`| ${cell(r.role)} | ${cell(r.title)} | ${cell(r.stateLabel)} | ${cell(r.now || r.last)} | ${r.uncommitted ? r.uncommitted.length : 0} | ${r.commits || 0} |`);
+  if (p.said && p.said.length) {
+    lines.push('', `### ${L('Instructions and results')}`);
+    for (const x of p.said.slice(0, 10)) {
+      const res = x.replies.filter((r) => r.reply).map((r) => (x.replies.length > 1 ? r.title + ': ' : '') + r.reply).join(' / ');
+      lines.push(`- ${x.stamp} · ${x.titles.join(', ')}: "${x.text.replace(/\s+/g, ' ').trim().slice(0, 200)}"${res ? ' → ' + res : ''}`);
+    }
+  }
   if (p.unknown.length) {
     lines.push('', `### ${L('Changes no session log explains (last {0})', p.span)}`);
     for (const f of p.unknown.slice(0, 50)) lines.push('- `' + f + '`');
@@ -1072,13 +1080,26 @@ function refreshSaid(id, force) {
   if (!force && key === b.saidKey && Date.now() - b.saidAt < SAID_MS) return; // 세션을 넣고 빼면 바로 다시 읽는다
   b.saidKey = key;
   b.saidBusy = true;
-  recentPrompts(Object.keys(g.members), 60).then((res) => {
+  recentPrompts(Object.keys(g.members), 80).then((res) => {
     const names = new Map(raw.map((s) => [s.sid, s.title]));
-    b.said = (res.results || []).map((x) => ({ sid: x.sid, title: names.get(x.sid) || x.title || x.sid.slice(0, 8), ts: x.ts, stamp: stampOf(x.ts), text: x.text }));
+    b.said = mergeSaid((res.results || []).map((x) => ({ sid: x.sid, title: names.get(x.sid) || x.title || x.sid.slice(0, 8), ts: x.ts, text: x.text, reply: x.reply || '' }))).slice(0, 50);
     b.saidAt = Date.now();
     b.saidBusy = false;
     postBoard(id);
   });
+}
+
+// 같은 말을 3분 안에 여러 세션에 보냈으면(예: "다시 시작하자"를 세 창에) 한 줄로 합친다. 답은 세션마다 남긴다
+const MERGE_MS = 3 * 60 * 1000;
+function mergeSaid(list) {
+  const out = [];
+  for (const x of list) {
+    const key = x.text.replace(/\s+/g, ' ').trim();
+    const hit = out.find((y) => y.key === key && Math.abs(y.ts - x.ts) <= MERGE_MS && !y.sids.includes(x.sid));
+    if (hit) { hit.sids.push(x.sid); hit.titles.push(x.title); hit.replies.push({ title: x.title, reply: x.reply }); continue; }
+    out.push({ key, ts: x.ts, stamp: stampOf(x.ts), text: x.text, sids: [x.sid], titles: [x.title], replies: [{ title: x.title, reply: x.reply }] });
+  }
+  return out.map(({ key, ...rest }) => rest);
 }
 
 function watchMemo(id, file) {
@@ -1179,7 +1200,7 @@ async function openGroupBoard(id) {
       Promise.resolve(vscode.env.clipboard.writeText(md)).then(() => vscode.window.showInformationMessage(L('Copied the board as Markdown.')));
     } else if (m.type === 'copyQuote' && Number.isInteger(m.i) && b.said[m.i]) {
       const x = b.said[m.i];
-      vscode.env.clipboard.writeText(`${x.stamp} "${x.text.replace(/\s+/g, ' ').trim()}" (${x.title})`);
+      vscode.env.clipboard.writeText(`${x.stamp} "${x.text.replace(/\s+/g, ' ').trim()}" (${x.titles.join(', ')})`);
     }
   });
   panel.onDidDispose(() => {
@@ -1235,10 +1256,16 @@ function boardHtml(webview) {
   .warnbox { margin-top: 6px; padding: 8px 12px; border-radius: 4px; border-left: 3px solid var(--vscode-editorWarning-foreground, #cca700); background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 9%, transparent); }
   .warnbox code, .paths code { font-size: 12px; }
   .paths { margin: 6px 0 0; padding-left: 18px; max-height: 160px; overflow: auto; }
-  .said { display: grid; grid-template-columns: auto auto 1fr auto; gap: 4px 12px; align-items: baseline; }
+  .said { border-top: 1px solid var(--vscode-widget-border, rgba(128,128,128,.18)); }
+  .said .it { display: grid; grid-template-columns: 9.5em 12em 1fr auto; gap: 2px 12px; padding: 6px 4px; border-bottom: 1px solid var(--vscode-widget-border, rgba(128,128,128,.18)); align-items: baseline; }
+  .said .it:hover { background: var(--vscode-list-hoverBackground); }
   .said .ts { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--vscode-descriptionForeground); font-size: 12px; }
-  .said .who { white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--vscode-descriptionForeground); }
-  .said .txt { white-space: pre-wrap; word-break: break-word; max-height: 4.5em; overflow: hidden; }
+  .said .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--vscode-descriptionForeground); }
+  .said .txt { word-break: break-word; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .said .rep { grid-column: 3; font-size: 12px; color: var(--vscode-descriptionForeground); word-break: break-word; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .said .rep b { font-weight: 600; }
+  .said .cp { visibility: hidden; }
+  .said .it:hover .cp, .said .cp:focus-visible { visibility: visible; }
   .memo { margin-top: 6px; padding: 4px 16px; border: 1px solid var(--vscode-widget-border, rgba(128,128,128,.3)); border-radius: 4px; max-height: 70vh; overflow: auto; }
   .memo table { width: auto; }
   .memo td, .memo th { border: 1px solid var(--vscode-widget-border, rgba(128,128,128,.3)); }
@@ -1295,14 +1322,19 @@ function boardHtml(webview) {
         + '<ul class="paths">' + p.unknown.map((f) => '<li><code title="' + esc(f) + '">' + esc(rel(f)) + '</code></li>').join('') + '</ul></div>';
     }
     // 4. 내가 한 말
-    h += '<h2>' + esc(S.said) + '</h2>';
+    h += '<h2 title="' + esc(S.saidTip) + '">' + esc(S.said) + '</h2>';
     if (p.saidBusy && !p.said.length) h += '<div class="muted">' + esc(S.saidBusy) + '</div>';
     else if (!p.said.length) h += '<div class="muted">' + esc(S.saidNone) + '</div>';
     else {
       h += '<div class="said">';
       p.said.forEach((x, i) => {
-        h += '<span class="ts">' + esc(x.stamp) + '</span><span class="who" title="' + esc(x.title) + '">' + esc(x.title) + '</span><span class="txt">' + esc(x.text) + '</span>'
-          + '<button class="link" data-act="copyQuote" data-i="' + i + '">' + esc(S.copyQuote) + '</button>';
+        const who = x.titles.join(', ');
+        const many = x.replies.length > 1;
+        const rep = x.replies.map((r) => (many ? '<b>' + esc(r.title) + ':</b> ' : '') + (r.reply ? esc(r.reply) : esc(S.noReply))).join('<br>');
+        h += '<div class="it"><span class="ts">' + esc(x.stamp) + '</span><span class="who" title="' + esc(who) + '">' + esc(who) + '</span>'
+          + '<span class="txt" title="' + esc(x.text) + '">' + esc(x.text) + '</span>'
+          + '<button class="link cp" data-act="copyQuote" data-i="' + i + '">' + esc(S.copyQuote) + '</button>'
+          + '<span class="rep">→ ' + rep + '</span></div>';
       });
       h += '</div>';
     }
