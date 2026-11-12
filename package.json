@@ -2,7 +2,7 @@
   "name": "session-watchtower",
   "displayName": "Session Watchtower for Claude Code",
   "description": "%description%",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "scripts": {
     "test": "node --test test/*.test.js",
     "shot": "bash tools/screenshot/run.sh"
@@ -126,6 +126,38 @@
         "command": "claudeSessionChanges.archiveSession",
         "title": "%command.archiveSession%",
         "icon": "$(archive)"
+      },
+      {
+        "command": "claudeSessionChanges.searchConversations",
+        "title": "%command.searchConversations%",
+        "category": "Session Watchtower",
+        "icon": "$(search)"
+      },
+      {
+        "command": "claudeSessionChanges.copySummary",
+        "title": "%command.copySummary%",
+        "category": "Session Watchtower"
+      },
+      {
+        "command": "claudeSessionChanges.copyFolderSummary",
+        "title": "%command.copyFolderSummary%",
+        "category": "Session Watchtower",
+        "icon": "$(clippy)"
+      },
+      {
+        "command": "claudeSessionChanges.sessionsForFile",
+        "title": "%command.sessionsForFile%"
+      },
+      {
+        "command": "claudeSessionChanges.resetOverlapIgnore",
+        "title": "%command.resetOverlapIgnore%",
+        "category": "Session Watchtower"
+      },
+      {
+        "command": "claudeSessionChanges.renameSession",
+        "title": "%command.renameSession%",
+        "category": "Session Watchtower",
+        "icon": "$(edit)"
       }
     ],
     "menus": {
@@ -165,6 +197,14 @@
         {
           "command": "claudeSessionChanges.archiveSession",
           "when": "false"
+        },
+        {
+          "command": "claudeSessionChanges.copySummary",
+          "when": "false"
+        },
+        {
+          "command": "claudeSessionChanges.renameSession",
+          "when": "false"
         }
       ],
       "view/title": [
@@ -202,6 +242,16 @@
           "command": "claudeSessionChanges.pickArchiveAfter",
           "when": "view == claudeSessionChanges.sessions",
           "group": "z_settings"
+        },
+        {
+          "command": "claudeSessionChanges.searchConversations",
+          "when": "view == claudeSessionChanges.sessions",
+          "group": "1_search"
+        },
+        {
+          "command": "claudeSessionChanges.copyFolderSummary",
+          "when": "view == claudeSessionChanges.tree",
+          "group": "2_copy"
         }
       ],
       "view/item/context": [
@@ -259,6 +309,29 @@
           "command": "claudeSessionChanges.archiveSession",
           "when": "view == claudeSessionChanges.tree && viewItem =~ /^session/",
           "group": "3_archive@1"
+        },
+        {
+          "command": "claudeSessionChanges.copySummary",
+          "when": "view == claudeSessionChanges.tree && viewItem == session",
+          "group": "2_copy@2"
+        },
+        {
+          "command": "claudeSessionChanges.renameSession",
+          "when": "view == claudeSessionChanges.tree && viewItem =~ /^session/",
+          "group": "3_archive@0"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "claudeSessionChanges.sessionsForFile",
+          "when": "!explorerResourceIsFolder",
+          "group": "z_sessionwatchtower"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "claudeSessionChanges.sessionsForFile",
+          "group": "z_sessionwatchtower"
         }
       ]
     },
@@ -302,6 +375,28 @@
           "type": "boolean",
           "default": true,
           "description": "%config.notifyWaiting%"
+        },
+        "claudeSessionChanges.notifyOverlap": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.notifyOverlap%"
+        },
+        "claudeSessionChanges.overlapIgnore": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/.claude/projects/*/memory/**"
+          ],
+          "description": "%config.overlapIgnore%"
+        },
+        "claudeSessionChanges.notifyStuckMinutes": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 240,
+          "description": "%config.notifyStuckMinutes%"
         },
         "claudeSessionChanges.sessionDetails": {
           "type": "boolean",

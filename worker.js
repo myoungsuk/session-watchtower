@@ -1,13 +1,14 @@
 'use strict';
 // 무거운 대화 기록 읽기를 확장 호스트 밖 스레드에서 한다(Claude 패널이 멈추지 않게).
 const { parentPort } = require('worker_threads');
-const { createModel } = require('./scanner');
+const { createModel, createPromptIndex } = require('./scanner');
 
 const model = createModel();
 let lastSig = '';
+let promptIndex = null;
 
 function signature(sessions) {
-  return sessions.map((s) => `${s.sid}:${s.lastActivity}:${s.changes.length}:${s.status}:${s.waitingFor}:${s.statusSince}:${s.alive}:${s.title}:${s.activity ? s.activity.ts + (s.activity.done ? 'd' : 'p') : ''}:${(s.liveFiles || []).join(',')}`).join('|');
+  return sessions.map((s) => `${s.sid}:${s.lastActivity}:${s.changes.length}:${s.status}:${s.waitingFor}:${s.statusSince}:${s.alive}:${s.title}:${s.activity ? s.activity.ts + (s.activity.done ? 'd' : 'p') : ''}:${(s.liveFiles || []).join(',')}:${(s.overlaps || []).length}:${s.subagents ? s.subagents.active : 0}`).join('|');
 }
 
 parentPort.on('message', (msg) => {
@@ -18,6 +19,19 @@ parentPort.on('message', (msg) => {
       parentPort.postMessage({ type: 'status', id: msg.id, sessions: model.status(msg.opts || {}).sessions });
     } catch (e) {
       parentPort.postMessage({ type: 'status', id: msg.id, sessions: [], error: String((e && e.message) || e) });
+    }
+    return;
+  }
+  if (msg.type === 'search') {
+    // 대화 내용으로 세션 찾기(이 일은 따로 띄운 일꾼이 맡는다: 처음에는 기록 전체를 한 번 읽어야 해서 오래 걸릴 수 있다)
+    try {
+      if (!promptIndex) promptIndex = createPromptIndex();
+      let last = 0;
+      const onProgress = (done, total) => { if (Date.now() - last > 250) { last = Date.now(); parentPort.postMessage({ type: 'searchProgress', id: msg.id, done, total }); } };
+      const res = promptIndex.search(msg.query, { ...(msg.opts || {}), onProgress });
+      parentPort.postMessage({ type: 'searchResult', id: msg.id, ...res });
+    } catch (e) {
+      parentPort.postMessage({ type: 'searchResult', id: msg.id, results: [], total: 0, error: String((e && e.message) || e) });
     }
     return;
   }

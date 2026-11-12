@@ -1,8 +1,12 @@
-// Screenshot helper: opens the Session Watchtower side bar.
+// Screenshot helper: opens the Session Watchtower side bar and, for some scenes, runs one of its commands.
 const vscode = require('vscode');
+const fs = require('fs');
 exports.activate = async () => {
-  const run = (c, ...a) => vscode.commands.executeCommand(c, ...a).then(() => true, () => false);
+  const run = (c, ...a) => vscode.commands.executeCommand(c, ...a).then((v) => v, () => undefined);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const scene = process.env.SWT_SCENE || 'side';
+  let demo = {};
+  try { demo = JSON.parse(fs.readFileSync(process.env.SWT_DEMO, 'utf8')); } catch { demo = { files: {}, sids: {} }; }
   await sleep(1500);
   await run('workbench.action.closeAuxiliaryBar');
   await run('workbench.action.closePanel');
@@ -11,4 +15,16 @@ exports.activate = async () => {
   await run('claudeSessionChanges.sessions.focus');
   await sleep(300);
   await run('workbench.action.focusActiveEditorGroup');
+  if (scene === 'side' || scene === 'toasts') return;
+  await sleep(9000); // let the extension read the demo sessions first
+  if (scene === 'search') await run('claudeSessionChanges.searchConversations', 'token refresh');
+  if (scene === 'file') run('claudeSessionChanges.sessionsForFile', vscode.Uri.file(demo.files.doc1));
+  if (scene === 'review') await run('claudeSessionChanges.openSessionChanges', demo.sids['Refactor auth middleware']);
+  if (scene === 'summary') {
+    const md = await run('claudeSessionChanges.copyFolderSummary');
+    const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content: String(md || '') });
+    await vscode.window.showTextDocument(doc);
+    await run('markdown.showPreview');
+    await run('notifications.clearAll');
+  }
 };

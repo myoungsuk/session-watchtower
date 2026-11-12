@@ -463,3 +463,67 @@ test('불러온 세션: 보는 기간 밖이어도 그 세션의 마지막 작�
   assert.ok(!find(model.scan({ ...opts, pinned: { [sid]: old - 60 * MIN } }), SID_B).pinned, '다른 세션은 그대로');
 });
 
+test('겹침: 같은 파일을 두 세션이 고치면 알려 준다(상대가 열려 있거나 커밋 전일 때만)', (t) => {
+  try { execFileSync('git', ['--version'], { stdio: 'ignore' }); } catch { t.skip('git 없음'); return; }
+  const repo = path.join(home, 'work', 'overlap-repo');
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', ...args], { stdio: 'ignore' });
+  const dirtyFile = path.join(repo, 'dirty.js');   // 둘 다 고쳤고 아직 커밋 전
+  const cleanFile = path.join(repo, 'clean.js');   // 둘 다 고쳤지만 커밋까지 끝남(순서대로 일한 것)
+  const guessFile = path.join(repo, 'guess.js');   // 한쪽은 셸 추정뿐
+  for (const f of [dirtyFile, cleanFile, guessFile]) fs.writeFileSync(f, 'v1\n');
+  git('init', '-q'); git('add', '-A'); git('commit', '-q', '-m', 'seed');
+  fs.writeFileSync(dirtyFile, 'v2\n');
+  fs.writeFileSync(guessFile, 'v2\n');
+  const S1 = '0e71a900-1111-4111-8111-000000000001';
+  const S2 = '0e71a900-2222-4222-8222-000000000002';
+  const edit = (id, f, ts) => [rec.toolUse(repo, ts - 400, id, 'Edit', { file_path: f, old_string: 'v1', new_string: 'v2' }), rec.toolResult(ts, id, rec.editResult(f, 'v1\n', 'v1', 'v2'))];
+  fx.claudeSession(home, repo, S1, [rec.user(repo, now - 30 * MIN, 'first worker'), rec.aiTitle(S1, 'First worker'),
+    ...edit('a1', dirtyFile, now - 20 * MIN), ...edit('a2', cleanFile, now - 19 * MIN), ...edit('a3', guessFile, now - 18 * MIN)]);
+  fx.claudeSession(home, repo, S2, [rec.user(repo, now - 15 * MIN, 'second worker'), rec.aiTitle(S2, 'Second worker'),
+    ...edit('b1', dirtyFile, now - 10 * MIN), ...edit('b2', cleanFile, now - 9 * MIN),
+    rec.toolUse(repo, now - 8 * MIN, 'b3', 'Bash', { command: `echo x >> ${guessFile}`, description: 'append' }), rec.toolResult(now - 8 * MIN + 300, 'b3', rec.bashResult({}))]);
+  const r = S.createModel().scan(base());
+  const ov = (sid) => Object.fromEntries(find(r, sid).overlaps.map((o) => [path.basename(o.path), o.with.map((w) => w.title)]));
+  assert.deepStrictEqual(ov(S1), { 'dirty.js': ['Second worker'] }, '커밋 전인 파일만 겹침(커밋된 파일·추정뿐인 파일은 아님)');
+  assert.deepStrictEqual(ov(S2), { 'dirty.js': ['First worker'] });
+});
+
+test('하위 에이전트: 기록이 방금까지 자란 것만 작업 중으로 센다', () => {
+  const sid = '5ab00000-1111-4111-8111-000000000001';
+  fx.claudeSession(home, project, sid, [rec.user(project, now - 3 * MIN, 'use helpers'), rec.aiTitle(sid, 'With helpers')]);
+  const live = fx.subagentSession(home, project, sid, 'agent-live', [rec.toolUse(project, now - 5000, 'sl', 'Bash', { command: 'ls', description: 'List' })]);
+  const done = fx.subagentSession(home, project, sid, 'agent-done', [rec.toolUse(project, now - 5 * MIN, 'sd', 'Bash', { command: 'ls', description: 'List' })]);
+  fs.utimesSync(done, new Date(now - 5 * MIN), new Date(now - 5 * MIN));
+  assert.ok(live);
+  assert.deepStrictEqual(find(S.createModel().scan(base()), sid).subagents, { total: 2, active: 1 });
+});
+
+test('대화 내용으로 찾기: 내가 쓴 말만 모아 두고, 기록이 자란 만큼만 더 읽는다', () => {
+  const sid = '5ea4c000-1111-4111-8111-000000000001';
+  const multi = (ts, text) => ({ parentUuid: null, isSidechain: false, type: 'user', message: { role: 'user', content: [{ type: 'text', text: '<browser_instruction>do not find me zebra</browser_instruction>' }, { type: 'text', text }] }, cwd: project, timestamp: fx.iso(ts) });
+  const file = fx.claudeSession(home, project, sid, [
+    rec.user(project, now - 50 * MIN, 'Please fix the pagination bug in the orders table'),
+    rec.aiTitle(sid, 'Orders pagination'),
+    multi(now - 40 * MIN, '주문 목록 정렬이 이상해 고쳐줘'),
+    { ...rec.user(project, now - 39 * MIN, 'system inserted pagination note'), isMeta: true },
+    rec.toolUse(project, now - 38 * MIN, 'tq', 'Bash', { command: 'echo pagination', description: 'pagination' }),
+    rec.toolResult(now - 38 * MIN + 200, 'tq', rec.bashResult({ stdout: 'pagination' })),
+  ]);
+  const indexFile = path.join(home, 'prompt-index.json');
+  const ix = S.createPromptIndex();
+  const hit = ix.search('pagination orders', { indexFile });
+  assert.deepStrictEqual(hit.results.filter((x) => x.sid === sid).map((x) => [x.title, x.snippet]), [['Orders pagination', 'Please fix the pagination bug in the orders table']], '내가 쓴 말만(도구 결과·시스템이 넣은 글 제외), 낱말은 모두 들어 있어야 함');
+  assert.strictEqual(ix.search('정렬이 이상해', { indexFile }).results.filter((x) => x.sid === sid).length, 1, '둘째 글 조각에 있는 말도 찾는다');
+  assert.strictEqual(ix.search('zebra', { indexFile }).total, 0, '도구가 끼워 넣은 안내문은 찾지 않는다');
+  assert.strictEqual(ix.search('inserted pagination note', { indexFile }).total, 0, '시스템이 끼워 넣은 글(isMeta)은 찾지 않는다');
+  assert.strictEqual(ix.search('pagination nothinglikethis', { indexFile }).total, 0);
+  // 기록이 자라면 그만큼만 더 읽고, 저장해 둔 색인은 다음에 다시 쓴다
+  fs.appendFileSync(file, JSON.stringify(rec.user(project, Date.now(), 'now add an export button')) + '\n');
+  const more = ix.search('export button', { indexFile });
+  assert.strictEqual(more.results.filter((x) => x.sid === sid).length, 1);
+  assert.ok(more.stats.bytes > 0 && more.stats.bytes < 400, '덧붙은 줄만 읽어야 함: ' + more.stats.bytes);
+  const again = S.createPromptIndex().search('export button', { indexFile });
+  assert.deepStrictEqual([again.results.filter((x) => x.sid === sid).length, again.stats.bytes], [1, 0], '저장한 색인을 다시 쓴다');
+});
+

@@ -51,6 +51,9 @@ function cfg() {
     sessionDetails: c.get('sessionDetails', true) !== false,
     sessionListDays: Math.max(0, Math.min(365, Number(c.get('sessionListDays', 90)) || 0)),
     notifyWaiting: c.get('notifyWaiting', true) !== false,
+    notifyOverlap: c.get('notifyOverlap', true) !== false,
+    overlapIgnore: Array.isArray(c.get('overlapIgnore')) ? c.get('overlapIgnore').map(String) : ['**/.claude/projects/*/memory/**'],
+    notifyStuckMinutes: Math.max(0, Number(c.get('notifyStuckMinutes', 10)) || 0),
     archiveAfter: String(c.get('archiveAfter', 'claude')),
     statusBar: c.get('statusBar', true) !== false,
     includeCodex: c.get('includeCodex', true) !== false,
@@ -192,6 +195,13 @@ function activityText(a) {
   }
 }
 
+// 하위 에이전트가 일하는 중이면 몇 개인지
+function subText(s, st) {
+  const n = s.subagents ? s.subagents.active : 0;
+  if (!n || (st.key !== 'busy' && st.key !== 'waiting')) return '';
+  return n === 1 ? L('1 subagent working') : L('{0} subagents working', n);
+}
+
 // 작업 중이면 진행 중인 도구, 도구가 끝났으면 "생각 중", 기다림이면 기다리는 도구
 function nowText(s, st) {
   if (st.key !== 'busy' && st.key !== 'waiting') return '';
@@ -283,6 +293,9 @@ function rebuild() {
     }
     list.sort((a, b) => b.lastTs - a.lastTs);
     if (!list.length && !unresolved.length && !s.alive) continue;
+    // 같은 파일을 다른 세션도 고쳤으면 표시한다(알리지 않기로 한 파일은 뺀다)
+    const ov = new Map((s.overlaps || []).filter((o) => !overlapIgnored(o.path)).map((o) => [o.path, o.with]));
+    for (const f of list) f.overlap = ov.get(f.path) || null;
     out.push({ ...s, files: list, unresolved });
   }
   out.sort((a, b) => Number(inWorkspace(b)) - Number(inWorkspace(a)));
@@ -294,6 +307,256 @@ function rebuild() {
   rebuildSessions();
   provider.fire();
   scheduleLiveExpiry();
+  checkOverlaps();
+}
+
+// ---------- 겹침(같은 파일을 두 세션이 고침) ----------
+// "이 파일은 알리지 않기"로 고른 파일은 파일에 적어 같은 컴퓨터의 여러 창이 함께 쓴다.
+let overlapIgnoreMemo = { mtimeMs: -1, list: [] };
+function overlapIgnoreFile() {
+  return ctx ? path.join(ctx.globalStorageUri.fsPath, 'overlap-ignore.json') : '';
+}
+function loadOverlapIgnore() {
+  const f = overlapIgnoreFile();
+  if (!f) return [];
+  try {
+    const st = fs.statSync(f);
+    if (st.mtimeMs !== overlapIgnoreMemo.mtimeMs) {
+      const data = JSON.parse(fs.readFileSync(f, 'utf8'));
+      overlapIgnoreMemo = { mtimeMs: st.mtimeMs, list: Array.isArray(data) ? data.map(String) : [] };
+    }
+  } catch { overlapIgnoreMemo = { mtimeMs: -1, list: [] }; }
+  return overlapIgnoreMemo.list;
+}
+function saveOverlapIgnore(list) {
+  const f = overlapIgnoreFile();
+  if (!f) return;
+  try {
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, JSON.stringify(list));
+    overlapIgnoreMemo = { mtimeMs: fs.statSync(f).mtimeMs, list };
+  } catch (e) {
+    vscode.window.showWarningMessage(L('Could not save the list of ignored files: {0}', String((e && e.message) || e)));
+  }
+}
+// 간단한 glob: ** 는 폴더를 넘어, * 는 한 칸 안에서, ? 는 한 글자
+const globMemo = new Map();
+function globToRe(g) {
+  if (!globMemo.has(g)) {
+    const src = String(g).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*\/?/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]').replace(/\u0000/g, '.*');
+    let re = null;
+    try { re = new RegExp('^' + src + '$'); } catch { re = null; }
+    globMemo.set(g, re);
+  }
+  return globMemo.get(g);
+}
+function overlapIgnored(p) {
+  if (loadOverlapIgnore().includes(p)) return true;
+  const norm = p.split(path.sep).join('/');
+  return cfg().overlapIgnore.some((g) => { const re = globToRe(g); return !!re && (re.test(norm) || re.test(path.basename(p))); });
+}
+
+// 새로 생긴 겹침을 한 번 알린다(이 폴더 세션, 방금 고친 것만. 창을 열 때 이미 있던 겹침은 표시만 하고 알리지 않는다)
+const overlapSeen = new Set();
+let overlapSeeded = false;
+function checkOverlaps() {
+  const first = !overlapSeeded;
+  if (loaded && !stillReading) overlapSeeded = true;
+  for (const s of model) {
+    for (const f of s.files) {
+      for (const o of f.overlap || []) {
+        const key = f.path + '|' + [s.sid, o.sid].sort().join('|');
+        if (overlapSeen.has(key)) continue;
+        overlapSeen.add(key);
+        // 둘 중 나중에 고친 쪽이 이 폴더의 세션이고, 방금(2분 안) 고쳤을 때만 알린다
+        if (first || !cfg().notifyOverlap || !inWorkspace(s) || f.lastTs < o.ts || Date.now() - f.lastTs > 120000) continue;
+        const compare = L('Compare both changes');
+        const mute = L("Don't warn for this file");
+        Promise.resolve(vscode.window.showWarningMessage(L('"{0}" just changed {1}. "{2}" also changed this file ({3}).', s.title, path.basename(f.path), o.title, fmtAgo(o.ts)), compare, mute)).then((pick) => {
+          if (pick === compare) openOverlapCompare(f.path, s.sid, o.sid);
+          else if (pick === mute) { saveOverlapIgnore([...new Set([...loadOverlapIgnore(), f.path])]); rebuild(); }
+        });
+      }
+    }
+  }
+}
+
+// 두 세션이 각각 그 파일에 한 변경을 비교 창 두 개로 연다
+async function openOverlapCompare(p, sidA, sidB) {
+  for (const sid of [sidB, sidA]) {
+    const s = model.find((x) => x.sid === sid);
+    const f = s && s.files.find((x) => x.path === p);
+    if (f) await openFileDiff({ s, f }, { keep: true, label: s.title });
+  }
+}
+
+// ---------- 대화 내용으로 세션 찾기 ----------
+// 처음에는 대화 기록 전체를 한 번 읽어 "내가 쓴 말"만 모아 둔다. 오래 걸릴 수 있어 화면용 일꾼과 따로 띄운다.
+let searchWorker = null;
+let searchSeq = 0;
+const searchWaiters = new Map();
+function searchPrompts(query, onProgress) {
+  if (!searchWorker) {
+    searchWorker = new Worker(path.join(__dirname, 'worker.js'));
+    searchWorker.on('message', (m) => {
+      const w = searchWaiters.get(m.id);
+      if (!w) return;
+      if (m.type === 'searchProgress') { if (w.onProgress) w.onProgress(m.done, m.total); return; }
+      if (m.type === 'searchResult') { searchWaiters.delete(m.id); w.resolve(m); }
+    });
+    const fail = (e) => { for (const w of searchWaiters.values()) w.resolve({ results: [], total: 0, error: String((e && e.message) || e || 'stopped') }); searchWaiters.clear(); searchWorker = null; };
+    searchWorker.on('error', fail);
+    searchWorker.on('exit', () => fail(null));
+  }
+  const id = ++searchSeq;
+  return new Promise((resolve) => {
+    searchWaiters.set(id, { resolve, onProgress });
+    searchWorker.postMessage({ type: 'search', id, query, opts: { indexFile: ctx ? path.join(ctx.globalStorageUri.fsPath, 'prompt-index-v1.json') : '' } });
+  });
+}
+
+function searchConversations(initial) {
+  const qp = vscode.window.createQuickPick();
+  qp.placeholder = L('Type words you wrote in a session (all of them must match)');
+  qp.matchOnDescription = true;
+  let seq = 0;
+  let timer = null;
+  const run = async () => {
+    const q = qp.value.trim();
+    const mine = ++seq;
+    if (!q) { qp.items = []; qp.busy = false; qp.title = undefined; return; }
+    qp.busy = true;
+    const res = await searchPrompts(q, (done, total) => { if (mine === seq) qp.title = L('Reading conversation logs… {0}/{1}', done, total); });
+    if (mine !== seq) return;
+    qp.busy = false;
+    qp.title = res.error ? res.error : res.total > res.results.length ? L('{0} matches (showing the newest {1})', res.total, res.results.length) : L('{0} matches', res.total);
+    qp.items = res.results.map((r) => ({
+      label: r.snippet,
+      description: [String(r.title).replace(/\s+/g, ' ').slice(0, 40), r.ts ? fmtAgo(r.ts) : '', r.project && !inWorkspace({ cwd: r.cwd }) ? r.project : ''].filter(Boolean).join(' · '),
+      alwaysShow: true, // 걸러 내기는 이미 끝났다(보이는 글귀에 낱말이 다 들어 있지 않을 수 있다)
+      r,
+    }));
+  };
+  qp.onDidChangeValue(() => { if (timer) clearTimeout(timer); timer = setTimeout(run, 250); });
+  qp.onDidAccept(() => {
+    const it = qp.selectedItems[0] || qp.activeItems[0];
+    if (!it || !it.r) return;
+    qp.hide();
+    // 지금 읽어 둔 세션이면 그대로, 아니면 찾은 정보로 연다(오래된 세션일 수 있다)
+    if (!raw.some((x) => x.sid === it.r.sid)) raw.push({ sid: it.r.sid, title: it.r.title, cwd: it.r.cwd, project: it.r.project, changes: [] });
+    openClaudeSession(it.r.sid);
+  });
+  qp.onDidHide(() => { if (timer) clearTimeout(timer); qp.dispose(); });
+  qp.show();
+  if (initial) { qp.value = String(initial); run(); }
+  return qp;
+}
+
+// ---------- 세션 이름 바꾸기 ----------
+// Claude Code가 이름을 바꿀 때와 똑같이, 대화 기록 끝에 제목 기록 한 줄({type:"custom-title"})을 덧붙인다.
+// 이 확장이 자기 저장소 밖에 쓰는 것은 이것 하나뿐이다. 프로젝트 파일은 건드리지 않는다.
+async function renameSession(arg) {
+  const sid = sidOf(arg);
+  const s = raw.find((x) => x.sid === sid);
+  if (!s) return false;
+  if (s.agent === 'codex' || sid.startsWith('codex:')) { vscode.window.showInformationMessage(L('Codex sessions cannot be renamed from here.')); return false; }
+  const input = await vscode.window.showInputBox({
+    prompt: L('New name for this session'),
+    value: String(s.title || '').replace(/\s+/g, ' '),
+    validateInput: (v) => (!String(v).trim() ? L('The name cannot be empty.') : String(v).length > 200 ? L('The name is too long (200 characters at most).') : undefined),
+  });
+  const title = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!title || title.length > 200 || title === s.title) return false;
+  const file = s.file;
+  try {
+    if (!file || !UUID_RE.test(sid)) throw new Error('no session log');
+    // 기록 끝이 줄 바꿈이 아니면 Claude Code가 한 줄을 쓰는 도중일 수 있다 → 잠깐 기다렸다가 다시 본다(줄 가운데에 끼어들면 기록이 깨진다)
+    let ok = false;
+    for (let i = 0; i < 5 && !ok; i++) {
+      const fd = fs.openSync(file, 'r');
+      try { const size = fs.fstatSync(fd).size; const b = Buffer.alloc(1); ok = size === 0 || (fs.readSync(fd, b, 0, 1, size - 1) === 1 && b[0] === 10); } finally { fs.closeSync(fd); }
+      if (!ok) await new Promise((r) => setTimeout(r, 200));
+    }
+    if (!ok) throw new Error(L('the session log is being written right now; try again in a moment'));
+    fs.appendFileSync(file, JSON.stringify({ type: 'custom-title', sessionId: sid, customTitle: title }) + '\n');
+  } catch (e) {
+    vscode.window.showWarningMessage(L('Could not rename the session: {0}', String((e && e.message) || e)));
+    return false;
+  }
+  s.title = title; // 다음 읽기 전에도 바로 보이게
+  rebuild();
+  requestScan(true);
+  return true;
+}
+
+// ---------- 변경 요약(마크다운) ----------
+function relTo(p, base) {
+  return base && (p === base || p.startsWith(base + path.sep)) ? path.relative(base, p) : p.startsWith(HOME + path.sep) ? '~' + path.sep + p.slice(HOME.length + 1) : p;
+}
+function summaryOf(s) {
+  const lines = [];
+  const add = s.files.reduce((a, f) => a + (f.add || 0), 0);
+  const del = s.files.reduce((a, f) => a + (f.del || 0), 0);
+  const ts = s.files.flatMap((f) => f.changes.map((c) => c.ts)).filter(Boolean);
+  const from = ts.length ? fmtTime(Math.min(...ts)) : '';
+  const to = ts.length ? fmtTime(Math.max(...ts)) : '';
+  const span = from === to ? from : `${from} ~ ${to}`;
+  lines.push(`### ${String(s.title).replace(/\s+/g, ' ')}${s.agent === 'codex' ? ' (Codex)' : ''}`);
+  lines.push('');
+  lines.push(`- ${[s.files.length === 1 ? L('1 file') : L('{0} files', s.files.length), `+${add} −${del}`, span].filter(Boolean).join(' · ')}`);
+  const commits = new Map();
+  for (const f of s.files) for (const c of f.changes) if (c.kind === 'commit' && c.sha) { if (!commits.has(c.sha)) commits.set(c.sha, { msg: c.msg || '', n: 0 }); commits.get(c.sha).n++; }
+  for (const c of s.unresolved || []) if (c.sha && !commits.has(c.sha)) commits.set(c.sha, { msg: c.msg || '', n: 0 });
+  if (commits.size) {
+    lines.push(`- ${L('Commits')}:`);
+    for (const [sha, c] of commits) lines.push(`  - \`${String(sha).slice(0, 7)}\` ${String(c.msg).split('\n')[0]}`);
+  }
+  if (s.files.length) {
+    lines.push(`- ${L('Files')}:`);
+    for (const f of s.files.slice(0, 40)) lines.push(`  - \`${relTo(f.path, s.cwd)}\` ${f.badge}${f.add || f.del ? ` (+${f.add} −${f.del})` : ''}${f.overlap ? ' ⚠ ' + L('also changed by {0}', f.overlap.map((o) => o.title).join(', ')) : ''}`);
+    if (s.files.length > 40) lines.push(`  - … ${L('and {0} more', s.files.length - 40)}`);
+  }
+  return lines.join('\n');
+}
+function summaryMarkdown(list, heading) {
+  return [`## ${heading}`, '', ...list.map((s) => summaryOf(s) + '\n')].join('\n').trimEnd() + '\n';
+}
+async function copySummary(arg) {
+  const sid = sidOf(arg);
+  const s = model.find((x) => x.sid === sid);
+  if (!s || !s.files.length) { vscode.window.showInformationMessage(L('This session has no changed files in the last {0}h.', cfg().lookbackHours)); return ''; }
+  const md = summaryMarkdown([s], L('Session changes · last {0}h', cfg().lookbackHours));
+  await vscode.env.clipboard.writeText(md);
+  vscode.window.showInformationMessage(L('Copied a summary of {0} file(s) as Markdown.', s.files.length));
+  return md;
+}
+async function copyFolderSummary() {
+  const list = model.filter((s) => inWorkspace(s) && s.files.length);
+  if (!list.length) { vscode.window.showInformationMessage(L('No files changed in the last {0}h', cfg().lookbackHours)); return ''; }
+  const folder = (vscode.workspace.workspaceFolders || [])[0];
+  const md = summaryMarkdown(list, [L('Session changes · last {0}h', cfg().lookbackHours), folder ? path.basename(folder.uri.fsPath) : ''].filter(Boolean).join(' · '));
+  await vscode.env.clipboard.writeText(md);
+  vscode.window.showInformationMessage(L('Copied a summary of {0} session(s) as Markdown.', list.length));
+  return md;
+}
+
+// ---------- 파일에서 거꾸로: 이 파일을 고친 세션 ----------
+async function sessionsForFile(uri) {
+  const ed = vscode.window.activeTextEditor;
+  const p = uri && uri.fsPath ? uri.fsPath : ed && ed.document && ed.document.uri ? ed.document.uri.fsPath : '';
+  if (!p) return undefined;
+  const hits = [];
+  for (const s of model) { const f = s.files.find((x) => x.path === p); if (f) hits.push({ s, f }); }
+  if (!hits.length) return vscode.window.showInformationMessage(L('No session changed {0} in the last {1}h.', path.basename(p), cfg().lookbackHours));
+  hits.sort((a, b) => b.f.lastTs - a.f.lastTs);
+  const items = hits.map((h) => ({
+    label: String(h.s.title).replace(/\s+/g, ' '),
+    description: [h.s.agent === 'codex' ? 'Codex' : '', counts(h.f.add, h.f.del), fmtAgo(h.f.lastTs), [...h.f.kinds].map((k) => kindText(k)).join(', ')].filter(Boolean).join(' · '),
+    h,
+  }));
+  const pick = await vscode.window.showQuickPick(items, { placeHolder: L('Sessions that changed {0} (last {1}h). Pick one to see its change.', path.basename(p), cfg().lookbackHours) });
+  if (pick) await openFileDiff(pick.h);
+  return hits.length;
 }
 
 // 이 폴더 세션과 다른 폴더 묶음(진행 중 묶음 먼저, 최근 활동 순)
@@ -559,12 +822,14 @@ class Provider {
       it.iconPath = live === 'editing' ? new vscode.ThemeIcon('loading~spin', new vscode.ThemeColor('charts.green'))
         : live === 'approval' ? new vscode.ThemeIcon('bell-dot', new vscode.ThemeColor('charts.blue'))
         : vscode.ThemeIcon.File;
-      it.description = [counts(f.add, f.del), fmtTime(f.lastTs), displayDir(f.path, s)].filter(Boolean).join('  ');
+      const alsoBy = f.overlap ? f.overlap.map((o) => String(o.title).replace(/\s+/g, ' ').slice(0, 24)).join(', ') : '';
+      it.description = [alsoBy ? '⚠ ' + L('{0} too', alsoBy) : '', counts(f.add, f.del), fmtTime(f.lastTs), displayDir(f.path, s)].filter(Boolean).join('  ');
       const kinds = [...f.kinds].map((k) => kindText(k)).join(', ');
       it.tooltip = [
         f.path,
         live === 'editing' ? L('Being edited now: this file changed in the last {0} seconds while the session is working.', LIVE_MS / 1000) : null,
         live === 'approval' ? L('Waiting for your approval to edit this file.') : null,
+        alsoBy ? L('Another session also changed this file ({0}). Check that the two changes do not clash.', alsoBy) : null,
         L('Changed {0} time(s) in this session ({1})', f.changes.length, kinds),
         f.kinds.has('shell') ? L('Includes changes guessed from shell commands.') : null,
         L("Click: compare before this session's first change ↔ current file on disk"),
@@ -632,7 +897,8 @@ function sessionRow(s) {
   const del = m ? m.files.reduce((a, f) => a + (f.del || 0), 0) : 0;
   return {
     sid: s.sid, title: s.title, state: st.key, meta, tip: sessionTooltip(s, st) + '\n' + hint, canOpen, alive: !!s.alive, codex,
-    files: m ? m.files.length : 0, add, del, now: nowText(s, st), folder: inWorkspace(s) ? '' : s.project || '', worktree: s.worktree || '',
+    files: m ? m.files.length : 0, add, del, now: [subText(s, st), nowText(s, st)].filter(Boolean).join(' · '), folder: inWorkspace(s) ? '' : s.project || '', worktree: s.worktree || '',
+    overlap: m ? m.files.filter((f) => f.overlap).length : 0,
   };
 }
 
@@ -645,6 +911,9 @@ function sessionsPayload() {
     search: L('Search sessions'), noMatch: L('No matching sessions'), legend: L('What the colors mean'),
     archive: L('Archive'), unarchive: L('Restore from archive'), archivedTitle: L('Archived'), archiveRule: L('Choose when sessions move to Archived'),
     loadChanges: L("Load this session's changed files"),
+    rename: L('Rename session'),
+    overlapTip: L('{0} file(s) here were also changed by another session', '{0}'),
+    searchInside: L('Press Enter to search inside conversations'),
     otherFolders: L('Other folders'), worktreeTip: L('Runs in a git worktree: {0}', '{0}'),
     lgSessions: L('Sessions'), lgFiles: L('Changed files'), lgRow: L('Under each session'),
     lgBusy: L('Working'), lgWaiting: L('Waiting for you (approval or answer)'), lgDone: L('Just finished (less than 10 minutes ago)'), lgIdle: L('Idle'), lgOff: L('Off (no Claude process)'),
@@ -709,6 +978,8 @@ class SessionsWebview {
       else if (m.type === 'archive' && typeof m.sid === 'string') setArchived(m.sid, true);
       else if (m.type === 'unarchive' && typeof m.sid === 'string') setArchived(m.sid, false);
       else if (m.type === 'pickArchive') pickArchiveAfter();
+      else if (m.type === 'rename' && typeof m.sid === 'string') renameSession(m.sid);
+      else if (m.type === 'searchText' && typeof m.q === 'string') searchConversations(m.q);
     });
     view.onDidChangeVisibility(() => { if (view.visible) { requestScan(false); this.post(); } });
     view.onDidDispose(() => { if (this.view === view) { this.view = undefined; sessionsView = null; this.ready = false; } });
@@ -781,6 +1052,7 @@ function sessionsHtml(webview) {
   .gicon { flex-shrink: 0; display: inline-flex; color: var(--vscode-descriptionForeground); }
   .gname { color: var(--vscode-foreground); font-weight: 600; opacity: 0.85; }
   .gcount { flex-shrink: 0; min-width: 18px; padding: 0 6px; font-size: 11px; line-height: 17px; text-align: center; border-radius: 9px; color: var(--vscode-badge-foreground); background: var(--vscode-badge-background); }
+  .tag.warn { color: var(--vscode-editorWarning-foreground, #cca700); background: transparent; border: 1px solid var(--vscode-editorWarning-foreground, #cca700); }
   .tag.wt { color: var(--vscode-descriptionForeground); background: transparent; border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35)); }
   .gdesc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .bell { width: 8px; height: 8px; border-radius: 50%; background: var(--vscode-charts-blue); flex-shrink: 0; }
@@ -842,7 +1114,7 @@ function sessionsHtml(webview) {
     save();
   });
   q.addEventListener('input', () => { saved.q = q.value; save(); if (last) render(last); });
-  q.addEventListener('keydown', (e) => { if (e.key === 'Escape') { q.value = ''; saved.q = ''; saved.searchOpen = false; box.classList.remove('show'); save(); if (last) render(last); } });
+  q.addEventListener('keydown', (e) => { if (e.key === 'Enter' && q.value.trim()) { vscode.postMessage({ type: 'searchText', q: q.value.trim() }); return; } if (e.key === 'Escape') { q.value = ''; saved.q = ''; saved.searchOpen = false; box.classList.remove('show'); save(); if (last) render(last); } });
   const reviewIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M4.5 1.5h5l2.5 2.5v6.5h-7.5z"/><path d="M2.5 4v10.5h7"/><path d="M6.5 6h3.5M6.5 8.3h3.5"/></svg>';
   // 변경 규모: +줄 −줄과 다섯 칸 막대(초록=추가, 빨강=삭제 비율)
   function diffstat(add, del) {
@@ -858,11 +1130,13 @@ function sessionsHtml(webview) {
   const archiveIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M2 3.5h12v3H2z"/><path d="M3 6.5v6h10v-6"/><path d="M6.5 9h3"/></svg>';
   const restoreIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M3 8.5v4h10v-4"/><path d="M8 10V2.5"/><path d="M5.5 5 8 2.5 10.5 5"/></svg>';
   const folderIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M1.5 4.5v8h13v-6.5h-6l-1.5-1.5z"/></svg>';
+  const pencilIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M11 2.5 13.5 5 5.5 13H3v-2.5z"/><path d="M9.5 4 12 6.5"/></svg>';
   const gearIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/></svg>';
   function row(r, inArchive) {
     const btn = (act, label, svg) => '<button class="act" data-act="' + act + '" data-sid="' + esc(r.sid) + '" title="' + esc(label) + '" aria-label="' + esc(label) + '">' + svg + '</button>';
     // 보는 기간 안에 바꾼 파일이 없는 세션은 "불러오기" 단추(그 세션의 마지막 작업분을 읽어 온다)
-    const acts = (inArchive ? '' : r.files ? btn('review', strings.review, reviewIcon) + btn('reveal', strings.showChanges, icon) : btn('reveal', strings.loadChanges, icon))
+    const acts = (r.codex ? '' : btn('rename', strings.rename, pencilIcon))
+      + (inArchive ? '' : r.files ? btn('review', strings.review, reviewIcon) + btn('reveal', strings.showChanges, icon) : btn('reveal', strings.loadChanges, icon))
       + (inArchive ? btn('unarchive', strings.unarchive, restoreIcon) : btn('archive', strings.archive, archiveIcon));
     const ds = diffstat(r.add || 0, r.del || 0);
     // 둘째 줄: 지금 하는 일(작업 중·기다림일 때)과 변경 규모. 둘 다 없으면 한 줄짜리
@@ -870,6 +1144,7 @@ function sessionsHtml(webview) {
     return '<div class="row' + (r.canOpen ? '' : ' other') + '" role="listitem" tabindex="0" data-sid="' + esc(r.sid) + '" data-open="' + (r.canOpen ? '1' : '') + '" title="' + esc(r.tip) + '">'
       + '<div class="l1"><span class="dot ' + esc(r.state) + '"></span><span class="title">' + esc(r.title) + '</span>'
       + (r.codex ? '<span class="tag">Codex</span>' : '')
+      + (r.overlap ? '<span class="tag warn" title="' + esc(String(strings.overlapTip || '').replace('{0}', r.overlap)) + '">⚠ ' + r.overlap + '</span>' : '')
       + (inArchive && r.folder ? '<span class="tag">' + esc(r.folder) + '</span>' : '')
       + (r.worktree ? '<span class="tag wt" title="' + esc(String(strings.worktreeTip || '').replace('{0}', r.worktree)) + '">worktree</span>' : '')
       + '<span class="meta">' + esc(r.meta) + '</span>' + acts + '</div>' + sub + '</div>';
@@ -1162,19 +1437,21 @@ async function commitTextBefore(p, ts) {
   return git(['show', `${sha.trim()}:${rel}`], dir);
 }
 
-function registerDiff(desc, name) {
+// 비교 창에 넣을 가상 문서 두 개(왼쪽·오른쪽). 주소의 경로는 실제 파일 위치처럼 보이게 하고(여러 파일 비교 창의 머리글에 그대로 나온다),
+// 어느 비교의 어느 쪽인지는 뒤(query)에 적는다. 두 쪽의 경로가 같아야 "이름 바뀜"으로 표시되지 않는다.
+function registerDiff(desc, name, where) {
   const id = String(++diffSeq);
   diffRegistry.set(id, desc);
   if (diffRegistry.size > 300) diffRegistry.delete(diffRegistry.keys().next().value);
-  const mk = (side) => vscode.Uri.from({ scheme: DIFF_SCHEME, path: `/${id}/${side}/${name}` });
+  const dir = String(where || '').split(/[\\/]/).filter(Boolean).join('/');
+  const mk = (side) => vscode.Uri.from({ scheme: DIFF_SCHEME, path: '/' + (dir ? dir + '/' : '') + name, query: `${id}-${side}` });
   return { left: mk('left'), right: mk('right') };
 }
 
 const contentProvider = {
   async provideTextDocumentContent(uri) {
-    const parts = uri.path.split('/');
-    const desc = diffRegistry.get(parts[1]);
-    const side = parts[2];
+    const [id, side] = String(uri.query || '').split('-');
+    const desc = diffRegistry.get(id);
     if (!desc) return L('(Please reopen: the comparison data is gone.)');
     try {
       if (!desc.sides) desc.sides = desc.load();
@@ -1238,16 +1515,17 @@ async function openChangeDiff(el) {
 }
 
 // 비교 화면 한 쌍의 주소(왼쪽은 항상 가상 문서, 오른쪽은 세션 끝 내용 또는 지금 디스크 파일)
-async function diffPair(f) {
+async function diffPair(f, s) {
   const name = path.basename(f.path);
+  const where = s ? displayDir(f.path, s) : '';
   const sd = await fileSides(f);
   if (sd.left === null) {
     const latest = f.changes.find((c) => loaderFor(c));
     if (!latest) return null;
-    const u = registerDiff({ load: loaderFor(latest) }, name);
+    const u = registerDiff({ load: loaderFor(latest) }, name, where);
     return { left: u.left, right: u.right, title: `${kindText(latest.kind)} ${fmtTime(latest.ts, true)}` };
   }
-  const u = registerDiff({ load: async () => ({ left: sd.left, right: sd.right === null ? '' : sd.right }) }, name);
+  const u = registerDiff({ load: async () => ({ left: sd.left, right: sd.right === null ? '' : sd.right }) }, name, where);
   const right = sd.right !== null ? u.right : sd.exists ? vscode.Uri.file(f.path) : u.right;
   return { left: u.left, right, title: sd.title };
 }
@@ -1268,16 +1546,17 @@ function openPlain(p) {
   return vscode.commands.executeCommand('vscode.open', vscode.Uri.file(p), { preview: true });
 }
 
-async function openFileDiff(el) {
+async function openFileDiff(el, o) {
   const { f } = el;
-  const name = path.basename(f.path);
+  const name = path.basename(f.path) + (o && o.label ? ' · ' + String(o.label).replace(/\s+/g, ' ').slice(0, 30) : '');
+  const preview = !(o && o.keep);
   if (fs.existsSync(f.path) && looksBinary(f.path)) return openPlain(f.path);
-  const pair = await diffPair(f);
+  const pair = await diffPair(f, el.s);
   if (!pair) {
     if (fs.existsSync(f.path)) return openPlain(f.path);
     return vscode.window.showInformationMessage(L('{0}: nothing to compare (the file no longer exists).', name));
   }
-  await vscode.commands.executeCommand('vscode.diff', pair.left, pair.right, `${name} (${pair.title})`, { preview: true });
+  await vscode.commands.executeCommand('vscode.diff', pair.left, pair.right, `${name} (${pair.title})`, { preview });
 }
 
 async function mapLimit(items, limit, fn) {
@@ -1296,7 +1575,7 @@ async function openSessionChanges(arg) {
     return vscode.window.showInformationMessage(L('This session has no changed files in the last {0}h.', cfg().lookbackHours));
   }
   await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: L('Preparing the changes of "{0}"…', s.title) }, async () => {
-    const pairs = await mapLimit(s.files, 6, (f) => diffPair(f));
+    const pairs = await mapLimit(s.files, 6, (f) => diffPair(f, s));
     const resources = [];
     s.files.forEach((f, i) => { if (pairs[i]) resources.push([vscode.Uri.file(f.path), pairs[i].left, pairs[i].right]); });
     if (!resources.length) return vscode.window.showInformationMessage(L('{0}: nothing to compare (the file no longer exists).', s.title));
@@ -1446,14 +1725,37 @@ function checkWaiting(list) {
     Promise.resolve(vscode.window.showInformationMessage(L('"{0}" is waiting for you: {1}', s.title, what), open)).then((pick) => { if (pick === open) openClaudeSession(s.sid); });
   }
   for (const sid of [...waitingSeen.keys()]) if (!now.has(sid)) waitingSeen.delete(sid);
+  checkStuck(list);
+}
+
+// 작업 중인데 한참 동안 새 기록이 없는 세션(멈췄을 수 있다)을 한 번 알린다. 기록이 다시 생기면 다음에 또 알릴 수 있다
+const stuckSeen = new Map(); // 세션 → 알렸을 때의 마지막 기록 시각
+function checkStuck(list) {
+  const limit = cfg().notifyStuckMinutes;
+  if (!limit) { stuckSeen.clear(); return; }
+  const now = new Set();
+  for (const s of list) {
+    if (!s.alive || s.status !== 'busy' || !inWorkspace(s) || !s.lastActivity) continue;
+    now.add(s.sid);
+    const quiet = Math.floor((Date.now() - s.lastActivity) / 60000);
+    if (quiet < limit) { stuckSeen.delete(s.sid); continue; }
+    if (stuckSeen.get(s.sid) === s.lastActivity) continue;
+    stuckSeen.set(s.sid, s.lastActivity);
+    const open = L('Open conversation');
+    Promise.resolve(vscode.window.showWarningMessage(L('"{0}" has been working for {1} minutes without writing anything new. It may be stuck.', s.title, quiet), open)).then((pick) => { if (pick === open) openClaudeSession(s.sid); });
+  }
+  for (const sid of [...stuckSeen.keys()]) if (!now.has(sid)) stuckSeen.delete(sid);
 }
 
 function updateStatusBar() {
   if (!statusItem) return;
   if (!cfg().statusBar) { statusItem.hide(); return; }
+  // 숫자는 이 폴더의 세션만 센다(세션 상태 창의 머리말·"열린 세션" 단추와 같은 기준). 다른 폴더는 설명에 따로 적는다
   const groups = { busy: [], waiting: [], done: [], idle: [] };
+  const elsewhere = { busy: 0, waiting: 0 };
   for (const s of statusSessions) {
     const k = stateOf(s).key;
+    if (!inWorkspace(s)) { if (k in elsewhere) elsewhere[k]++; continue; }
     if (groups[k]) groups[k].push(s);
   }
   const parts = [];
@@ -1475,7 +1777,8 @@ function updateStatusBar() {
   line('loading~spin', L('Working'), groups.busy);
   line('check', L('Just finished'), groups.done);
   line('debug-pause', L('Idle'), groups.idle);
-  if (!statusSessions.length) md.appendMarkdown(L('No open sessions') + '\n\n');
+  if (!groups.busy.length && !groups.waiting.length && !groups.done.length && !groups.idle.length) md.appendMarkdown(L('No open sessions') + '\n\n');
+  if (elsewhere.busy || elsewhere.waiting) md.appendMarkdown(L('Other folders: working {0} · waiting {1}', elsewhere.busy, elsewhere.waiting) + '\n\n');
   md.appendMarkdown(L('Click to open the Sessions view.'));
   statusItem.tooltip = md;
   statusItem.show();
@@ -1522,6 +1825,12 @@ function activate(context) {
     vscode.commands.registerCommand('claudeSessionChanges.showAll', () => setAliveOnly(false)),
     vscode.commands.registerCommand('claudeSessionChanges.pickWindow', pickWindow),
     vscode.commands.registerCommand('claudeSessionChanges.pickArchiveAfter', pickArchiveAfter),
+    vscode.commands.registerCommand('claudeSessionChanges.searchConversations', (q) => searchConversations(typeof q === 'string' ? q : '')),
+    vscode.commands.registerCommand('claudeSessionChanges.renameSession', (arg) => renameSession(arg)),
+    vscode.commands.registerCommand('claudeSessionChanges.copySummary', (arg) => copySummary(arg)),
+    vscode.commands.registerCommand('claudeSessionChanges.copyFolderSummary', () => copyFolderSummary()),
+    vscode.commands.registerCommand('claudeSessionChanges.sessionsForFile', (uri) => sessionsForFile(uri)),
+    vscode.commands.registerCommand('claudeSessionChanges.resetOverlapIgnore', () => { saveOverlapIgnore([]); rebuild(); vscode.window.showInformationMessage(L('Overlap warnings are on again for every file.')); }),
     vscode.commands.registerCommand('claudeSessionChanges.openFileDiff', (el) => el && el.f && openFileDiff(el)),
     vscode.commands.registerCommand('claudeSessionChanges.openChangeDiff', (el) => el && el.c && openChangeDiff(el)),
     vscode.commands.registerCommand('claudeSessionChanges.openFile', (el) => {
@@ -1550,6 +1859,7 @@ function activate(context) {
 function deactivate() {
   if (timer) clearInterval(timer);
   if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; }
+  if (searchWorker) { try { searchWorker.terminate(); } catch { /* 이미 끝남 */ } searchWorker = null; }
   const w = worker;
   worker = null;
   if (!w) return undefined;

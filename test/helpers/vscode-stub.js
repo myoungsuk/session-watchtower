@@ -36,7 +36,7 @@ function install({ extDir, language = 'en', workspace, config = {} }) {
     StatusBarAlignment: { Left: 1, Right: 2 },
     ProgressLocation: { Notification: 15 },
     l10n: { t: (msg, ...args) => (bundle[msg] || msg).replace(/\{(\d+)\}/g, (m, i) => String(args[+i])) },
-    env: { language, uriScheme: 'vscode', clipboard: { writeText: async () => {} }, openExternal: async (u) => { calls.push(['openExternal', String(u)]); } },
+    env: { language, uriScheme: 'vscode', clipboard: { writeText: async (t) => { state.clipboard = t; } }, openExternal: async (u) => { calls.push(['openExternal', String(u)]); } },
     window: {
       createTreeView: (id, o) => {
         const view = {
@@ -50,10 +50,22 @@ function install({ extDir, language = 'en', workspace, config = {} }) {
       registerWebviewViewProvider: (id, p) => { webviewProviders[id] = p; return disposable(); },
       createStatusBarItem: (id) => { const it = { id, text: '', show() { this.visible = true; }, hide() { this.visible = false; }, dispose() {} }; statusItems.push(it); return it; },
       showTextDocument: async (u) => { calls.push(['show', String(u)]); },
-      showInformationMessage: async (m) => { calls.push(['info', m]); },
+      // state.answer(글, 단추들)로 알림 단추를 누른 것처럼 답할 수 있다
+      showInformationMessage: async (m, ...b) => { calls.push(['info', m, b]); return state.answer ? state.answer(m, b) : undefined; },
+      showInputBox: async (o) => { calls.push(['input', o]); return state.input === undefined ? undefined : typeof state.input === 'function' ? state.input(o) : state.input; },
       createTerminal: (o) => { const t = { opts: o, sent: [], shown: false, show() { this.shown = true; }, sendText(x) { this.sent.push(x); } }; calls.push(['terminal', t]); return t; },
-      showWarningMessage: async (m) => { calls.push(['warn', m]); },
-      showQuickPick: async () => undefined,
+      showWarningMessage: async (m, ...b) => { calls.push(['warn', m, b]); return state.answer ? state.answer(m, b) : undefined; },
+      showQuickPick: async (items, o) => { calls.push(['pick', items, o]); return state.pick ? state.pick(items) : undefined; },
+      // 입력 상자가 달린 고르기 창: 시험이 값을 넣고(type) 고를 수 있게 한다
+      createQuickPick: () => {
+        const ev = () => { const ls = []; const f = (cb) => { ls.push(cb); return disposable(); }; f.fire = (v) => ls.forEach((cb) => cb(v)); return f; };
+        const qp = { value: '', items: [], busy: false, title: undefined, placeholder: '', selectedItems: [], activeItems: [], shown: false,
+          onDidChangeValue: ev(), onDidAccept: ev(), onDidHide: ev(),
+          show() { this.shown = true; }, hide() { this.shown = false; this.onDidHide.fire(); }, dispose() {},
+          type(v) { this.value = v; this.onDidChangeValue.fire(v); }, accept(item) { this.selectedItems = [item]; this.onDidAccept.fire(); } };
+        state.quickPick = qp;
+        return qp;
+      },
       withProgress: async (o, fn) => fn({ report() {} }),
     },
     workspace: {

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.13.0
+
+- **Overlap warning.** When a session changes a file that another session also changed, the file is marked `⚠ <session name> too`, the session row gets a `⚠ n` tag, and a notification offers *Compare both changes* and *Don't warn for this file*. Only certain changes count (not guesses), and a closed session whose change is already committed does not count. Settings `notifyOverlap` and `overlapIgnore` (glob patterns; Claude Code's memory folder is ignored by default). The command *Warn about overlapping edits for every file again* forgets the files you silenced.
+- **"May be stuck" notification.** A session in this folder that has been working for 10 minutes without writing anything new to its log gets a warning (setting `notifyStuckMinutes`, 0 = off). A long command without output looks the same.
+- **Search conversations.** Find a session by what you typed in it, not just by its title: the `…` menu of the Sessions view, or Enter in the title filter box. The first search reads all logs once; later searches only read new lines. Only your own messages are indexed, and the index stays in the extension's private storage.
+- **Which sessions changed this file?** New entry in the right-click menu of the Explorer and of editor tabs.
+- **Copy a summary.** Copies a Markdown summary of the changes (files, lines, time span, commits) for one session or for all sessions of this folder. No AI is called.
+- **Subagents.** A working session shows *N subagents working* in its second line.
+- **Rename a session** with the pencil button or the right-click menu. The name is stored the way Claude Code stores it, so it also shows in Claude Code's own list. This is the only thing the extension writes outside its own storage: one title line appended to that session's log.
+- The status bar now counts this folder only; other folders are mentioned in its tooltip.
+- *Review all changes* shows real file paths in its headers.
+- The README is rewritten with real screenshots of each feature and a short animation.
+- The description no longer says "read-only", because of the rename feature. Project files are still never touched.
+
 ## 0.12.1
 
 - Fixed: clicking an image or another non-text file in the Changed files view showed a "cannot open" error. Such files now open in their own viewer.

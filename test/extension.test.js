@@ -417,6 +417,10 @@ test('Codex 세션을 누르면 그 세션 폴더에서 터미널로 이어 연�
   const rowOf = () => (web.lastPayload().groups || []).flatMap((g) => g.rows).find((r) => r.sid === 'codex:' + CX);
   const row = await waitFor(rowOf, 'Codex 줄');
   assert.deepStrictEqual([row.codex, row.canOpen], [true, true], '다른 폴더의 Codex 세션도 터미널로는 열 수 있다');
+  // 상태 표시줄의 숫자는 이 폴더 세션만 센다(다른 폴더에서 작업 중인 Codex 세션은 설명에만 나온다)
+  const bar = stub.statusItems[0];
+  await waitFor(() => /Other folders: working 1/.test(bar.tooltip.value), '다른 폴더는 설명에');
+  assert.match(bar.text, /\$\(loading~spin\) 1(?!\d)/, '이 폴더에서 작업 중인 세션은 1개');
   ext._test.setCodexCli(true);
   stub.calls.length = 0;
   web.send({ type: 'open', sid: 'codex:' + CX });

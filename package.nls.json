@@ -1,5 +1,5 @@
 {
-  "description": "See every Claude Code session at a glance — working, waiting or idle — and exactly which files each one changed. Also shows Codex sessions. Read-only.",
+  "description": "See every Claude Code session at a glance — working, waiting or idle — and exactly which files each one changed. Also shows Codex sessions. Never touches your project files.",
   "view.sessions": "Sessions",
   "view.changes": "Changed files",
   "command.refresh": "Refresh",
@@ -36,5 +36,14 @@
   "config.archiveAfter.d14": "14 days",
   "config.archiveAfter.d30": "30 days",
   "config.archiveAfter.never": "Never",
-  "config.notifyWaiting": "Show a notification when a session in this folder starts waiting for your approval or answer."
+  "config.notifyWaiting": "Show a notification when a session in this folder starts waiting for your approval or answer.",
+  "command.searchConversations": "Search conversations",
+  "command.copySummary": "Copy a summary of this session's changes",
+  "command.copyFolderSummary": "Copy a summary of all sessions' changes in this folder",
+  "command.sessionsForFile": "Session Watchtower: Which sessions changed this file?",
+  "command.resetOverlapIgnore": "Warn about overlapping edits for every file again",
+  "config.notifyOverlap": "Show a notification when a session in this folder changes a file that another session also changed. The file is marked in the Changed files view either way.",
+  "config.overlapIgnore": "Files that never get an overlap warning, as glob patterns (** crosses folders). Files you silence from a notification are remembered separately.",
+  "config.notifyStuckMinutes": "Notify when a session in this folder has been working this many minutes without writing anything new to its log (0 = off). A long-running command can look the same.",
+  "command.renameSession": "Rename session"
 }

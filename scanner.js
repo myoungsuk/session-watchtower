@@ -17,6 +17,8 @@ const CACHE_SAVE_MS = 20000;
 const CODEX_ACTIVE_MS = 90000;
 // "지금 고치는 중"으로 보는 시간: 마지막으로 바뀐 뒤 이만큼
 const LIVE_MS = 30000;
+// 하위 에이전트 기록이 이 시간 안에 바뀌었으면 작업 중으로 본다
+const SUB_ACTIVE_MS = 60000;
 const CHUNK = 4 * 1024 * 1024;
 const NL = 10;
 const DISCOVERY_MS = 30000;
@@ -102,6 +104,46 @@ function looksReadOnly(cmd) {
     } else if (!RO_CMDS.has(w0)) return false;
   }
   return true;
+}
+
+// 같은 파일을 두 세션 이상이 고친 곳을 표시한다(s.overlaps = [{ path, with: [{ sid, title, ts }] }]).
+// 누가 고쳤는지 확실한 기록(편집 도구·기록된 셸 변경·Codex 패치)만 본다. 추정(?)과 커밋은 뺀다.
+// 순서대로 일한 것(상대가 고치고 커밋까지 끝낸 파일을 나중에 고침)은 알리지 않으려고,
+// 상대 세션이 아직 열려 있거나 그 파일에 커밋하지 않은 변경이 남아 있을 때만 겹침으로 본다.
+function markOverlaps(sessions, now) {
+  const byPath = new Map();
+  for (const s of sessions) {
+    s.overlaps = [];
+    for (const c of s.changes) {
+      if (!c.path || c.scratch || (c.kind !== 'edit' && c.kind !== 'bash' && c.kind !== 'cxedit')) continue;
+      let m = byPath.get(c.path);
+      if (!m) byPath.set(c.path, (m = new Map()));
+      if (!(m.get(s.sid) >= c.ts)) m.set(s.sid, c.ts);
+    }
+  }
+  const bySid = new Map(sessions.map((s) => [s.sid, s]));
+  for (const [p, m] of byPath) {
+    if (m.size < 2) continue;
+    let dirty = null;
+    const isDirty = () => {
+      if (dirty === null) {
+        const dir = path.dirname(p);
+        const info = inGitTree(dir) ? gitInfo(dir) : null;
+        // 저장소 밖 파일은 커밋 여부를 알 수 없다 → 남아 있는 변경으로 본다
+        dirty = info ? repoDirty(info.top, now).some((f) => f.path === p) : true;
+      }
+      return dirty;
+    };
+    for (const [sid] of m) {
+      const others = [];
+      for (const [oid, ots] of m) {
+        if (oid === sid) continue;
+        const o = bySid.get(oid);
+        if ((o && o.alive) || isDirty()) others.push({ sid: oid, title: o ? o.title : oid.slice(0, 8), ts: ots });
+      }
+      if (others.length) bySid.get(sid).overlaps.push({ path: p, with: others });
+    }
+  }
 }
 
 // 폴더가 git 저장소 안인가(위로 올라가며 .git을 찾는다). 임시 폴더처럼 저장소가 아닌 곳마다 git을 띄우지 않으려고 먼저 본다
@@ -585,6 +627,15 @@ function pushChange(st, c) {
   st.changes.push(c);
 }
 
+// 사용자 메시지의 글 전부(글 조각이 여러 개면 이어 붙인다: 앞 조각이 도구 안내문이고 뒤 조각이 실제로 쓴 말인 경우가 있다)
+function allTextOfUser(o) {
+  const m = o.message;
+  if (!m) return '';
+  if (typeof m.content === 'string') return m.content;
+  if (!Array.isArray(m.content)) return '';
+  return m.content.filter((x) => x && x.type === 'text' && typeof x.text === 'string').map((x) => x.text).join(' ');
+}
+
 function textOfUser(o) {
   const m = o.message;
   if (!m) return null;
@@ -997,8 +1048,9 @@ function handleLine(st, line, absOffset, headOnly) {
     try { o = JSON.parse(line.toString('utf8')); } catch { return; }
     if (o.cwd && !st.cwd) st.cwd = o.cwd;
     if (!st.firstPrompt && !o.isMeta && !st.sub) {
-      const t = textOfUser(o);
-      if (t && !/^\s*</.test(t) && !/^Caveat:/.test(t)) st.firstPrompt = t.replace(/\s+/g, ' ').trim().slice(0, 60);
+      // 도구가 끼워 넣은 안내문을 걷어 낸 뒤의 첫 말(제목이 없을 때 제목 대신 쓴다)
+      const t = cleanPrompt(allTextOfUser(o));
+      if (t && t[0] !== '<' && !/^Caveat:/.test(t)) st.firstPrompt = t.slice(0, 60);
     }
   }
 }
@@ -1351,6 +1403,146 @@ function discover(sinceMs, registry, includeCodex, listSinceMs, projectDirs, oth
   return out;
 }
 
+// ---------- 내가 보낸 말 색인(대화 내용으로 세션 찾기) ----------
+// 대화 기록은 수 GB라 찾을 때마다 다 읽을 수 없다. 사용자가 직접 쓴 말만 따로 모아 두고(기록 파일이 자란 만큼만 더 읽음) 그 안에서 찾는다.
+const PROMPT_INDEX_VERSION = 1;
+const PROMPT_MAX = 2000;
+const K_ISMETA = B('"isMeta":true');
+
+function cleanPrompt(text) {
+  let t = String(text || '');
+  if (!t) return '';
+  // 도구·시스템이 끼워 넣은 덩어리는 사용자가 쓴 말이 아니다
+  t = t.replace(/<(system-reminder|ide_opened_file|ide_selection|local-command-stdout|local-command-caveat|command-message|command-args|task-notification|browser_instruction)[^>]*>[\s\S]*?<\/\1>/g, ' ');
+  t = t.replace(/<command-name>([^<]*)<\/command-name>/g, '$1 ');
+  t = t.replace(/\s+/g, ' ').trim();
+  return t.length > PROMPT_MAX ? t.slice(0, PROMPT_MAX) : t;
+}
+
+function createPromptIndex() {
+  const idx = new Map(); // 기록 파일 → { offset, size, mtimeMs, sid, cwd, title, prompts: [{ ts, text }] }
+  let loadedFrom = null;
+  let dirty = false;
+
+  function load(file) {
+    if (loadedFrom === file) return;
+    loadedFrom = file;
+    if (!file) return;
+    try {
+      const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (data && data.v === PROMPT_INDEX_VERSION && Array.isArray(data.files)) for (const e of data.files) if (e && e.file) idx.set(e.file, e);
+    } catch { /* 없거나 깨짐: 처음부터 */ }
+  }
+
+  function save(file) {
+    if (!file || !dirty) return;
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const tmp = file + '.tmp-' + process.pid;
+      fs.writeFileSync(tmp, JSON.stringify({ v: PROMPT_INDEX_VERSION, files: [...idx.values()] }));
+      fs.renameSync(tmp, file);
+      dirty = false;
+    } catch { /* 다음에 다시 */ }
+  }
+
+  function readMore(e) {
+    let fd;
+    try { fd = fs.openSync(e.file, 'r'); } catch { return 0; }
+    let read = 0;
+    try {
+      const stat = fs.fstatSync(fd);
+      if (stat.size < e.offset) { e.offset = 0; e.prompts = []; }
+      let pos = e.offset;
+      let carry = null;
+      const buf = Buffer.allocUnsafe(CHUNK);
+      const onLine = (line) => {
+        if (line.length < 2) return;
+        if (line.length < 20000 && (line.indexOf(K_CUSTOM) >= 0 || line.indexOf(K_AI) >= 0)) {
+          try { const o = JSON.parse(line.toString('utf8')); if (o.type === 'custom-title' && o.customTitle) { e.title = String(o.customTitle); e.custom = true; } else if (o.type === 'ai-title' && o.aiTitle && !e.custom) e.title = String(o.aiTitle); } catch { /* 깨진 줄 */ }
+          return;
+        }
+        // 사용자가 쓴 말: user 기록이면서 도구 결과가 아니고, 시스템이 끼워 넣은 것(isMeta)이 아닌 줄
+        if (line.length > 400000 || line.indexOf(K_USER) < 0 || line.indexOf(K_TOOLUSEID) >= 0 || line.indexOf(K_ISMETA) >= 0) return;
+        if (line.subarray(0, 48).indexOf(K_APIREQ) >= 0) return;
+        let o;
+        try { o = JSON.parse(line.toString('utf8')); } catch { return; }
+        if (!o || o.type !== 'user' || o.isMeta || o.toolUseResult || o.isSidechain) return;
+        if (o.cwd && !e.cwd) e.cwd = o.cwd;
+        const text = cleanPrompt(allTextOfUser(o));
+        if (text.length < 2 || text[0] === '<') return;
+        e.prompts.push({ ts: Date.parse(o.timestamp) || 0, text });
+      };
+      while (pos < stat.size) {
+        const n = fs.readSync(fd, buf, 0, Math.min(CHUNK, stat.size - pos), pos);
+        if (n <= 0) break;
+        read += n;
+        const chunk = carry ? Buffer.concat([carry, buf.subarray(0, n)]) : buf.subarray(0, n);
+        let start = 0;
+        let i;
+        while ((i = chunk.indexOf(NL, start)) !== -1) { onLine(chunk.subarray(start, i)); start = i + 1; }
+        carry = start < chunk.length ? Buffer.from(chunk.subarray(start)) : null;
+        pos += n;
+      }
+      e.offset = pos - (carry ? carry.length : 0);
+      e.size = stat.size;
+      e.mtimeMs = stat.mtimeMs;
+    } finally { fs.closeSync(fd); }
+    return read;
+  }
+
+  // 색인을 지금 기록에 맞춘다. onProgress(끝난 파일 수, 전체 파일 수)
+  function update(opts) {
+    load(opts.indexFile);
+    const found = [];
+    let projs = [];
+    try { projs = fs.readdirSync(PROJECTS, { withFileTypes: true }); } catch { projs = []; }
+    for (const p of projs) {
+      if (!p.isDirectory()) continue;
+      let ents = [];
+      try { ents = fs.readdirSync(path.join(PROJECTS, p.name), { withFileTypes: true }); } catch { continue; }
+      for (const en of ents) if (en.isFile() && en.name.endsWith('.jsonl')) found.push({ file: path.join(PROJECTS, p.name, en.name), sid: en.name.slice(0, -6) });
+    }
+    const keep = new Set(found.map((f) => f.file));
+    for (const k of [...idx.keys()]) if (!keep.has(k)) { idx.delete(k); dirty = true; }
+    let done = 0;
+    let bytes = 0;
+    for (const f of found) {
+      let st;
+      try { st = fs.statSync(f.file); } catch { done++; continue; }
+      let e = idx.get(f.file);
+      if (!e) { e = { file: f.file, sid: f.sid, offset: 0, size: 0, mtimeMs: 0, cwd: null, title: null, prompts: [] }; idx.set(f.file, e); }
+      if (st.size !== e.size || st.mtimeMs !== e.mtimeMs) { bytes += readMore(e); dirty = true; }
+      done++;
+      if (opts.onProgress) opts.onProgress(done, found.length);
+    }
+    save(opts.indexFile);
+    return { files: found.length, bytes };
+  }
+
+  // 낱말(띄어 쓴 것 모두)이 다 들어 있는 말을 최근 것부터 찾는다
+  function search(query, opts) {
+    const o = opts || {};
+    const stats = update(o);
+    const terms = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+    const out = [];
+    if (terms.length) {
+      for (const e of idx.values()) {
+        for (const p of e.prompts) {
+          const low = p.text.toLowerCase();
+          if (!terms.every((t) => low.includes(t))) continue;
+          const at = Math.max(0, low.indexOf(terms[0]) - 40);
+          out.push({ sid: e.sid, file: e.file, cwd: e.cwd, project: e.cwd ? path.basename(e.cwd) : null, title: e.title || (e.prompts[0] ? e.prompts[0].text.slice(0, 60) : e.sid.slice(0, 8)), ts: p.ts, snippet: (at > 0 ? '…' : '') + p.text.slice(at, at + 160) });
+        }
+      }
+    }
+    out.sort((a, b) => b.ts - a.ts);
+    const max = o.max || 200;
+    return { results: out.slice(0, max), total: out.length, stats };
+  }
+
+  return { update, search };
+}
+
 // ---------- 읽은 결과 저장(창을 다시 열어도 새로 붙은 부분만 읽게) ----------
 
 function serializeState(st) {
@@ -1631,13 +1823,17 @@ function createModel() {
         metaOnly: !!main.metaOnly,
         pinned: !!pinSince,
         projectDir: main.project || null, // ~/.claude/projects 아래 폴더 이름
+        file: main.file, // 이 세션의 대화 기록 파일(이름을 바꿀 때 제목 기록을 덧붙인다)
         programmatic: !!main.programmatic,
         ...state,
         activity,
         liveFiles,
+        // 하위 에이전트(Codex는 하위 스레드): 기록 파일이 방금까지 자라고 있으면 작업 중으로 본다
+        subagents: { total: sts.filter((x) => x.sub).length, active: sts.filter((x) => x.sub && t0 - x.mtimeMs < SUB_ACTIVE_MS).length },
         changes,
       });
     }
+    if (!partial) markOverlaps(sessions, t0);
     sessions.sort((a, b) => b.lastActivity - a.lastActivity);
     return sessions;
   }
@@ -1653,4 +1849,4 @@ function scanOne(file, agent, sinceMs, seekMinBytes) {
   return st;
 }
 
-module.exports = { LIVE_MS, codexPatchText, looksReadOnly, createModel, shellTargets, stripHeredocBodies, hunkCounts, isScratch, readRegistry, parsePatch, attentionMarker, scanOne };
+module.exports = { LIVE_MS, codexPatchText, looksReadOnly, createPromptIndex, createModel, shellTargets, stripHeredocBodies, hunkCounts, isScratch, readRegistry, parsePatch, attentionMarker, scanOne };
