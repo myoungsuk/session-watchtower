@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.1
+
+- Fixed: the board's "Changes no session log explains" listed every uncommitted file no session had touched, including backups and files that had sat outside git for weeks. It now lists only files changed within the time range.
+
 ## 0.17.0
 
 - **Session groups.** Put sessions that work together in a group (group button on a session row, or *Add sessions…* on the board) and give each a role such as *watch*, *develop* or *deploy*. A group sits at the top of the Sessions view. A session belongs to one group; groups are shared by all VS Code windows on the computer.

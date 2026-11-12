@@ -219,7 +219,7 @@
   "Remove from group": "그룹에서 빼기",
   "From another folder ({0}): open it from a VS Code window with that folder.": "다른 폴더({0})의 세션: 그 폴더를 연 VS Code 창에서 여세요.",
   "Changes no session log explains (last {0})": "세션 기록으로 설명되지 않는 변경(최근 {0})",
-  "Uncommitted files in these repositories that no session changed within the time range: edited by hand, by another tool, or by a session outside the time range.": "이 저장소들의 커밋 안 한 파일 가운데 보는 기간 안에 어느 세션도 바꾸지 않은 것: 사람이 직접 고쳤거나, 다른 도구가 고쳤거나, 보는 기간 밖의 세션이 고친 것입니다.",
+  "Uncommitted files in these repositories that changed within the time range but are not in any session log: edited by hand or by another tool. Older uncommitted files (backups, files never added to git) are left out.": "이 저장소들의 커밋 안 한 파일 가운데 보는 기간 안에 바뀌었는데 어느 세션 기록에도 없는 것: 사람이 직접 고쳤거나 다른 도구가 고친 것입니다. 오래전부터 커밋 안 한 채 있는 파일(백업, git에 안 올린 파일)은 넣지 않습니다.",
   "What you said to these sessions": "이 세션들에 내가 한 말",
   "Nothing yet.": "아직 없습니다.",
   "Reading your messages…": "내가 쓴 말을 읽는 중…",

@@ -29,6 +29,10 @@ git('add', '-A');
 git('commit', '-q', '-m', 'init');
 fs.writeFileSync(app, 'v2\n');
 fs.writeFileSync(path.join(project, 'stray.txt'), 'who made me\n');
+// 오래전부터 git에 안 올린 채 있는 백업 파일: 보는 기간 밖에 바뀌었으니 "설명되지 않는 변경"에 넣지 않는다
+const oldBak = path.join(project, 'settings.json.bak-old');
+fs.writeFileSync(oldBak, '{}\n');
+fs.utimesSync(oldBak, new Date(now - 30 * 24 * 3600 * 1000), new Date(now - 30 * 24 * 3600 * 1000));
 for (const f of [app, path.join(project, 'stray.txt')]) fs.utimesSync(f, new Date(now - 20 * MIN), new Date(now - 20 * MIN));
 
 const sleeper = spawn('sleep', ['120'], { stdio: 'ignore' });
@@ -117,7 +121,7 @@ test('그룹 보드: 기다리는 세션, 세션 현황(커밋 안 한 파일), 
   const dev = p.members.find((m) => m.title === 'Developer');
   assert.deepStrictEqual(dev.uncommitted, [app]);
   assert.strictEqual(dev.state, 'busy');
-  assert.deepStrictEqual(p.unknown, [path.join(project, 'stray.txt')]);
+  assert.deepStrictEqual(p.unknown, [path.join(project, 'stray.txt')], '보는 기간 안에 바뀐 것만(30일 된 백업 파일은 뺀다)');
   const out = p.members.find((m) => m.title === 'Outside');
   assert.strictEqual(out.folder, 'other-app');
   assert.strictEqual(out.canOpen, false, '다른 폴더 세션은 이 창에서 열 수 없다고 알린다');

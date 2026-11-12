@@ -992,10 +992,13 @@ async function boardPayload(id) {
     r.uncommitted = r.paths.filter((p) => dirty.has(p));
     delete r.paths;
   }
-  // 어느 세션 기록(보는 기간 안)으로도 설명되지 않는 변경: 사람이 직접 고쳤거나 다른 도구·기록 밖의 세션
+  // 보는 기간 안에 바뀌었는데 어느 세션 기록으로도 설명되지 않는 커밋 전 변경: 사람이 직접 고쳤거나 다른 도구.
+  // 바뀐 시각을 꼭 본다: 오래전부터 커밋 안 한 채 있는 파일(백업·git에 안 올린 파일)까지 넣으면 늘 같은 파일이 떠서 쓸모가 없다(11-12 사용자 화면)
   const known = new Set();
   for (const m of model) for (const f of m.files) known.add(f.path);
-  const unknown = [...dirty].filter((p) => !known.has(p)).sort();
+  const since = Date.now() - cfg().lookbackHours * 3600000;
+  const changedSince = (p) => { try { return fs.statSync(p).mtimeMs >= since; } catch { return false; } };
+  const unknown = [...dirty].filter((p) => !known.has(p) && changedSince(p)).sort();
   const b = boards.get(id);
   const memo = await memoView(g.memo);
   return {
@@ -1036,7 +1039,7 @@ function boardStrings() {
     waiting: L('Waiting for you'), noneWaiting: L('No session in this group is waiting for you.'), sessions: L('Sessions'),
     role: L('Role'), session: L('Session'), state: L('State'), now: L('Doing now'), changed: L('Changed'), uncommitted: L('Not committed'), commits: L('Commits'), last: L('Last talk'),
     setRole: L('Set role'), remove: L('Remove from group'), open: L('Open conversation'), otherFolder: L('From another folder ({0}): open it from a VS Code window with that folder.', '{0}'),
-    unknownTitle: L('Changes no session log explains (last {0})', '{0}'), unknownTip: L('Uncommitted files in these repositories that no session changed within the time range: edited by hand, by another tool, or by a session outside the time range.'),
+    unknownTitle: L('Changes no session log explains (last {0})', '{0}'), unknownTip: L('Uncommitted files in these repositories that changed within the time range but are not in any session log: edited by hand or by another tool. Older uncommitted files (backups, files never added to git) are left out.'),
     said: L('What you said to these sessions'), saidNone: L('Nothing yet.'), saidBusy: L('Reading your messages…'), copyQuote: L('Copy with time'),
     memo: L('Shared memo'), memoNone: L('No memo file linked. Link a Markdown file the sessions also read and write (like a coordination board), or create a new one.'),
     linkMemo: L('Link a file…'), newMemo: L('Create a memo file'), openMemo: L('Open in editor'), unlinkMemo: L('Unlink'),
