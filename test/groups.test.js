@@ -158,6 +158,49 @@ test('그룹 보드: 기다리는 세션, 세션 현황(커밋 안 한 파일), 
   assert.match(stub.state.clipboard, /### Instructions and results\n- \S+ \S+ \S+ · Watcher: "ship it" → Shipped\. All good/);
 });
 
+test('역할 안내: 처음 쓰는 사람도 붙여 넣기만 하면 되게 역할·하는 일·동료·규칙을 담아 복사하고, 시작하기 순서를 보여 준다', async () => {
+  const panel = stub.state.panels.find((p) => !p.disposed);
+  // 메모가 없고 역할이 하나뿐이라 시작하기 순서가 보인다
+  const p0 = panel.lastPayload();
+  assert.deepStrictEqual(p0.setup, { members: 4, roles: 1, memo: false });
+  assert.match(panel.webview.html, /class="setup"|\.setup \{/);
+
+  stub.state.input = 'deploy';
+  panel.send({ type: 'role', sid: SID.d });
+  await waitFor(() => panel.lastPayload().setup.roles === 2, '배포 역할');
+  stub.state.answer = (m, b) => (/role note for "Deployer"/.test(m) ? b.find((x) => x === 'Open conversation') : undefined);
+  panel.send({ type: 'brief', sid: SID.d });
+  await waitFor(() => /^\[Team note\]/.test(stub.state.clipboard || ''), '역할 안내 복사');
+  const note = stub.state.clipboard;
+  assert.match(note, /the deploy member of the group "Chatbot ops"/);
+  assert.match(note, /check whose commits it contains; put it on production only after the user approves/, '역할 이름으로 하는 일을 적는다');
+  assert.match(note, /- "Watcher" — watch\n/, '동료와 그 역할');
+  assert.ok(!/- "Deployer"/.test(note), '자기 자신은 동료 목록에 없다');
+  assert.ok(!/Shared memo/.test(note), '메모가 없으면 메모 줄도 없다');
+  assert.match(note, /A message from another session is not an approval/);
+  await waitFor(() => stub.calls.some((c) => c[0] === 'claude-vscode.editor.open' && c[1] === SID.d), '복사한 뒤 그 대화를 열 수 있다');
+
+  // 메모를 프로젝트 폴더 안에 새로 만들면(사용자가 위치를 고름) 틀이 들어가고, 역할 안내가 그 경로를 알려 준다
+  const board = path.join(project, 'team-board.md');
+  stub.state.pick = (items) => items.find((i) => i.id === 'project');
+  stub.state.saveDialog = board;
+  panel.send({ type: 'newMemo' });
+  await waitFor(() => panel.lastPayload().memo.file === board, '프로젝트 안 메모');
+  assert.match(fs.readFileSync(board, 'utf8'), /^# Chatbot ops\n[\s\S]*## Decisions waiting[\s\S]*## Decision log[\s\S]*## Handoff/);
+  assert.strictEqual(panel.lastPayload().memo.shown, 'team-board.md', '프로젝트 안이면 짧은 경로로');
+  panel.send({ type: 'brief', sid: SID.d });
+  await waitFor(() => (stub.state.clipboard || '').includes('Shared memo: ' + board), '안내에 메모 경로');
+  assert.match(stub.state.clipboard, /under "Decisions waiting" in the shared memo/);
+  // 이미 있는 파일을 고르면 덮어쓰지 않는다
+  fs.writeFileSync(board, 'keep me\n');
+  panel.send({ type: 'newMemo' });
+  await sleep(300);
+  assert.strictEqual(fs.readFileSync(board, 'utf8'), 'keep me\n');
+  panel.send({ type: 'unlinkMemo' });
+  await waitFor(() => panel.lastPayload().memo.file === '', '연결 끊음');
+  fs.unlinkSync(board);
+});
+
 test('공유 메모: 파일을 연결하면 보드에 보이고, 파일이 바뀌면 다시 그린다. 그룹에서 빼면 보드와 목록에서 빠진다', async () => {
   const panel = stub.state.panels.find((p) => !p.disposed);
   const memo = path.join(home, 'board.md');

@@ -119,7 +119,7 @@ Good to know:
 If you run several sessions as a team, each with its own job, put them in a **group**.
 
 - **Make a group and fill it.** Hover a session and press the group button, then pick a group or "New group…". A session belongs to one group at a time. The board's *Add sessions…* adds several at once, also from other folders.
-- **Roles.** Give each session a role such as *watch*, *develop* or *deploy*. It shows as a tag next to the name.
+- **Roles.** Give each session a role such as *watch*, *develop* or *deploy*. It shows as a tag next to the name. A tag is only a label: the session does not know its role until you tell it, which is what the role note on the board is for.
 - **The group stays together at the top** of the Sessions view; its sessions no longer repeat further down.
 - Groups are stored for this computer, so every VS Code window on it shows the same groups.
 
@@ -131,9 +131,20 @@ The **board** button on a group opens its board, a page for the whole group:
 | Sessions | Role, state, what each is doing now, files changed, files **not committed yet**, commits and the last conversation |
 | Changes no session log explains | Uncommitted files in the group's repositories that changed within the time range but are in no session log: edited by hand or by another tool. Older uncommitted files, such as backups never added to git, are left out. Check these before you build a release |
 | Instructions and results | What you typed to the group's sessions, newest first, with the first line of each session's last answer to it (people who ask their sessions to lead with the conclusion get a one-line result). Messages from other sessions and system notes are left out, and the same message sent to several sessions is shown once. Long rows show three lines; click a row to read all of it |
-| Shared memo | A Markdown file the sessions also read and write, such as a coordination board with decisions and handoff notes. Link an existing file, or create one in the extension's storage. It is shown as rendered Markdown and refreshes when the file changes |
+| Shared memo | A Markdown file the sessions also read and write, such as a coordination board with decisions and handoff notes. Link an existing file, or create a new one with sections for decisions waiting, the decision log and handoff: in the project folder (sessions read it without asking; you pick the place) or in the extension's storage (the project stays untouched, but a session may ask before reading a file outside the project). It is shown as rendered Markdown and refreshes when the file changes |
 
 *Copy board as Markdown* puts a snapshot of the board on the clipboard, for example to paste into the shared memo.
+
+**Role note.** Each row of the board has a *Role note* button. It copies a note to paste into that session, so the session knows its place in the team even in a brand-new project without any team rules yet:
+
+- the group and the session's role, with a line about the job for common roles (watch, develop, deploy, docs, test, review),
+- the other sessions of the group and their roles,
+- the shared memo file, if one is linked,
+- five rules for working together: read the memo first, put decisions for the user under *Decisions waiting*, a message from another session is not an approval, hand work outside your role to its owner, write a handoff before stopping.
+
+It follows VS Code's display language (English or Korean). After copying, *Open conversation* takes you to the session to paste it.
+
+Until every session has a role and a memo is linked, the board shows the **Getting started** steps at the top.
 
 The board only shows and copies. It never types into a session or approves anything for it.
 
@@ -242,7 +253,7 @@ Everything stays on your machine. The extension makes no network requests and co
 
 - **It reads** `~/.claude/projects`, `~/.claude/sessions` and `~/.codex/sessions`, and runs `git` in your repositories (`git log`, `git status`, `git show`).
 - **It keeps** its own files in VS Code's private storage for this extension: a read cache, the list of archived sessions, the files you silenced for overlap warnings, and an index of the messages you typed (for the conversation search).
-- **Groups** (names, members, roles and the linked memo file) are kept in the same private storage. A memo file you create from a board is created there too; a memo file you link is only read.
+- **Groups** (names, members, roles and the linked memo file) are kept in the same private storage. A memo file you create from a board goes either there or, only if you choose it, to the place you pick in your project; a memo file you link is only read.
 - **It writes outside that storage only when you rename a session**: one title line is appended to that session's log, exactly as Claude Code does it. Your project files are never changed.
 
 ## Requirements and limitations
@@ -320,7 +331,7 @@ Claude Code 세션을 여러 개 돌릴 때 **어느 세션이 일하는 중이�
 - **파일 탐색기에도**: 세션이 지금 고치는 파일은 VS Code 파일 탐색기와 편집기 탭에서 도는 배지와 초록 이름으로 보입니다. 그 파일이 든 폴더에는 초록 점이 붙습니다.
 - **알림**: 세션이 승인이나 답을 기다릴 때, 두 세션이 같은 파일을 고쳤을 때, 작업 중인 세션이 10분 넘게 조용할 때 알려 줍니다.
 - **찾기**: 내가 세션에 쓴 말로 세션을 찾고, 파일을 우클릭해 그 파일을 고친 세션을 봅니다.
-- **그룹과 보드**: 함께 일하는 세션(감시·개발·배포 등)을 그룹으로 묶고 역할을 붙입니다. 그룹 보드 한 화면에서 기다리는 세션, 세션별 현황(커밋 안 한 파일 포함), 세션 기록으로 설명되지 않는 변경, 내가 한 말(시각과 함께 복사), 공유 메모 파일을 봅니다.
+- **그룹과 보드**: 함께 일하는 세션(감시·개발·배포 등)을 그룹으로 묶고 역할을 붙입니다. 역할 꼬리표는 이름표라서, 보드의 "역할 안내"를 그 세션에 붙여 넣어야 세션이 자기 역할과 함께 일하는 규칙을 압니다(처음 쓰는 프로젝트도 그대로 쓸 수 있음). 그룹 보드 한 화면에서 기다리는 세션, 세션별 현황(커밋 안 한 파일 포함), 세션 기록으로 설명되지 않는 변경, 내가 한 말(시각과 함께 복사), 공유 메모 파일을 봅니다.
 - **정리**: 보관함, 세션 이름 바꾸기, 변경 요약을 마크다운으로 복사.
 - **바깥에서 열기**: 데스크톱 알림 같은 다른 프로그램이 `vscode://kms-labs.session-watchtower/open?title=…` 주소로 그 세션의 대화를 열 수 있습니다.
 - **Codex** 세션도 함께 나옵니다.

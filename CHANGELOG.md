@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.0
+
+- **Role note.** A button on each board row copies a note to paste into that session: its group and role, what the role does (for common roles), the other sessions, the shared memo and five rules for working together. A role tag alone is only a label; this is how a session learns its role, also in a brand-new project with no team rules yet.
+- **Getting started** steps at the top of a board until every session has a role and a memo is linked.
+- *Create a memo file* asks where: in the project folder (you pick the place; sessions read it without asking) or in the extension's storage. The new file has sections for decisions waiting, the decision log and handoff. An existing file is linked, never overwritten.
+
 ## 0.17.3
 
 - Instructions and results on the board: the copy button is gone and the text takes the full width. Each row shows three lines; click a row to read all of it.

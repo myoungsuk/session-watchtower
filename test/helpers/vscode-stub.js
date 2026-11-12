@@ -89,6 +89,7 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
         return panel;
       },
       showOpenDialog: async (o) => { calls.push(['openDialog', o]); return state.openDialog ? [Uri.file(state.openDialog)] : undefined; },
+      showSaveDialog: async (o) => { calls.push(['saveDialog', o]); return state.saveDialog ? Uri.file(state.saveDialog) : undefined; },
       // 편집기 탭: 시험이 setTabs로 바꾸고 알린다
       tabGroups: { all: [], onDidChangeTabs: tabEvents.event, onDidChangeTabGroups: tabGroupEvents.event },
     },
