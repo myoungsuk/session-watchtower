@@ -443,3 +443,21 @@ test('Codex 세션을 누르면 그 세션 폴더에서 터미널로 이어 연�
   assert.ok(!stub.calls.some((c) => c[0] === 'terminal'));
 });
 
+test('그림 파일을 누르면 글자 비교 대신 그 파일을 그대로 연다(0.12.0까지는 "cannot open" 오류)', async () => {
+  const png = path.join(project, 'shot.png');
+  fs.writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]));
+  fs.appendFileSync(fileA, [
+    rec.toolUse(project, Date.now() - 4000, 't_png', 'Bash', { command: `cp /tmp/a.png ${png}`, description: 'Copy a picture' }),
+    rec.toolResult(Date.now() - 3000, 't_png', rec.bashResult({})),
+  ].map((r) => JSON.stringify(r)).join('\n') + '\n');
+  await stub.commands.get('claudeSessionChanges.refresh')();
+  const el = await waitFor(() => fileOf('shot.png'), '그림 파일 줄');
+  for (const cmd of ['claudeSessionChanges.openFileDiff', 'claudeSessionChanges.openFile']) {
+    stub.calls.length = 0;
+    await stub.commands.get(cmd)(el);
+    const call = stub.calls.find((c) => c[0] === 'vscode.open');
+    assert.ok(call && call[1].path === png, cmd + ': 파일을 그대로 연다');
+    assert.ok(!stub.calls.some((c) => c[0] === 'vscode.diff' || c[0] === 'show'), cmd + ': 글자 편집기로 열지 않는다');
+  }
+});
+

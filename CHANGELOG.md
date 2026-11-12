@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.1
+
+- Fixed: clicking an image or another non-text file in the Changed files view showed a "cannot open" error. Such files now open in their own viewer.
+
 ## 0.12.0
 
 - **Files changed by scripts are listed before they are committed.** When a session runs a command that Claude Code keeps no file record for (python, node, a formatter …), uncommitted files in that repository that changed while the command ran are added as a guess (`?`). Commands that only read (`ls`, `cat`, `grep`, `git status` …) are left out, and so are changes already explained by another record. Codex commands are handled the same way.

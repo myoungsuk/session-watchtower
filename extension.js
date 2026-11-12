@@ -1252,12 +1252,29 @@ async function diffPair(f) {
   return { left: u.left, right, title: sd.title };
 }
 
+// 그림·압축 파일 같은 글자가 아닌 파일인가(앞부분에 0 바이트가 있으면 그렇다고 본다). 이런 파일은 글자 비교 창으로 열 수 없다
+function looksBinary(p) {
+  let fd;
+  try {
+    fd = fs.openSync(p, 'r');
+    const buf = Buffer.alloc(4096);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    return buf.subarray(0, n).includes(0);
+  } catch { return false; } finally { if (fd !== undefined) try { fs.closeSync(fd); } catch { /* 이미 닫힘 */ } }
+}
+
+// 파일을 그 종류에 맞는 편집기로 연다(그림은 그림 보기로). showTextDocument는 그림에서 "cannot open … binary" 오류를 낸다
+function openPlain(p) {
+  return vscode.commands.executeCommand('vscode.open', vscode.Uri.file(p), { preview: true });
+}
+
 async function openFileDiff(el) {
   const { f } = el;
   const name = path.basename(f.path);
+  if (fs.existsSync(f.path) && looksBinary(f.path)) return openPlain(f.path);
   const pair = await diffPair(f);
   if (!pair) {
-    if (fs.existsSync(f.path)) return vscode.window.showTextDocument(vscode.Uri.file(f.path), { preview: true });
+    if (fs.existsSync(f.path)) return openPlain(f.path);
     return vscode.window.showInformationMessage(L('{0}: nothing to compare (the file no longer exists).', name));
   }
   await vscode.commands.executeCommand('vscode.diff', pair.left, pair.right, `${name} (${pair.title})`, { preview: true });
@@ -1508,7 +1525,7 @@ function activate(context) {
     vscode.commands.registerCommand('claudeSessionChanges.openFileDiff', (el) => el && el.f && openFileDiff(el)),
     vscode.commands.registerCommand('claudeSessionChanges.openChangeDiff', (el) => el && el.c && openChangeDiff(el)),
     vscode.commands.registerCommand('claudeSessionChanges.openFile', (el) => {
-      if (el && el.f && fs.existsSync(el.f.path)) return vscode.window.showTextDocument(vscode.Uri.file(el.f.path), { preview: true });
+      if (el && el.f && fs.existsSync(el.f.path)) return openPlain(el.f.path);
       return vscode.window.showInformationMessage(L('The file is not on disk anymore.'));
     }),
     vscode.commands.registerCommand('claudeSessionChanges.copyPath', (el) => el && el.f && vscode.env.clipboard.writeText(el.f.path)),
