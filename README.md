@@ -32,6 +32,7 @@ It never touches your project files and nothing leaves your machine.
 - [In the file Explorer](#in-the-file-explorer)
 - [Review a whole session](#review-a-whole-session)
 - [Notifications](#notifications)
+- [Open a session from another program](#open-a-session-from-another-program)
 - [Find a session by what you wrote](#find-a-session-by-what-you-wrote)
 - [Which sessions changed this file?](#which-sessions-changed-this-file)
 - [Copy a summary of the changes](#copy-a-summary-of-the-changes)
@@ -72,7 +73,7 @@ The status bar shows the same counts for this folder (working, waiting, just fin
 
 ## The Changed files view
 
-Each session with the files it changed inside the selected time range (24 hours by default; the clock icon in the view title changes it).
+Each session with the files it changed inside the selected time range (24 hours by default; the clock icon in the view title changes it, from 10 minutes to 7 days).
 
 | Mark | Color | Meaning |
 |---|---|---|
@@ -134,6 +135,24 @@ About the overlap warning:
 - It warns after the fact, a few seconds after the change. It cannot stop an edit.
 
 Each notification is shown once per event and only for sessions of the folder open in this window, so several windows do not repeat each other. They also work while the Session Watchtower side bar is hidden: as long as a session is working in this folder, its log is read every few seconds in the background.
+
+## Open a session from another program
+
+A desktop notification or a script can bring a session's conversation forward with a link:
+
+```
+vscode://kms-labs.session-watchtower/open?title=<session name>&folder=<folder name>
+```
+
+| Part | Meaning |
+|---|---|
+| `key` | First 12 hex characters of the SHA-256 of the session ID. Tried first. |
+| `title` | The session name as the list shows it. A name cut short with `…` or `...` matches the start of the name. |
+| `folder`, `root` | Optional folder names. They pick between sessions with the same name. |
+
+- VS Code hands the link to the window that was in front last, so bring the session's window to the front first.
+- When several sessions still match, you choose one from a list.
+- Only sessions already in the list are opened. Nothing in the link is run or typed into the conversation.
 
 ## Find a session by what you wrote
 
@@ -218,7 +237,7 @@ All settings start with `claudeSessionChanges.`
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `lookbackHours` | 24 | How many hours of changes the Changed files view shows. |
+| `lookbackHours` | 24 | How many hours of changes the Changed files view shows. Decimals work (0.5 = 30 minutes); the clock button also offers 10 to 50 minutes. |
 | `showShellGuesses` | true | Show files that are only guesses (`?`). |
 | `hideScratchpadFiles` | true | Hide Claude's throwaway scratchpad files (git worktrees inside it stay visible). |
 | `includeSubagents` | true | Include files changed by subagents under their parent session. |
@@ -270,6 +289,7 @@ Claude Code 세션을 여러 개 돌릴 때 **어느 세션이 일하는 중이�
 - **알림**: 세션이 승인이나 답을 기다릴 때, 두 세션이 같은 파일을 고쳤을 때, 작업 중인 세션이 10분 넘게 조용할 때 알려 줍니다.
 - **찾기**: 내가 세션에 쓴 말로 세션을 찾고, 파일을 우클릭해 그 파일을 고친 세션을 봅니다.
 - **정리**: 보관함, 세션 이름 바꾸기, 변경 요약을 마크다운으로 복사.
+- **바깥에서 열기**: 데스크톱 알림 같은 다른 프로그램이 `vscode://kms-labs.session-watchtower/open?title=…` 주소로 그 세션의 대화를 열 수 있습니다.
 - **Codex** 세션도 함께 나옵니다.
 
 프로젝트 파일은 건드리지 않고, 기록은 이 컴퓨터 밖으로 나가지 않습니다. 세션 이름을 바꿀 때만 그 세션의 대화 기록 끝에 제목 한 줄을 덧붙입니다(Claude Code가 하는 방식과 같습니다).

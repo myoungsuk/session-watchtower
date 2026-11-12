@@ -4,6 +4,7 @@ const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const { Worker } = require('worker_threads');
 const { execFile } = require('child_process');
 const { parsePatch, LIVE_MS, codexPatchText } = require('./scanner');
@@ -40,10 +41,17 @@ let ctx = null;
 const diffRegistry = new Map();
 let diffSeq = 0;
 
+// 보는 기간(시간 단위, 소수 허용: 10분 = 0.1667). 6분보다 짧게는 받지 않는다
+const MIN_LOOKBACK_H = 0.1;
+// 보는 기간을 글자로: 짧게("24h"·"10 min")와 길게("24 hours"·"10 minutes")
+const roundH = (h) => Math.round(h * 100) / 100;
+function spanShort(h) { return h < 1 ? L('{0} min', Math.round(h * 60)) : L('{0}h', roundH(h)); }
+function spanLong(h) { return h < 1 ? L('{0} minutes', Math.round(h * 60)) : L('{0} hours', roundH(h)); }
+
 function cfg() {
   const c = vscode.workspace.getConfiguration(CFG);
   return {
-    lookbackHours: Math.max(1, Number(c.get('lookbackHours', 24)) || 24),
+    lookbackHours: Math.max(MIN_LOOKBACK_H, Number(c.get('lookbackHours', 24)) || 24),
     showShellGuesses: c.get('showShellGuesses', true) !== false,
     hideScratchpadFiles: c.get('hideScratchpadFiles', true) !== false,
     includeSubagents: c.get('includeSubagents', true) !== false,
@@ -216,7 +224,7 @@ function sessionTooltip(s, st) {
     s.title,
     L('Status: {0}', st.label) + (s.statusSince ? ' ' + L('(since {0})', fmtTime(s.statusSince, true)) : ''),
     now ? L('Now: {0}', now) : null,
-    s.pinned ? L("Loaded on request: changes from the last {0}h of this session's work.", cfg().lookbackHours) : null,
+    s.pinned ? L("Loaded on request: changes from the last {0} of this session's work.", spanShort(cfg().lookbackHours)) : null,
     s.address ? L('Address: {0}', s.address) : null,
     s.cwd ? L('Folder: {0}', s.cwd) : null,
     L('Last log: {0}', fmtTime(s.lastActivity, true)),
@@ -302,7 +310,7 @@ function rebuild() {
   out.sort((a, b) => Number(inWorkspace(b)) - Number(inWorkspace(a)));
   model = out;
   if (treeView) {
-    treeView.description = L('Last {0}h', o.lookbackHours) + (aliveOnly ? ' · ' + L('open only') : '');
+    treeView.description = L('Last {0}', spanShort(o.lookbackHours)) + (aliveOnly ? ' · ' + L('open only') : '');
     treeView.message = stillReading ? L('Reading more logs…') : undefined;
   }
   rebuildSessions();
@@ -526,17 +534,17 @@ function summaryMarkdown(list, heading) {
 async function copySummary(arg) {
   const sid = sidOf(arg);
   const s = model.find((x) => x.sid === sid);
-  if (!s || !s.files.length) { vscode.window.showInformationMessage(L('This session has no changed files in the last {0}h.', cfg().lookbackHours)); return ''; }
-  const md = summaryMarkdown([s], L('Session changes · last {0}h', cfg().lookbackHours));
+  if (!s || !s.files.length) { vscode.window.showInformationMessage(L('This session has no changed files in the last {0}.', spanShort(cfg().lookbackHours))); return ''; }
+  const md = summaryMarkdown([s], L('Session changes · last {0}', spanShort(cfg().lookbackHours)));
   await vscode.env.clipboard.writeText(md);
   vscode.window.showInformationMessage(L('Copied a summary of {0} file(s) as Markdown.', s.files.length));
   return md;
 }
 async function copyFolderSummary() {
   const list = model.filter((s) => inWorkspace(s) && s.files.length);
-  if (!list.length) { vscode.window.showInformationMessage(L('No files changed in the last {0}h', cfg().lookbackHours)); return ''; }
+  if (!list.length) { vscode.window.showInformationMessage(L('No files changed in the last {0}', spanShort(cfg().lookbackHours))); return ''; }
   const folder = (vscode.workspace.workspaceFolders || [])[0];
-  const md = summaryMarkdown(list, [L('Session changes · last {0}h', cfg().lookbackHours), folder ? path.basename(folder.uri.fsPath) : ''].filter(Boolean).join(' · '));
+  const md = summaryMarkdown(list, [L('Session changes · last {0}', spanShort(cfg().lookbackHours)), folder ? path.basename(folder.uri.fsPath) : ''].filter(Boolean).join(' · '));
   await vscode.env.clipboard.writeText(md);
   vscode.window.showInformationMessage(L('Copied a summary of {0} session(s) as Markdown.', list.length));
   return md;
@@ -549,14 +557,14 @@ async function sessionsForFile(uri) {
   if (!p) return undefined;
   const hits = [];
   for (const s of model) { const f = s.files.find((x) => x.path === p); if (f) hits.push({ s, f }); }
-  if (!hits.length) return vscode.window.showInformationMessage(L('No session changed {0} in the last {1}h.', path.basename(p), cfg().lookbackHours));
+  if (!hits.length) return vscode.window.showInformationMessage(L('No session changed {0} in the last {1}.', path.basename(p), spanShort(cfg().lookbackHours)));
   hits.sort((a, b) => b.f.lastTs - a.f.lastTs);
   const items = hits.map((h) => ({
     label: String(h.s.title).replace(/\s+/g, ' '),
     description: [h.s.agent === 'codex' ? 'Codex' : '', counts(h.f.add, h.f.del), fmtAgo(h.f.lastTs), [...h.f.kinds].map((k) => kindText(k)).join(', ')].filter(Boolean).join(' · '),
     h,
   }));
-  const pick = await vscode.window.showQuickPick(items, { placeHolder: L('Sessions that changed {0} (last {1}h). Pick one to see its change.', path.basename(p), cfg().lookbackHours) });
+  const pick = await vscode.window.showQuickPick(items, { placeHolder: L('Sessions that changed {0} (last {1}). Pick one to see its change.', path.basename(p), spanShort(cfg().lookbackHours)) });
   if (pick) await openFileDiff(pick.h);
   return hits.length;
 }
@@ -764,7 +772,7 @@ class Provider {
     if (!el) {
       if (lastError && !loaded) return [{ t: 'info', label: L('Read error'), detail: lastError }];
       if (!loaded) return [{ t: 'info', label: L('Reading conversation logs…') }];
-      if (!model.length) return [{ t: 'info', label: aliveOnly ? L('No open sessions') : L('No files changed in the last {0}h', cfg().lookbackHours) }];
+      if (!model.length) return [{ t: 'info', label: aliveOnly ? L('No open sessions') : L('No files changed in the last {0}', spanShort(cfg().lookbackHours)) }];
       const { mine, groups } = splitByFolder(model);
       const out = mine.map((s) => ({ t: 'session', s }));
       if (!mine.length) out.push({ t: 'info', label: L('No sessions in this folder') });
@@ -922,10 +930,10 @@ function sessionsPayload() {
     lgA: L('Created in this session'), lgM: L('Modified in this session'), lgD: L('Not on disk anymore (deleted)'), lgQ: L('Guessed from shell commands (not certain)'),
     lgNow: L('What it is doing now'), lgDiff: L('Lines added / removed within the time range of the Changed files view'),
     // 변경 규모는 변경 파일 창의 "보는 기간" 안에서, 고칠 때마다 더한 합계(같은 줄을 여러 번 고치면 여러 번 셈)
-    diffTip: L('Last {0} hours: {1} lines added, {2} removed (each edit counted)', cfg().lookbackHours, '{1}', '{2}'),
+    diffTip: L('Last {0}: {1} lines added, {2} removed (each edit counted)', spanLong(cfg().lookbackHours), '{1}', '{2}'),
   };
   if (!loaded) return { message: lastError ? L('Read error') : L('Reading sessions…'), detail: lastError || '', strings };
-  if (!sessionsModel.length && !archivedModel.length) return { message: L('No sessions in the last {0}h', cfg().lookbackHours), strings };
+  if (!sessionsModel.length && !archivedModel.length) return { message: L('No sessions in the last {0}', spanShort(cfg().lookbackHours)), strings };
   const { mine, groups } = splitByFolder(sessionsModel);
   return {
     strings,
@@ -1314,6 +1322,73 @@ async function newClaudeSession() {
 }
 
 // 사용자가 "변경 파일"을 눌러 불러온 세션: 세션 → 읽기 시작 시각. 보는 기간 밖이어도 그 세션의 마지막 작업 구간을 읽는다(이 창을 다시 불러올 때까지)
+// ---------- 바깥에서 세션 열기(주소) ----------
+// 데스크톱 알림 배너 등이 여는 주소: vscode://kms-labs.session-watchtower/open?key=…&title=…&folder=…&root=…
+// key: 세션 ID sha256 앞 12자(알림 훅이 보내는 값), title: 세션 이름(훅처럼 40자에서 자르고 "…"),
+// folder/root: 작업 폴더·프로젝트 폴더 이름. key가 맞는 세션을 먼저 찾고, 없으면 이름으로 찾는다.
+// 주소는 마지막으로 앞에 있던 VS Code 창이 받으므로, 보내는 쪽이 그 세션의 창을 먼저 앞으로 가져온다.
+// 이미 목록에 있는 세션만 열고, 주소로 받은 글자를 명령이나 프롬프트로 넘기지 않는다.
+const sessionKeyOf = (sid) => crypto.createHash('sha256').update(String(sid)).digest('hex').slice(0, 12);
+const titleText = (t) => Array.from(String(t || '').replace(/\s+/g, ' ').trim()).filter((ch) => !/\p{C}/u.test(ch)).join('');
+
+function sameTitle(title, wanted) {
+  const a = titleText(title);
+  const b = titleText(wanted);
+  if (!b) return false;
+  if (a === b) return true;
+  const cut = b.endsWith('…') ? b.slice(0, -1) : b.endsWith('...') ? b.slice(0, -3) : ''; // 알림 쪽에서 잘린 이름
+  return cut.trim().length > 0 && a.startsWith(cut);
+}
+
+function inFolder(s, folder, root) {
+  const parts = String(s.cwd || '').split(/[\\/]/);
+  return (!!folder && parts[parts.length - 1] === folder) || (!!root && parts.includes(root));
+}
+
+// 기록을 (다시) 읽게 하고 다 읽을 때까지 기다린다. 주소로 막 켜진 창은 아직 아무것도 읽지 않았다.
+async function sessionsReady(again, ms) {
+  if (again || !loaded) requestScan(false);
+  const until = Date.now() + ms;
+  while ((!loaded || stillReading || inflight) && Date.now() < until) await new Promise((r) => setTimeout(r, 200));
+}
+
+async function findSessions(want) {
+  const match = () => {
+    const list = raw.filter((s) => s && s.sid);
+    let hits = want.key ? list.filter((s) => !String(s.sid).startsWith('codex:') && sessionKeyOf(s.sid) === want.key) : [];
+    if (!hits.length && want.title) hits = list.filter((s) => sameTitle(s.title, want.title));
+    if (hits.length > 1 && (want.folder || want.root)) {
+      const near = hits.filter((s) => inFolder(s, want.folder, want.root));
+      if (near.length) hits = near;
+    }
+    return hits;
+  };
+  await sessionsReady(false, 15000);
+  let hits = match();
+  if (!hits.length) { await sessionsReady(true, 15000); hits = match(); } // 마지막 읽기 뒤에 생긴 세션일 수 있다
+  return hits;
+}
+
+async function openFromUri(uri) {
+  if (!uri || uri.path !== '/open') return undefined;
+  const q = new URLSearchParams(uri.query || '');
+  const text = (k) => String(q.get(k) || '').slice(0, 200);
+  const key = String(q.get('key') || '');
+  const want = { key: /^[0-9a-f]{12}$/.test(key) ? key : '', title: text('title'), folder: text('folder'), root: text('root') };
+  if (!want.key && !want.title) return undefined;
+  const hits = await findSessions(want);
+  if (!hits.length) return vscode.window.showInformationMessage(L('The session "{0}" is not in the list of this window.', want.title || want.key));
+  if (hits.length === 1) return openClaudeSession(hits[0].sid);
+  hits.sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
+  const items = hits.map((s) => ({
+    label: s.title || s.sid.slice(0, 8),
+    description: [s.cwd ? path.basename(s.cwd) : '', s.lastActivity ? fmtAgo(s.lastActivity) : ''].filter(Boolean).join(' · '),
+    sid: s.sid,
+  }));
+  const choice = await vscode.window.showQuickPick(items, { placeHolder: L('Several sessions have this name. Which one?') });
+  return choice ? openClaudeSession(choice.sid) : undefined;
+}
+
 const pinned = new Map();
 let pendingReveal = null;
 
@@ -1332,8 +1407,8 @@ async function revealSession(arg, afterLoad) {
     }
   }
   if (!s || !treeView || (afterLoad && !hasFiles)) {
-    if (afterLoad) return vscode.window.showInformationMessage(L("No recorded file changes in the last {0}h of this session's work.", cfg().lookbackHours));
-    return vscode.window.showInformationMessage(aliveOnly ? L('This session is hidden by the "open only" filter.') : L('This session has no changed files in the last {0}h.', cfg().lookbackHours));
+    if (afterLoad) return vscode.window.showInformationMessage(L("No recorded file changes in the last {0} of this session's work.", spanShort(cfg().lookbackHours)));
+    return vscode.window.showInformationMessage(aliveOnly ? L('This session is hidden by the "open only" filter.') : L('This session has no changed files in the last {0}.', spanShort(cfg().lookbackHours)));
   }
   try {
     await treeView.reveal({ t: 'session', s }, { select: true, focus: false, expand: true });
@@ -1574,7 +1649,7 @@ async function openSessionChanges(arg) {
   const sid = sidOf(arg);
   const s = model.find((x) => x.sid === sid);
   if (!s || !s.files.length) {
-    return vscode.window.showInformationMessage(L('This session has no changed files in the last {0}h.', cfg().lookbackHours));
+    return vscode.window.showInformationMessage(L('This session has no changed files in the last {0}.', spanShort(cfg().lookbackHours)));
   }
   await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: L('Preparing the changes of "{0}"…', s.title) }, async () => {
     const pairs = await mapLimit(s.files, 6, (f) => diffPair(f, s));
@@ -1896,7 +1971,13 @@ async function setAliveOnly(v) {
 
 async function pickWindow() {
   const cur = cfg().lookbackHours;
-  const items = [1, 3, 6, 12, 24, 48, 72, 168].map((h) => ({ label: h < 24 ? L('{0} hours', h) : L('{0} days', h / 24), description: h === cur ? L('current') : '', h }));
+  // 10 ~ 50분은 시간의 소수로 저장한다(10분 = 0.1667). 고른 값과 지금 값은 분 단위로 비교한다
+  const mins = [10, 20, 30, 40, 50].map((m) => Math.round((m / 60) * 10000) / 10000);
+  const items = mins.concat([1, 3, 6, 12, 24, 48, 72, 168]).map((h) => ({
+    label: h < 1 ? spanLong(h) : h < 24 ? L('{0} hours', h) : L('{0} days', h / 24),
+    description: Math.round(h * 60) === Math.round(cur * 60) ? L('current') : '',
+    h,
+  }));
   const pick = await vscode.window.showQuickPick(items, { placeHolder: L('How far back should changes be shown?') });
   if (!pick) return;
   await vscode.workspace.getConfiguration(CFG).update('lookbackHours', pick.h, vscode.ConfigurationTarget.Global);
@@ -1919,6 +2000,7 @@ function activate(context) {
     vscode.commands.registerCommand('claudeSessionChanges.archiveSession', (arg) => setArchived(arg, true)),
     vscode.commands.registerCommand('claudeSessionChanges.revealSession', (arg) => revealSession(arg)),
     vscode.commands.registerCommand('claudeSessionChanges.openClaudeSession', (arg) => openClaudeSession(arg)),
+    vscode.window.registerUriHandler({ handleUri: (uri) => openFromUri(uri) }),
     vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, contentProvider),
     vscode.window.registerFileDecorationProvider(decorations),
     vscode.window.registerFileDecorationProvider(explorerMarks),
@@ -1973,4 +2055,4 @@ function deactivate() {
   });
 }
 
-module.exports = { activate, deactivate, _test: { hunksToSides, applyEdit, displayDir, fmtTime, sidesForCodex, setCodexCli: (v) => { codexCli = v; hasCodexCli.fixed = true; } } };
+module.exports = { activate, deactivate, _test: { hunksToSides, applyEdit, displayDir, fmtTime, sidesForCodex, sameTitle, sessionKeyOf, setCodexCli: (v) => { codexCli = v; hasCodexCli.fixed = true; } } };

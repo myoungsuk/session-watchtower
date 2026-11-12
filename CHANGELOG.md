@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.15.0
+
+- **Shorter time ranges.** The clock button of the Changed files view now also offers 10, 20, 30, 40 and 50 minutes, and `lookbackHours` accepts decimals (0.5 = 30 minutes). Short ranges show as "Last 10 min".
+- **Open a session from another program.** A link such as `vscode://kms-labs.session-watchtower/open?title=<session name>&folder=<folder>` opens that session's conversation in the VS Code window that receives it, for example from a desktop notification. It finds the session by a hash of its ID (`key`) or by its name; a name cut short with `…` matches the start. When several sessions have the name, you pick one. Only sessions already in the list can be opened, and nothing in the link is run or typed.
+
 ## 0.14.0
 
 - **Marks in the file Explorer.** The file a session is editing right now gets a turning badge and a green name in VS Code's own Explorer and on its editor tab; the folders above it get a green dot, and an edit that waits for your approval gets a blue `!`. VS Code does not let extensions animate the file icon itself, so the badge is what turns (a still dot with *Reduce Motion* on). Setting `explorerMarks`, on by default.

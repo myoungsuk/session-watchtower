@@ -16,7 +16,7 @@
   "command.openClaudeSession": "Open conversation",
   "command.openSessionChanges": "Review all changes of this session",
   "command.archiveSession": "Archive session",
-  "config.lookbackHours": "How many hours of changes to show. Running sessions are always listed.",
+  "config.lookbackHours": "How many hours of changes to show (decimals allowed: 0.5 = 30 minutes; the clock button also offers 10 to 50 minutes). Running sessions are always listed.",
   "config.showShellGuesses": "Also show files guessed from shell commands (>, >>, tee, sed -i, cp, mv …), marked with a grey ?.",
   "config.hideScratchpadFiles": "Hide Claude's throwaway scratchpad files under /tmp/claude-*. Git worktrees inside the scratchpad stay visible.",
   "config.includeSubagents": "Show files changed by subagents under their parent session.",

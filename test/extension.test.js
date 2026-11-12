@@ -174,6 +174,33 @@ test('세션을 누르면 Claude 대화 열기, 다른 폴더 세션은 안내',
   await waitFor(() => stub.calls.find((c) => c[0] === 'claude-vscode.editor.open' && c.length === 1), '새 세션');
 });
 
+test('바깥 주소(알림 배너)로 세션 열기: 해시가 이름보다 먼저, 잘린 이름도 찾고, 없으면 안내', async () => {
+  const h = stub.state.uriHandler;
+  assert.ok(h, '주소 처리기가 등록되어야 함');
+  const opened = () => stub.calls.filter((c) => c[0] === 'claude-vscode.editor.open').map((c) => c[1]);
+  const keyA = require('crypto').createHash('sha256').update(SID_A).digest('hex').slice(0, 12);
+  assert.strictEqual(ext._test.sessionKeyOf(SID_A), keyA, '알림 훅과 같은 해시');
+  stub.calls.length = 0;
+  await h.handleUri({ path: '/open', query: 'key=' + keyA + '&title=' + encodeURIComponent('Wrong name') });
+  assert.deepStrictEqual(opened(), [SID_A], '해시로 찾기');
+  stub.calls.length = 0;
+  await h.handleUri({ path: '/open', query: 'title=' + encodeURIComponent('Refactor auth') + '&folder=' + encodeURIComponent(path.basename(project)) });
+  assert.deepStrictEqual(opened(), [SID_A], '이름으로 찾기');
+  stub.calls.length = 0;
+  await h.handleUri({ path: '/open', query: 'title=' + encodeURIComponent('Refactor a…') });
+  assert.deepStrictEqual(opened(), [SID_A], '알림에서 잘린 이름');
+  stub.calls.length = 0;
+  await h.handleUri({ path: '/open', query: 'title=' + encodeURIComponent('No such session') });
+  assert.deepStrictEqual(opened(), []);
+  assert.ok(stub.calls.some((c) => c[0] === 'info' && /No such session/.test(c[1])), '없으면 안내');
+  stub.calls.length = 0;
+  await h.handleUri({ path: '/open', query: 'key=xyz' });
+  await h.handleUri({ path: '/other', query: 'title=' + encodeURIComponent('Refactor auth') });
+  assert.deepStrictEqual(stub.calls, [], '알 수 없는 주소와 잘못된 해시는 아무것도 하지 않음');
+  assert.ok(ext._test.sameTitle('a  b\u0007', 'a b') && !ext._test.sameTitle('abc', '') && !ext._test.sameTitle('abc', 'abd'));
+  assert.ok(ext._test.sameTitle('Refactor auth', 'Refactor...') && !ext._test.sameTitle('Refactor auth', '…'), '점 세 개로 잘린 이름도, 빈 앞부분은 아님');
+});
+
 test('여러 덩어리로 나뉜 셸 변경도 비교 화면이 열린다(0.6.0 ~ 0.7.1 버그)', async () => {
   const f = fileOf('README.md');
   const change = provider().getChildren(f).find((e) => e.c.kind === 'bash');

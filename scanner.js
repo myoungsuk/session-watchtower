@@ -1635,7 +1635,7 @@ function createModel() {
   function scan(opts) {
     ensureCache(opts);
     const t0 = Date.now();
-    const lookMs = Math.max(1, Number(opts.lookbackHours) || 24) * 3600e3;
+    const lookMs = Math.max(0.1, Number(opts.lookbackHours) || 24) * 3600e3; // 소수 허용(10분 = 0.1667)
     const since = t0 - lookMs;
     const registry = readRegistry();
     // 세션 목록용: 이 폴더(workspaceDirs)의 세션은 listDays일 전까지 보여 준다(Claude 목록의 자동 보관 기준과 같은 14일이 기본)

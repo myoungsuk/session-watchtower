@@ -69,6 +69,7 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
         return qp;
       },
       withProgress: async (o, fn) => fn({ report() {} }),
+      registerUriHandler: (h) => { state.uriHandler = h; return disposable(); },
     },
     workspace: {
       workspaceFolders: workspace ? [{ uri: mkUri(workspaceScheme, workspaceAuthority, workspace) }] : [],

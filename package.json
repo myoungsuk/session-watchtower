@@ -2,7 +2,7 @@
   "name": "session-watchtower",
   "displayName": "Session Watchtower for Claude Code",
   "description": "%description%",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "scripts": {
     "test": "node --test test/*.test.js",
     "shot": "bash tools/screenshot/run.sh"
@@ -23,7 +23,8 @@
   "activationEvents": [
     "onView:claudeSessionChanges.sessions",
     "onView:claudeSessionChanges.tree",
-    "onStartupFinished"
+    "onStartupFinished",
+    "onUri"
   ],
   "contributes": {
     "viewsContainers": {
@@ -341,7 +342,7 @@
         "claudeSessionChanges.lookbackHours": {
           "type": "number",
           "default": 24,
-          "minimum": 1,
+          "minimum": 0.1,
           "maximum": 720,
           "description": "%config.lookbackHours%"
         },
