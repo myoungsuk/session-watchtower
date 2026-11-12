@@ -635,7 +635,7 @@ function sessionsPayload() {
   const strings = {
     showChanges: L('Show changed files'), review: L('Review all changes'), newSession: L('New session'), active: L('Open'),
     // "열린 세션" = 지금 프로세스가 떠 있는 세션(작업 중·기다림·쉼). 작업 중인 것만 세는 숫자가 아니다
-    activeTip: L('Show only sessions that are open right now (working, waiting or idle). This folder {0}, other folders {1}.'),
+    activeTip: L('Show only sessions that are open right now (working, waiting or idle). The number counts this folder: {0}. Other folders: {1}.'),
     search: L('Search sessions'), noMatch: L('No matching sessions'), legend: L('What the colors mean'),
     archive: L('Archive'), unarchive: L('Restore from archive'), archivedTitle: L('Archived'), archiveRule: L('Choose when sessions move to Archived'),
     otherFolders: L('Other folders'), worktreeTip: L('Runs in a git worktree: {0}'),
@@ -658,6 +658,9 @@ function sessionsPayload() {
       : followsClaudeArchive()
         ? L('Sessions with no conversation for {0} day(s) (the Claude Code setting "Archive Inactive Sessions") and sessions you archived here.', autoArchiveDays())
         : L('Sessions with no conversation for {0} day(s) and sessions you archived here.', autoArchiveDays()),
+    // 단추의 숫자는 이 폴더에서 열려 있는 세션 수(머리말의 작업·멈춤·쉼 합과 같다). 다른 폴더는 설명에만 적는다
+    openHere: mine.filter((s) => s.alive).length,
+    openElsewhere: groups.reduce((n, [, items]) => n + items.filter((s) => s.alive).length, 0),
     mine: mine.map(sessionRow),
     noneHere: mine.length ? '' : L('No sessions in this folder'),
     groups: groups.map(([key, items]) => ({
@@ -899,11 +902,8 @@ function sessionsHtml(webview) {
     btnSearch.setAttribute('aria-label', strings.search || '');
     q.placeholder = strings.search || '';
     if (p.message) { document.getElementById('lblActive').textContent = strings.active || ''; root.innerHTML = '<div class="msg" title="' + esc(p.detail) + '">' + esc(p.message) + '</div>'; return; }
-    const all = (p.mine || []).concat(...(p.groups || []).map((g) => g.rows));
-    const openMine = (p.mine || []).filter((r) => r.alive).length;
-    const openAll = all.filter((r) => r.alive).length;
-    document.getElementById('lblActive').textContent = (strings.active || '') + ' · ' + openAll;
-    btnActive.title = String(strings.activeTip || '').replace('{0}', openMine).replace('{1}', openAll - openMine);
+    document.getElementById('lblActive').textContent = (strings.active || '') + ' · ' + (p.openHere || 0);
+    btnActive.title = String(strings.activeTip || '').replace('{0}', p.openHere || 0).replace('{1}', p.openElsewhere || 0);
     btnActive.classList.toggle('on', saved.active);
     btnActive.setAttribute('aria-pressed', String(saved.active));
     const needle = saved.q.trim().toLowerCase();

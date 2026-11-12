@@ -137,5 +137,5 @@
   "No open sessions": "열린 세션이 없습니다",
   "This session is hidden by the \"open only\" filter.": "이 세션은 지금 필터(열린 세션만)에 걸려 숨겨져 있습니다.",
   "Open": "열린 세션",
-  "Show only sessions that are open right now (working, waiting or idle). This folder {0}, other folders {1}.": "지금 열려 있는 세션만 봅니다(작업 중·기다림·쉼 모두 포함). 이 폴더 {0}개, 다른 폴더 {1}개."
+  "Show only sessions that are open right now (working, waiting or idle). The number counts this folder: {0}. Other folders: {1}.": "지금 열려 있는 세션만 봅니다(작업 중·기다림·쉼 모두 포함). 숫자는 이 폴더 기준: {0}개. 다른 폴더: {1}개."
 }

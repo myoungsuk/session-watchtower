@@ -141,6 +141,7 @@ test('세션 창: 상태·지금 하는 일·변경 규모·다른 폴더 묶음
   const g = p.groups.find((x) => x.key === 'other-app');
   assert.ok(g && g.rows[0].canOpen === false && g.rows[0].state === 'idle');
   assert.match(web.view.description, /Working 1 · Waiting 0 · Idle 1/, '머리말은 이 폴더 세션만 센다');
+  assert.deepStrictEqual([web.lastPayload().openHere, web.lastPayload().openElsewhere], [2, 1], '열린 세션 단추의 숫자도 이 폴더만(다른 폴더는 따로)');
 });
 
 test('한 줄 보기 설정을 끄면 둘째 줄을 그리지 않는다', async () => {

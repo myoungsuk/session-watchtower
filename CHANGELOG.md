@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.5
+
+- The number on the **Open** button now counts this folder only, like the header does; open sessions in other folders are mentioned in the tooltip.
+
 ## 0.11.4
 
 - The filter button is now called **Open** instead of *Active*: its number counts sessions that are open right now (working, waiting or idle, in any folder), which was easy to misread as "working". Its tooltip shows how many are in this folder and in other folders.
