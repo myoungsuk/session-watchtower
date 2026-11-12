@@ -13,7 +13,7 @@
   "command.copyPath": "Copy path",
   "command.copySessionId": "Copy session ID",
   "command.revealSession": "Show changed files",
-  "command.openClaudeSession": "Open Claude conversation",
+  "command.openClaudeSession": "Open conversation",
   "command.openSessionChanges": "Review all changes of this session",
   "command.archiveSession": "Archive session",
   "config.lookbackHours": "How many hours of changes to show. Running sessions are always listed.",

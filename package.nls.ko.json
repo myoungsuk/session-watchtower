@@ -13,7 +13,7 @@
   "command.copyPath": "경로 복사",
   "command.copySessionId": "세션 ID 복사",
   "command.revealSession": "변경 파일 보기",
-  "command.openClaudeSession": "Claude 대화 열기",
+  "command.openClaudeSession": "대화 열기",
   "command.openSessionChanges": "이 세션의 변경 전부 보기",
   "command.archiveSession": "세션 보관",
   "config.lookbackHours": "몇 시간 안의 변경을 보여 줄지. 진행 중인 세션은 이보다 오래돼도 목록에 나옵니다.",

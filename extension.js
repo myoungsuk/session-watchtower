@@ -614,9 +614,9 @@ const provider = new Provider();
 function sessionRow(s) {
   const st = stateOf(s);
   const codex = s.agent === 'codex';
-  const canOpen = !codex && inWorkspace(s);
+  const canOpen = codex ? UUID_RE.test(codexId(s.sid)) : inWorkspace(s);
   const hint = codex
-    ? L('Codex session: open it from Codex · Buttons on the right: changed files / review all changes')
+    ? L('Codex session · Click: continue it in a terminal (codex resume) · Buttons on the right: changed files / review all changes')
     : canOpen
       ? L('Click: open the Claude conversation · Buttons on the right: changed files / review all changes')
       : L('Session from another folder ({0}): open it from a VS Code window with that folder · Buttons on the right: changed files / review all changes', s.project);
@@ -971,15 +971,36 @@ function inWorkspace(s) {
   return folders.some((f) => { const r = norm(f.uri.fsPath); return cwd === r || cwd.startsWith(r + path.sep); });
 }
 
+// Codex 대화 열기. Codex 확장에는 대화를 ID로 여는 공개 명령이 없어서, 터미널에서 Codex CLI로 이어 연다(codex resume <id>).
+// 터미널은 그 세션의 작업 폴더에서 열리므로 다른 폴더 세션도 이 창에서 열 수 있다.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const codexId = (sid) => String(sid || '').replace(/^codex:/, '');
+let codexCli = null; // true로 확인된 뒤에만 기억한다(나중에 설치할 수 있으므로 "없음"은 기억하지 않음)
+function hasCodexCli() {
+  if (codexCli) return Promise.resolve(true);
+  if (codexCli === false && hasCodexCli.fixed) return Promise.resolve(false); // 시험에서 고정한 값
+  return new Promise((resolve) => {
+    execFile('codex', ['--version'], { timeout: 5000 }, (err) => { codexCli = !err; resolve(!err); });
+  });
+}
+async function openCodexSession(s) {
+  const id = codexId(s.sid);
+  // 명령 줄에 넣는 값이라 UUID 모양일 때만 쓴다
+  if (!UUID_RE.test(id)) return vscode.window.showInformationMessage(L('"{0}" is a Codex session. Open it from Codex.', s.title));
+  if (!(await hasCodexCli())) return vscode.window.showInformationMessage(L('The Codex CLI ("codex") was not found on this machine, so this Codex session cannot be opened from here.'));
+  const cwd = s.cwd && fs.existsSync(s.cwd) ? s.cwd : undefined;
+  const term = vscode.window.createTerminal({ name: 'Codex · ' + String(s.title || id).replace(/\s+/g, ' ').slice(0, 24), cwd });
+  term.show();
+  term.sendText('codex resume ' + id, true);
+}
+
 // Claude Code 세션 목록에서 행을 누를 때와 같은 명령(claude-vscode.editor.open)을 부른다.
 // 인자 순서(세션 ID, 첫 프롬프트, 열 위치, 묶음 ID, 전체 편집기, 옵션)는 Claude Code 2.1.322 기준이라 판이 바뀌면 달라질 수 있다.
 async function openClaudeSession(arg) {
   const sid = sidOf(arg);
   if (!sid) return;
   const s = raw.find((x) => x.sid === sid) || { sid, title: sid.slice(0, 8) };
-  if (s.agent === 'codex' || sid.startsWith('codex:')) {
-    return vscode.window.showInformationMessage(L('"{0}" is a Codex session. Open it from Codex.', s.title));
-  }
+  if (s.agent === 'codex' || sid.startsWith('codex:')) return openCodexSession(s);
   if (!inWorkspace(s)) {
     return vscode.window.showInformationMessage(L('"{0}" is a session from another folder ({1}). Open it from the Claude list in a VS Code window with that folder open.', s.title, s.project || s.cwd));
   }
@@ -1473,4 +1494,4 @@ function deactivate() {
   });
 }
 
-module.exports = { activate, deactivate, _test: { hunksToSides, applyEdit, displayDir, fmtTime, sidesForCodex } };
+module.exports = { activate, deactivate, _test: { hunksToSides, applyEdit, displayDir, fmtTime, sidesForCodex, setCodexCli: (v) => { codexCli = v; hasCodexCli.fixed = true; } } };

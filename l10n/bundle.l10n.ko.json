@@ -87,7 +87,6 @@
   "Review all changes": "변경 전부 보기",
   "Click to open the Sessions view.": "누르면 세션 상태 창이 열립니다.",
   "\"{0}\" is a Codex session. Open it from Codex.": "\"{0}\"은(는) Codex 세션입니다. Codex에서 열어 주세요.",
-  "Codex session: open it from Codex · Buttons on the right: changed files / review all changes": "Codex 세션: Codex에서 열 수 있습니다 · 오른쪽 단추: 변경 파일 / 변경 전부 보기",
   "Click: open the Claude conversation · Buttons on the right: changed files / review all changes": "누르면: Claude 대화 창 열기 · 오른쪽 단추: 변경 파일 / 변경 전부 보기",
   "Session from another folder ({0}): open it from a VS Code window with that folder · Buttons on the right: changed files / review all changes": "다른 폴더({0}) 세션: 그 폴더를 연 VS Code 창에서 열 수 있습니다 · 오른쪽 단추: 변경 파일 / 변경 전부 보기",
   "Running: {0}": "실행 중: {0}",
@@ -137,5 +136,7 @@
   "No open sessions": "열린 세션이 없습니다",
   "This session is hidden by the \"open only\" filter.": "이 세션은 지금 필터(열린 세션만)에 걸려 숨겨져 있습니다.",
   "Open": "열린 세션",
-  "Show only sessions that are open right now (working, waiting or idle). The number counts this folder: {0}. Other folders: {1}.": "지금 열려 있는 세션만 봅니다(작업 중·기다림·쉼 모두 포함). 숫자는 이 폴더 기준: {0}개. 다른 폴더: {1}개."
+  "Show only sessions that are open right now (working, waiting or idle). The number counts this folder: {0}. Other folders: {1}.": "지금 열려 있는 세션만 봅니다(작업 중·기다림·쉼 모두 포함). 숫자는 이 폴더 기준: {0}개. 다른 폴더: {1}개.",
+  "Codex session · Click: continue it in a terminal (codex resume) · Buttons on the right: changed files / review all changes": "Codex 세션 · 누르면 터미널에서 이어 엽니다(codex resume) · 오른쪽 단추: 변경 파일 / 변경 전부 보기",
+  "The Codex CLI (\"codex\") was not found on this machine, so this Codex session cannot be opened from here.": "이 컴퓨터에서 Codex CLI(\"codex\")를 찾지 못해 여기서는 이 Codex 세션을 열 수 없습니다."
 }

@@ -393,3 +393,39 @@ test('목록과 보관함: 이 폴더의 꺼진 세션도 보이고, 오래 대�
   await waitFor(() => !web.lastPayload().mine.some((r) => r.sid === SID_2D), '목록 일수 0');
 });
 
+test('Codex 세션을 누르면 그 세션 폴더에서 터미널로 이어 연다(codex resume)', async () => {
+  const CX = 'c0de0000-7777-4777-8777-00000000abcd';
+  fx.codexSession(home, CX, [
+    { timestamp: fx.iso(Date.now() - MIN), type: 'session_meta', payload: { id: CX, session_id: CX, cwd: other, originator: 'codex_vscode', source: 'vscode' } },
+    { timestamp: fx.iso(Date.now() - MIN), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'A codex job elsewhere' }] } },
+  ], Date.now());
+  await stub.commands.get('claudeSessionChanges.refresh')();
+  const rowOf = () => (web.lastPayload().groups || []).flatMap((g) => g.rows).find((r) => r.sid === 'codex:' + CX);
+  const row = await waitFor(rowOf, 'Codex 줄');
+  assert.deepStrictEqual([row.codex, row.canOpen], [true, true], '다른 폴더의 Codex 세션도 터미널로는 열 수 있다');
+  ext._test.setCodexCli(true);
+  stub.calls.length = 0;
+  web.send({ type: 'open', sid: 'codex:' + CX });
+  const call = await waitFor(() => stub.calls.find((c) => c[0] === 'terminal'), '터미널');
+  assert.deepStrictEqual([call[1].opts.cwd, call[1].sent, call[1].shown], [other, ['codex resume ' + CX], true]);
+  assert.ok(!stub.calls.some((c) => c[0] === 'claude-vscode.editor.open'), 'Claude 명령은 부르지 않는다');
+  // 기록 파일 이름이 UUID 모양이 아니면(명령 줄에 넣기 위험한 글자가 들어갈 수 있다) 터미널을 열지 않는다
+  fx.codexSession(home, 'x; touch pwned', [
+    { timestamp: fx.iso(Date.now() - MIN), type: 'session_meta', payload: { cwd: other, originator: 'codex_vscode', source: 'vscode' } },
+    { timestamp: fx.iso(Date.now() - MIN), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Odd file name' }] } },
+  ], Date.now());
+  await stub.commands.get('claudeSessionChanges.refresh')();
+  const odd = await waitFor(() => (web.lastPayload().groups || []).flatMap((g) => g.rows).find((r) => r.title === 'Odd file name'), '이상한 이름의 Codex 줄');
+  assert.strictEqual(odd.canOpen, false);
+  stub.calls.length = 0;
+  await stub.commands.get('claudeSessionChanges.openClaudeSession')(odd.sid);
+  assert.ok(!stub.calls.some((c) => c[0] === 'terminal') && stub.calls.some((c) => c[0] === 'info'), '터미널 대신 안내만');
+
+  // Codex CLI가 없으면 터미널을 열지 않고 알려 준다
+  ext._test.setCodexCli(false);
+  stub.calls.length = 0;
+  web.send({ type: 'open', sid: 'codex:' + CX });
+  await waitFor(() => stub.calls.find((c) => c[0] === 'info' && /Codex CLI/.test(c[1])), 'CLI 없음 알림');
+  assert.ok(!stub.calls.some((c) => c[0] === 'terminal'));
+});
+

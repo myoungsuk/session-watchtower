@@ -51,6 +51,7 @@ function install({ extDir, language = 'en', workspace, config = {} }) {
       createStatusBarItem: (id) => { const it = { id, text: '', show() { this.visible = true; }, hide() { this.visible = false; }, dispose() {} }; statusItems.push(it); return it; },
       showTextDocument: async (u) => { calls.push(['show', String(u)]); },
       showInformationMessage: async (m) => { calls.push(['info', m]); },
+      createTerminal: (o) => { const t = { opts: o, sent: [], shown: false, show() { this.shown = true; }, sendText(x) { this.sent.push(x); } }; calls.push(['terminal', t]); return t; },
       showWarningMessage: async (m) => { calls.push(['warn', m]); },
       showQuickPick: async () => undefined,
       withProgress: async (o, fn) => fn({ report() {} }),

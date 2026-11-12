@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.6
+
+- **Clicking a Codex session now opens it**: it continues in a terminal with the Codex CLI (`codex resume <id>`), started in that session's folder, so it also works for sessions from other folders. Needs the `codex` command on the machine.
+
 ## 0.11.5
 
 - The number on the **Open** button now counts this folder only, like the header does; open sessions in other folders are mentioned in the tooltip.
