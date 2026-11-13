@@ -362,7 +362,7 @@ test('유동 역할: 보드의 "세션과 역할" 표가 역할을 정하고(손
   const panel = stub.state.panels.find((p) => !p.disposed);
   const memo = path.join(home, 'team-board.md');
   const board = (watcherRole) => ['# Team board', '', '## 1. Sessions and roles (the lead and the deployer are fixed)', '| Role | Session name | Scope | Doing now |', '|---|---|---|---|',
-    `| ${watcherRole} | **Watcher** [ab12cd] | e2e/ | checking |`, '| Deploy | Deployer (address x) | | |', '| Release | Outside | | |', '| <role> | <session name> | | |', '', '## 2. Tasks', ''].join('\n');
+    `| ${watcherRole} | **Watcher** [ab12cd] | e2e/ | checking |`, '| Deploy | Deployer (address x) | | |', '| Release | Outside | | |', '| Docs | **Loner** | | |', '| Research | **Ghost session** | | |', '| <role> | <session name> | | |', '', '## 2. Tasks', ''].join('\n');
   fs.writeFileSync(memo, board('Test'));
   stub.state.openDialog = memo;
   panel.send({ type: 'linkMemo' });
@@ -373,6 +373,19 @@ test('유동 역할: 보드의 "세션과 역할" 표가 역할을 정하고(손
   assert.deepStrictEqual([role('Write the API client').role, role('Write the API client').roleFromBoard], ['', false], '보드 표에 없는 세션은 손으로 정한 역할');
   assert.match(p.warnings.join(' '), /More than one session has the deploy role: Deployer, Outside\./, '배포가 둘이면 경고');
   assert.deepStrictEqual([team('Chatbot ops').rows.find((r) => r.sid === SID.w).role, team('Chatbot ops').rows.find((r) => r.sid === SID.w).roleFromBoard], ['Test', true], '세션 창 꼬리표도 보드를 따른다');
+
+  // 보드와 그룹 맞추기: 보드 표에만 있는 세션(Loner는 이 컴퓨터에 있음, Ghost는 없음), 그룹에만 있는 세션(Codex)
+  assert.deepStrictEqual(p.sync.boardOnly.map((x) => [x.name, x.role, !!x.sid]), [['Loner', 'Docs', true], ['Ghost session', 'Research', false]]);
+  assert.deepStrictEqual(p.sync.groupOnly.map((x) => x.title), ['Write the API client']);
+  panel.send({ type: 'copyBoardSync' });
+  await waitFor(() => /^\[Board sync\]/.test(stub.state.clipboard || ''), '대장에게 보낼 글');
+  assert.match(stub.state.clipboard, /- \*\*Write the API client\*\*/);
+  assert.match(stub.state.clipboard, /- Ghost session — Research/);
+  panel.send({ type: 'addFromBoard', sid: SID.x });
+  await waitFor(() => team('Chatbot ops').rows.some((r) => r.sid === SID.x && r.role === 'Docs' && r.roleFromBoard), '보드에만 있던 세션을 그룹에 넣으면 보드 역할로 보인다');
+  await waitFor(() => panel.lastPayload().sync.boardOnly.length === 1, '이제 보드에만 있는 것은 Ghost 하나');
+  panel.send({ type: 'remove', sid: SID.x }); // 다음 시험을 위해 되돌림
+  await waitFor(() => !team('Chatbot ops').rows.some((r) => r.sid === SID.x), 'Loner 뺌');
 
   // 역할 안내는 보드의 역할로, 유동 역할 규칙과 자기 검토 금지를 함께
   panel.send({ type: 'brief', sid: SID.w });

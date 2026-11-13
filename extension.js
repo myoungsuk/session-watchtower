@@ -904,6 +904,14 @@ function leadOf(g) {
 }
 const withoutLead = (role) => splitRoles(String(role || '').replace(/·/g, ',')).filter((r) => !LEAD_RE.test(r)).join('·');
 
+// 보드 표의 줄과 세션 제목 짝짓기: 굵은 글씨 제목이 같은 줄 → 세션 이름 칸 전체가 같은 줄 → 세션 이름 칸에 제목이 들어 있는 줄
+const normTitle = (t) => String(t || '').replace(/\s+/g, ' ').trim();
+function rowForTitle(rows, title) {
+  const t = normTitle(title);
+  if (t.length < 2) return null;
+  return rows.find((r) => r.bold.includes(t)) || rows.find((r) => r.cell === t) || rows.find((r) => r.cell.includes(t)) || null;
+}
+
 // 그룹 세션별 실제 역할: 보드 표에 그 세션 이름이 있으면 보드의 역할, 없으면 손으로 정한 역할.
 // 대장은 따로 표시한다(lead: true). extra는 대장이 함께 맡은 다른 일(보드나 손으로 정한 역할에서 대장을 뺀 것)
 function effectiveRoles(g) {
@@ -915,7 +923,7 @@ function effectiveRoles(g) {
     const s = sessionBySid(sid);
     const t = norm(s && s.title);
     let row = null;
-    if (t.length >= 2) row = rows.find((r) => r.bold.includes(t)) || rows.find((r) => r.cell === t) || rows.find((r) => r.cell.includes(t));
+    row = rowForTitle(rows, t);
     const base = row ? { role: row.role, source: 'board' } : { role: g.members[sid].role || '', source: 'manual' };
     if (sid === lead) {
       const extra = withoutLead(base.role);
@@ -924,6 +932,47 @@ function effectiveRoles(g) {
     } else out.set(sid, { ...base, lead: false, extra: base.role, extraSource: base.source });
   }
   return out;
+}
+
+// 보드 표와 그룹을 맞춰 본다. 그룹이 팀의 원본이라 확장은 보드 파일을 고치지 않는다:
+// 보드에만 있는 세션은 그룹에 넣을 수 있게, 그룹에만 있는 세션은 대장에게 보드에 넣어 달라고 할 글을 만든다
+function boardGroupSync(g) {
+  const rows = boardRowsOf(g.memo);
+  if (!g.memo || !rows.length) return null;
+  const memberRows = new Set();
+  const groupOnly = [];
+  for (const sid of Object.keys(g.members)) {
+    const s = sessionBySid(sid);
+    const row = rowForTitle(rows, s && s.title);
+    if (row) memberRows.add(row);
+    else groupOnly.push({ sid, title: s ? s.title : sid.slice(0, 8), role: g.members[sid].role || '' });
+  }
+  const known = [...sessionsModel, ...archivedModel];
+  const boardOnly = [];
+  for (const r of rows) {
+    if (memberRows.has(r)) continue;
+    const name = r.bold[0] || r.cell;
+    // 그 줄의 세션을 이 컴퓨터의 세션 목록에서 찾는다(다른 그룹에 든 세션이면 알려 준다)
+    const s = known.find((x) => rowForTitle([r], x.title) === r);
+    const other = s ? groupOfSession(s.sid) : null;
+    boardOnly.push({ name, role: r.role, sid: s ? s.sid : '', inGroup: other && other.id !== g.id ? other.name : '' });
+  }
+  return boardOnly.length || groupOnly.length ? { boardOnly, groupOnly } : null;
+}
+
+function boardSyncText(g, sync) {
+  const ko = isKo();
+  const out = [];
+  if (ko) {
+    out.push(`[보드 맞추기] Session Watchtower의 "${g.name}" 그룹과 협업 보드 1절 "세션과 역할" 표가 다릅니다.`);
+    if (sync.groupOnly.length) out.push('', '그룹에는 있는데 보드 표에 없는 세션입니다. 표에 줄을 더해 주세요(세션 이름은 아래 제목 그대로 굵게):', ...sync.groupOnly.map((x) => `- **${x.title}**${x.role ? ` — ${x.role}` : ''}`));
+    if (sync.boardOnly.length) out.push('', '보드 표에는 있는데 그룹에 없는 세션입니다. 이 팀에서 빠졌으면 표에서 빼거나 "그룹 밖"으로 표시해 주세요:', ...sync.boardOnly.map((x) => `- ${x.name} — ${x.role}`));
+  } else {
+    out.push(`[Board sync] The group "${g.name}" in Session Watchtower and the "Sessions and roles" table of the team board differ.`);
+    if (sync.groupOnly.length) out.push('', 'In the group but not in the table. Please add a row for each (session name in bold, exactly as below):', ...sync.groupOnly.map((x) => `- **${x.title}**${x.role ? ` — ${x.role}` : ''}`));
+    if (sync.boardOnly.length) out.push('', 'In the table but not in the group. If they left this team, remove them or mark them "outside the group":', ...sync.boardOnly.map((x) => `- ${x.name} — ${x.role}`));
+  }
+  return out.join('\n') + '\n';
 }
 
 // 고정 역할(대장·배포)이 둘 이상이면 알린다: 배포가 둘이면 두 세션이 각자 서버에 올리는 사고가 날 수 있다
@@ -1409,6 +1458,8 @@ async function boardPayload(id) {
   members.sort((a, b) => Number(b.lead) - Number(a.lead)); // 대장을 맨 위에
   const leadRow = members.find((r) => r.lead) || null;
   const warnings = roleWarnings(g, eff);
+  // 보드와 그룹 맞추기: 보드 "세션과 역할" 표에만 있는 세션, 그룹에만 있는 세션
+  const sync = boardGroupSync(g);
   // 지시와 결과는 쪽으로 나눠 보낸다(한 쪽에 몇 개는 설정)
   const all = b ? b.said : [];
   const size = cfg().boardPageSize;
@@ -1417,7 +1468,7 @@ async function boardPayload(id) {
   const page = b ? b.saidPage : 0;
   const said = all.slice(page * size, page * size + size).map((x) => ({ ...x, colors: x.sids.map((sid) => (colorOf.has(sid) ? colorOf.get(sid) : -1)) }));
   return {
-    setup, warnings, lead: leadRow ? { sid: leadRow.sid, title: leadRow.title, state: leadRow.state, stateLabel: leadRow.stateLabel, canOpen: leadRow.canOpen, color: leadRow.color } : null,
+    setup, warnings, sync, lead: leadRow ? { sid: leadRow.sid, title: leadRow.title, state: leadRow.state, stateLabel: leadRow.stateLabel, canOpen: leadRow.canOpen, color: leadRow.color } : null,
     strings: boardStrings(), id, name: g.name, waiting, members, unknown: unknown.slice(0, 200), unknownMore: Math.max(0, unknown.length - 200),
     said, saidAll: all, saidTotal: all.length, saidPage: page, saidPages: pages, saidSize: size, saidBusy: !!(b && b.saidBusy), memo, span: spanShort(cfg().lookbackHours),
     roots: (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath),
@@ -1469,6 +1520,9 @@ function boardStrings() {
     leadName: isKo() ? '대장' : 'Lead', leadTip: L('Lead of this group: takes the reports and gives the instructions'),
     leadCard: L('The lead takes the reports of the other sessions and gives the instructions. Talk to the lead; the other sessions do not need you to watch them.'),
     noLead: L('No lead yet. Pick "Lead" as the role of the session that should coordinate the group.'),
+    syncTitle: L('Team board and group differ'), syncTip: L('The group is the list of the team. The extension never edits the board file: add the sessions listed only on the board to the group, or ask the lead to update the board.'),
+    boardOnly: L('Only in the board table'), groupOnly: L('Only in the group (not in the board table)'), addToThis: L('Add to group'), addAll: L('Add all to group'),
+    notFound: L('session not found on this computer'), inOther: L('in group "{0}"', '{0}'), copySync: L('Copy a note for the lead'),
     roleNote: L('Role note'), roleNoteTip: L('Copy a note for this session: its group, role and job, the other sessions, the shared memo and how the group works together. Paste it into the session so it knows its role.'),
     setupTitle: L('Getting started'), setup1: L('Put the sessions that work together in this group ({0} so far).', '{0}'), setup2: L('Give each session a role: click the role cell ({0} of {1} set).', '{0}', '{1}'),
     setup3: L('Link or create a shared memo file the sessions read and write.'), setup4: L('Press "Role note" on each row and paste it into that session. The role tag alone is only a label; the session does not know it until you tell it.'),
@@ -1635,6 +1689,25 @@ async function openGroupBoard(id) {
     else if (m.type === 'role' && sid) setSessionRole(sid);
     else if (m.type === 'remove' && sid) removeFromGroup(sid);
     else if (m.type === 'brief' && sid) copyRoleBrief(g.id, sid);
+    else if (m.type === 'addFromBoard') {
+      // 보드 표에만 있는 세션을 그룹에 넣는다(sid가 없으면 찾은 세션 전부)
+      const cur = groupById(g.id);
+      const sync = cur && boardGroupSync(cur);
+      const pick = sync ? sync.boardOnly.filter((x) => x.sid && (!sid || x.sid === sid)).map((x) => x.sid) : [];
+      if (pick.length) updateGroups((d) => {
+        const t = d.groups.find((x) => x.id === g.id);
+        if (!t) return false;
+        for (const p of pick) {
+          let role = '';
+          for (const x of d.groups) if (x.members[p]) { role = x.members[p].role; delete x.members[p]; }
+          t.members[p] = { role, at: Date.now() };
+        }
+      });
+    } else if (m.type === 'copyBoardSync') {
+      const cur = groupById(g.id);
+      const sync = cur && boardGroupSync(cur);
+      if (sync) Promise.resolve(vscode.env.clipboard.writeText(boardSyncText(cur, sync))).then(() => vscode.window.showInformationMessage(L('Copied a note for the lead to bring the team board in line with the group.')));
+    }
     else if (m.type === 'planTeam') planTeam(g.id);
     else if (m.type === 'saidPage') {
       b.saidPage = m.dir === 'first' ? 0 : m.dir === 'prev' ? (b.saidPage || 0) - 1 : (b.saidPage || 0) + 1;
@@ -1725,6 +1798,9 @@ function boardHtml(webview) {
   .said .wl:hover { text-decoration: underline; color: var(--vscode-textLink-foreground); }
   .pager { display: flex; align-items: center; gap: 6px; margin: 8px 0; }
   .pager .muted { margin: 0 6px; }
+  .syncbox { margin: 10px 0 4px; padding: 8px 14px; border-radius: 4px; border: 1px dashed var(--vscode-textLink-foreground); }
+  .syncbox ul { margin: 4px 0 8px; padding-left: 20px; }
+  .syncbox .srow { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
   .leadcard { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 4px; padding: 10px 14px; border-radius: 6px; border: 1px solid var(--vscode-charts-yellow, #cca700); background: color-mix(in srgb, var(--vscode-charts-yellow, #cca700) 10%, transparent); }
   .leadcard .crown { color: var(--vscode-charts-yellow, #cca700); }
   .leadcard .ltitle { font-weight: 600; font-size: 14px; }
@@ -1779,6 +1855,18 @@ function boardHtml(webview) {
       h += '<div class="wait"><span class="t">' + esc(w.title) + '</span>' + (w.role ? '<span class="role">' + esc(w.role) + '</span>' : '')
         + '<span>' + esc(w.what) + '</span><span class="d" title="' + esc(w.detail) + '">' + esc(w.detail) + '</span><span class="muted">' + esc(w.since) + '</span>'
         + '<button data-act="open" data-sid="' + esc(w.sid) + '">' + esc(S.open) + '</button></div>';
+    }
+    // 보드와 그룹 맞추기
+    if (p.sync) {
+      const bo = p.sync.boardOnly, go = p.sync.groupOnly;
+      h += '<div class="syncbox" title="' + esc(S.syncTip) + '"><b>' + esc(S.syncTitle) + '</b>';
+      if (bo.length) {
+        h += '<div class="srow"><span class="muted">' + esc(S.boardOnly) + ' (' + bo.length + ')</span>' + (bo.some((x) => x.sid) ? '<button data-act="addFromBoard">' + esc(S.addAll) + '</button>' : '') + '</div><ul>'
+          + bo.map((x) => '<li><b>' + esc(x.name) + '</b> <span class="muted">— ' + esc(x.role) + (x.inGroup ? ' · ' + esc(String(S.inOther || '').replace('{0}', x.inGroup)) : '') + '</span> '
+            + (x.sid ? '<button class="link" data-act="addFromBoard" data-sid="' + esc(x.sid) + '">' + esc(S.addToThis) + '</button>' : '<span class="muted">(' + esc(S.notFound) + ')</span>') + '</li>').join('') + '</ul>';
+      }
+      if (go.length) h += '<div class="srow"><span class="muted">' + esc(S.groupOnly) + ' (' + go.length + ')</span></div><ul>' + go.map((x) => '<li><b>' + esc(x.title) + '</b>' + (x.role ? ' <span class="muted">— ' + esc(x.role) + '</span>' : '') + '</li>').join('') + '</ul>';
+      h += '<button data-act="copyBoardSync">' + esc(S.copySync) + '</button></div>';
     }
     // 고정 역할(대장·배포)이 겹치면 경고
     for (const w of p.warnings || []) h += '<div class="warnbox"><b>⚠ ' + esc(w) + '</b></div>';

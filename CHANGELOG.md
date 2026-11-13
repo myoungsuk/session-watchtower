@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.23.0
+
+- **Board and group in line.** When a group's team board lists sessions that are not in the group, or the group has sessions the board does not list, the group board shows both lists. Sessions found on this computer can be added to the group with one click (one by one or all), and *Copy a note for the lead* asks the lead to add or remove rows. The group stays the list of the team; the extension never edits the board file.
+
 ## 0.22.0
 
 - **The lead stands out.** A group's lead gets a crown badge, sits at the top of the group in the Sessions view and on the board, and the board opens with a lead card (state and *Open conversation*). There is one lead per group: picking *Lead* for another session moves it, and unchecking it leaves the group without a lead.
