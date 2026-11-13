@@ -361,5 +361,7 @@
   "saved by Claude Code {0}": "Claude Code가 받아 둔 값 · {0}",
   "This is more than an hour old. Claude Code refreshes it when it checks your usage (for example /usage).": "1시간 넘게 지난 값입니다. Claude Code가 사용량을 확인할 때(예: /usage) 새로 받습니다.",
   "from the last Codex log {0}": "마지막 Codex 기록 · {0}",
-  "Read from files already on this computer; nothing is fetched from the internet.": "이 컴퓨터에 이미 있는 파일에서 읽습니다. 인터넷에서 받아 오지 않습니다."
+  "Read from files already on this computer; nothing is fetched from the internet.": "이 컴퓨터에 이미 있는 파일에서 읽습니다. 인터넷에서 받아 오지 않습니다.",
+  "{0} can use up to {1}% of the weekly limit; it has used {2}% so far.": "{0}은(는) 주간 한도의 {1}%까지 쓸 수 있고, 지금까지 {2}%를 썼습니다.",
+  "This week by product: {0}": "이번 주 사용 비율: {0}"
 }

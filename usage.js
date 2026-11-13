@@ -13,8 +13,11 @@ let codexMemo = { mtimeMs: -1, size: -1, file: '', value: null };
 const stats = { claudeReads: 0, codexReads: 0 }; // 시험·측정용: 실제로 파일 내용을 읽은 횟수
 
 const num = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
+// 화면 설명(마크다운)에 넣을 이름: 표·서식 기호를 빼고 짧게
+const name = (v) => (typeof v === 'string' ? v.replace(/[\\`*_[\]<>|#\r\n]/g, ' ').trim().slice(0, 40) : '');
 
-// { at, windows: [{ key, percent, resetsAt }] } 또는 null
+// { at, windows: [{ key, group, scope, percent, resetsAt, severity, share }], breakdown: [{ name, percent }] } 또는 null
+// 요즘 Claude Code는 limits 목록(전체 주간 한도 + Fable처럼 모델별 주간 한도)을 받아 둔다. 없으면 옛 칸(five_hour·seven_day…)을 읽는다.
 function readClaude() {
   const file = claudeConfigPath();
   let st;
@@ -27,11 +30,34 @@ function readClaude() {
     const u = c && typeof c === 'object' ? c.utilization : null;
     if (u && typeof u === 'object' && num(c.fetchedAtMs)) {
       const windows = [];
-      for (const key of CLAUDE_KEYS) {
-        const w = u[key];
-        if (w && typeof w === 'object' && num(w.utilization) !== null) windows.push({ key, percent: w.utilization, resetsAt: Date.parse(w.resets_at) || null });
+      if (Array.isArray(u.limits) && u.limits.length) {
+        const byIndex = new Map(); // limits 목록의 순번 → 칸(못 읽은 항목을 건너뛰어도 순번이 어긋나지 않게)
+        u.limits.forEach((l, i) => {
+          if (!l || typeof l !== 'object' || num(l.percent) === null) return;
+          const sc = l.scope && typeof l.scope === 'object' ? l.scope : null;
+          const scope = sc ? name(sc.model && sc.model.display_name) || name(sc.surface && sc.surface.display_name) : '';
+          const raw = (v) => (typeof v === 'string' ? v.slice(0, 40) : ''); // 분류 값은 그대로(화면에 쓸 때 거른다)
+          const w = { key: raw(l.kind), group: raw(l.group), scope, percent: l.percent, resetsAt: Date.parse(l.resets_at) || null, severity: name(l.severity), share: null };
+          windows.push(w);
+          byIndex.set(i, w);
+        });
+        // 모델별 한도가 주간 전체에서 차지하는 몫: limit_index번 한도는 주간 한도의 allowance%까지, 지금 used%를 씀
+        if (Array.isArray(u.weekly_scoped_shares)) {
+          for (const sh of u.weekly_scoped_shares) {
+            const w = sh && byIndex.get(sh.limit_index);
+            if (w && num(sh.used_percent_of_weekly) !== null && num(sh.allowance_percent_of_weekly) !== null) w.share = { used: sh.used_percent_of_weekly, allowance: sh.allowance_percent_of_weekly };
+          }
+        }
+      } else {
+        for (const key of CLAUDE_KEYS) {
+          const w = u[key];
+          if (w && typeof w === 'object' && num(w.utilization) !== null) windows.push({ key, group: '', scope: '', percent: w.utilization, resetsAt: Date.parse(w.resets_at) || null, severity: '', share: null });
+        }
       }
-      value = { at: c.fetchedAtMs, windows };
+      // 이번 주 사용이 어디서 나왔는지(Claude Code·채팅·Cowork…)
+      const rows = u.seven_day_breakdown && Array.isArray(u.seven_day_breakdown.rows) ? u.seven_day_breakdown.rows : [];
+      const breakdown = rows.filter((r) => r && num(r.percent) > 0).map((r) => ({ name: name(r.display_name) || name(r.key), percent: r.percent }));
+      value = { at: c.fetchedAtMs, windows, breakdown };
     }
   } catch { value = null; }
   claudeMemo = { mtimeMs: st.mtimeMs, size: st.size, file, value };

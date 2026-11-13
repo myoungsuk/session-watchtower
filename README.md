@@ -269,11 +269,11 @@ The **MCP Servers** view (collapsed at the bottom of the side bar) lists the MCP
 
 ## Plan usage
 
-The status bar shows how much of your plan limits you have used, for example `Claude 67% · Codex 23%` (the highest of the limits shown). Hover it for each limit, when it resets and how old the value is. At 90% it turns yellow, at 100% red.
+The right side of the status bar shows how much of your plan limits you have used, for example `Claude 83% · Fable 21% · Codex 23%`: Claude's overall limit, then a model's own weekly limit when your plan has one (such as Fable, which may use only part of the weekly limit), then Codex. Hover it for each limit, when it resets, how much of the weekly limit a model may use, which products the week's usage came from, and how old the value is. It turns yellow at 90% or when Claude Code itself marks a limit as a warning, and red at 100%.
 
 | | Where the number comes from | How fresh |
 |---|---|---|
-| Claude | The usage Claude Code saves in `~/.claude.json` when it checks your limits (5 hours, 7 days, and per model when your plan has them) | As fresh as Claude Code's last check, at most once a minute. The tooltip says when an hour has passed; running `/usage` in Claude Code refreshes it |
+| Claude | The usage Claude Code saves in `~/.claude.json` when it checks your limits (overall and per model, 5 hours and 7 days when your plan has them) | Only as fresh as Claude Code's last check. Claude Code does not re-check on every message (in one test the value stayed the same for 47 minutes while sessions worked); the tooltip says when an hour has passed, and running `/usage` in Claude Code makes it check |
 | Codex | The limits recorded in your most recent Codex session log | Updated after every Codex turn; the last value is kept until its limit resets |
 
 A limit whose reset time has passed is hidden, because its number is out of date. Turn the item off with `usageStatusBar`.
@@ -391,7 +391,7 @@ Claude Code 세션을 여러 개 돌릴 때 **어느 세션이 일하는 중이�
 - **정리**: 보관함, 세션 이름 바꾸기, 변경 요약을 마크다운으로 복사.
 - **바깥에서 열기**: 데스크톱 알림 같은 다른 프로그램이 `vscode://kms-labs.session-watchtower/open?title=…` 주소로 그 세션의 대화를 열 수 있습니다.
 - **Codex** 세션도 함께 나옵니다.
-- **요금제 사용량**: 상태 표시줄에 Claude Code·Codex 한도를 몇 % 썼는지(예: `Claude 67% · Codex 23%`) 보여 줍니다. 마우스를 올리면 5시간·7일 칸별 값, 초기화 시각, 몇 분 전 값인지가 나옵니다. Claude는 Claude Code가 `~/.claude.json`에 받아 둔 값, Codex는 마지막 Codex 기록의 값입니다. 인터넷에 묻지 않고, 두 파일의 크기·시각만 보다가 바뀌었을 때만 읽어서 CPU를 거의 쓰지 않습니다.
+- **요금제 사용량**: 상태 표시줄 오른쪽에 Claude Code·Codex 한도를 몇 % 썼는지(예: `Claude 83% · Fable 21% · Codex 23%`) 보여 줍니다. Fable처럼 모델마다 따로 있는 주간 한도도 따로 나옵니다. 마우스를 올리면 칸별 값, 초기화 시각, 모델이 주간 한도의 몇 %까지 쓸 수 있는지, 이번 주 사용 비율, 몇 분 전 값인지가 나옵니다. Claude는 Claude Code가 `~/.claude.json`에 받아 둔 값이라 Claude Code가 다시 확인할 때만 바뀝니다(`/usage`를 열면 확인). Codex는 마지막 Codex 기록의 값입니다. 인터넷에 묻지 않고, 두 파일의 크기·시각만 보다가 바뀌었을 때만 읽어서 CPU를 거의 쓰지 않습니다.
 - **보드 목차 접기**: 그룹 보드의 나를 기다리는 것·세션·지시와 결과·공유 메모 제목을 누르면 접히고, 그룹마다 기억합니다.
 - **MCP 서버 창**: 이 폴더에서 Claude Code가 쓰는 MCP 서버(직접 추가·이 폴더·프로젝트 `.mcp.json`·플러그인·claude.ai 커넥터)와 Codex 서버를 봅니다. "상태 확인"은 누를 때만 `claude mcp list`를 실행합니다(서버마다 한 번 붙어 보고 로컬 서버는 잠깐 실행). 스위치는 Claude Code의 `/mcp disable`과 같은 곳(`~/.claude.json`의 이 폴더 `disabledMcpServers`)에 써서 **이 폴더에서만** 끄고 켭니다. 새로 여는 세션부터 적용되고, 알림과 창 맨 위에 "되돌리기"가 있습니다. 명령·주소·환경 변수 값은 화면에 나오지 않습니다. Codex 서버는 보기만 합니다.
 

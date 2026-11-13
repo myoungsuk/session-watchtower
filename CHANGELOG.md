@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.25.1
+
+- **Per-model limits.** The usage item now reads the limits list Claude Code saves today: the overall weekly limit and a model's own weekly limit (for example `Claude 83% · Fable 21%`), how much of the weekly limit that model may use, and which products the week's usage came from. Older saved values still work.
+- The usage item moved to the right side of the status bar, and it turns yellow when Claude Code itself marks a limit as a warning.
+
 ## 0.25.0
 
 - **Plan usage in the status bar.** Shows how much of your Claude Code and Codex limits you have used (`Claude 67% · Codex 23%`, the highest limit of each); hover for every limit, its reset time and how old the value is. Claude's number is the usage Claude Code saves in `~/.claude.json`; Codex's comes from the latest Codex log. No network requests: the extension only checks the two files' size and time, and reads them when they change. Setting `usageStatusBar`.

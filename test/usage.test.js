@@ -20,7 +20,14 @@ const writeClaude = (u, fetchedAtMs = now - 10 * 60e3) => {
   fs.writeFileSync(CFG, JSON.stringify({ numStartups: 1, oauthAccount: { emailAddress: 'x@example.invalid' }, cachedUsageUtilization: { fetchedAtMs, accountUuid: ACCOUNT, utilization: u } }, null, 2));
 };
 const win = (pct, resetMs) => ({ utilization: pct, resets_at: new Date(resetMs).toISOString(), limit_dollars: null });
-writeClaude({ five_hour: win(41, now + 2 * H), seven_day: win(83, now + 50 * H), seven_day_opus: null, seven_day_sonnet: null });
+// 요즘 형식: 전체 주간 한도 + 모델별(Fable) 주간 한도, 모델별 몫, 이번 주 제품별 비율. 못 읽는 항목이 섞여도 순번이 어긋나지 않아야 한다
+const limit = (kind, pct, resetMs, severity, model) => ({ kind, group: 'weekly', percent: pct, severity, resets_at: new Date(resetMs).toISOString(), scope: model ? { model: { id: null, display_name: model }, surface: null } : null, is_active: !model });
+writeClaude({
+  five_hour: null, seven_day: win(83, now + 50 * H),
+  limits: [limit('weekly_all', 83, now + 50 * H, 'warning'), { kind: 'broken' }, limit('weekly_scoped', 21, now + 50 * H, 'normal', 'Fable')],
+  weekly_scoped_shares: [{ limit_index: 2, used_percent_of_weekly: 11, allowance_percent_of_weekly: 50 }],
+  seven_day_breakdown: { rows: [{ key: 'claude_code', display_name: 'Claude Code', percent: 99 }, { key: 'chat', display_name: 'Chats', percent: 0 }, { key: 'cowork', display_name: 'Cowork', percent: 1 }] },
+});
 
 // Codex 기록: 앞의 한도(10%)보다 마지막 한도(5시간 23%·7일 61%)를 읽어야 한다
 const CX = '01a0e732-7e44-7bf2-9a3a-1cb36590037a';
@@ -46,19 +53,22 @@ async function waitFor(fn, what, ms = 8000) {
   assert.fail('기다렸지만 안 됨: ' + what);
 }
 
-test('Claude·Codex 사용량을 가장 많이 쓴 칸 기준으로 보여 주고, 설명에 칸별 값·초기화 시각·기준 시각을 적는다', async () => {
+test('Claude 전체 한도와 모델별 한도(Fable)를 따로, Codex는 가장 많이 쓴 칸을 오른쪽 상태 표시줄에 보여 준다', async () => {
   await waitFor(() => item() && item().visible && /Codex/.test(item().text), '상태 표시줄');
-  assert.strictEqual(item().text, '$(dashboard) Claude 83% · Codex 61%');
+  assert.strictEqual(item().text, '$(dashboard) Claude 83% · Fable 21% · Codex 61%');
+  assert.strictEqual(item().alignment, 2, '오른쪽');
   const tip = item().tooltip.value;
   assert.match(tip, /\*\*Claude\*\* — saved by Claude Code 10m ago/);
-  assert.match(tip, /\| 5 hours \| 41% \| resets /);
   assert.match(tip, /\| 7 days \| 83% \| resets /);
+  assert.match(tip, /\| 7 days · Fable \| 21% \| resets /);
+  assert.match(tip, /Fable can use up to 50% of the weekly limit; it has used 11% so far\./, '몫은 limits 목록 순번으로 맞춘다');
+  assert.match(tip, /This week by product: Claude Code 99% · Cowork 1%/);
   assert.match(tip, /\*\*Codex\*\* \(pro\) — from the last Codex log 5m ago/);
   assert.match(tip, /\| 5 hours \| 23% \|/);
   assert.match(tip, /\| 7 days \| 61% \|/);
   assert.match(tip, /nothing is fetched from the internet/);
   assert.ok(!tip.includes(ACCOUNT) && !tip.includes('example.invalid'), '계정 ID·메일은 보여 주지 않는다');
-  assert.strictEqual(item().backgroundColor, undefined, '90% 아래는 색 없음');
+  assert.strictEqual(item().backgroundColor && item().backgroundColor.id, 'statusBarItem.warningBackground', 'Claude가 경고로 표시한 한도는 노랑(Claude Code와 같은 기준)');
   assert.ok(stub.context.globalState.store['claudeSessionChanges.usageCodexLast'], 'Codex 값은 창을 다시 불러와도 남게 기억');
 });
 
@@ -68,7 +78,7 @@ test('파일이 바뀌지 않으면 주기마다 크기·시각만 보고 다시
   assert.deepStrictEqual(usage.stats, before, '설정 파일·Codex 기록을 다시 읽지 않음');
 });
 
-test('90%를 넘으면 경고 색, 1시간 넘은 값은 설명에 알리고, 초기화 시각이 지난 칸은 뺀다', async () => {
+test('옛 형식(five_hour·seven_day)도 읽고, 90%를 넘으면 경고 색, 1시간 넘은 값은 설명에 알리고, 초기화 시각이 지난 칸은 뺀다', async () => {
   writeClaude({ five_hour: win(97, now - 60e3), seven_day: win(92, now + 50 * H) }, now - 2 * H);
   const t = new Date(Date.now() + 3000);
   fs.utimesSync(CFG, t, t);
@@ -77,17 +87,23 @@ test('90%를 넘으면 경고 색, 1시간 넘은 값은 설명에 알리고, �
   const tip = item().tooltip.value;
   assert.ok(!/\| 5 hours \| 97%/.test(tip), '초기화 시각이 지난 5시간 칸은 옛 값이라 뺀다');
   assert.match(tip, /more than an hour old/);
+  // 100%면 빨강
+  writeClaude({ seven_day: win(100, now + 50 * H) });
+  const t2 = new Date(Date.now() + 4500);
+  fs.utimesSync(CFG, t2, t2);
+  await waitFor(() => /Claude 100%/.test(item().text), '100%');
+  assert.strictEqual(item().backgroundColor.id, 'statusBarItem.errorBackground');
 });
 
 test('설정을 끄면 감추고, Codex를 빼면 Claude만, 보여 줄 값이 없으면 감춘다', async () => {
   stub.changeConfig('includeCodex', false);
-  await waitFor(() => item().text === '$(dashboard) Claude 92%', 'Codex 빼기');
+  await waitFor(() => item().text === '$(dashboard) Claude 100%', 'Codex 빼기');
   stub.changeConfig('usageStatusBar', false);
   await waitFor(() => item().visible === false, '끄기');
   stub.changeConfig('usageStatusBar', true);
   await waitFor(() => item().visible === true, '다시 켜기');
   writeClaude({ five_hour: null, seven_day: win(50, now - 60e3) });
-  const t = new Date(Date.now() + 6000);
+  const t = new Date(Date.now() + 9000);
   fs.utimesSync(CFG, t, t);
   await waitFor(() => item().visible === false, '모든 칸이 지난 값이면 감춤');
 });

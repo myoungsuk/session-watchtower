@@ -3435,7 +3435,13 @@ function spanOfMinutes(m) {
   if (!m) return '';
   return m % 1440 === 0 ? L('{0} days', m / 1440) : L('{0} hours', Math.round((m / 60) * 10) / 10);
 }
-const CLAUDE_SPAN = () => ({ five_hour: L('{0} hours', 5), seven_day: L('{0} days', 7), seven_day_opus: L('{0} days (Opus)', 7), seven_day_sonnet: L('{0} days (Sonnet)', 7) });
+// Claude 한도 이름: limits 목록이면 묶음(weekly·session)과 모델 이름, 옛 칸이면 칸 이름으로
+function claudeLimitLabel(w) {
+  const old = { five_hour: L('{0} hours', 5), seven_day: L('{0} days', 7), seven_day_opus: L('{0} days (Opus)', 7), seven_day_sonnet: L('{0} days (Sonnet)', 7) };
+  if (old[w.key]) return old[w.key];
+  const span = w.group === 'weekly' ? L('{0} days', 7) : /session|five.?hour|5h/i.test(w.group + ' ' + w.key) ? L('{0} hours', 5) : String(w.group || w.key).replace(/[\\`*_[\]<>|#]/g, ' ');
+  return w.scope ? span + ' · ' + w.scope : span;
+}
 
 function updateUsage() {
   if (!usageItem) return;
@@ -3455,17 +3461,21 @@ function updateUsage() {
   const xw = usage.liveWindows(codex, now);
   const top = (ws) => Math.max(...ws.map((w) => w.percent));
   const parts = [];
-  if (cw.length) parts.push(`Claude ${Math.round(top(cw))}%`);
+  // Claude: 전체 한도(모델 구분 없는 칸) 중 가장 많이 쓴 값 + 모델별 한도(Fable 등)는 따로, 많이 쓴 둘까지
+  const whole = cw.filter((w) => !w.scope);
+  const scoped = cw.filter((w) => w.scope).sort((a, b) => b.percent - a.percent).slice(0, 2);
+  if (cw.length) parts.push(`Claude ${Math.round(top(whole.length ? whole : cw))}%` + (whole.length ? scoped.map((w) => ` · ${w.scope} ${Math.round(w.percent)}%`).join('') : ''));
   if (xw.length) parts.push(`Codex ${Math.round(top(xw))}%`);
   if (!parts.length) { if (usageShown) { usageItem.hide(); usageShown = ''; } return; }
   const text = '$(dashboard) ' + parts.join(' · ');
-  const span = CLAUDE_SPAN();
   const when = (ms) => (ms ? L('resets {0}', fmtTime(ms)) : '');
   const row = (label, pct, reset) => `| ${label} | ${Math.round(pct)}% | ${reset} |\n`;
   let md = '**' + L('Plan usage') + '**\n\n';
   if (cw.length) {
     md += `**Claude** — ${L('saved by Claude Code {0}', fmtAgo(claude.at))}\n\n| | | |\n|---|---|---|\n`;
-    for (const w of cw) md += row(span[w.key] || w.key, w.percent, when(w.resetsAt));
+    for (const w of cw) md += row(claudeLimitLabel(w), w.percent, when(w.resetsAt));
+    for (const w of cw) if (w.scope && w.share) md += '\n' + L('{0} can use up to {1}% of the weekly limit; it has used {2}% so far.', w.scope, Math.round(w.share.allowance), Math.round(w.share.used)) + '\n';
+    if (claude.breakdown && claude.breakdown.length) md += '\n' + L('This week by product: {0}', claude.breakdown.map((r) => r.name + ' ' + Math.round(r.percent) + '%').join(' · ')) + '\n';
     if (now - claude.at > 3600e3) md += '\n' + L('This is more than an hour old. Claude Code refreshes it when it checks your usage (for example /usage).') + '\n';
     md += '\n';
   }
@@ -3479,8 +3489,11 @@ function updateUsage() {
   if (key === usageShown) return;
   usageShown = key;
   usageItem.text = text;
-  const worst = Math.max(cw.length ? top(cw) : 0, xw.length ? top(xw) : 0);
-  usageItem.backgroundColor = worst >= 100 ? new vscode.ThemeColor('statusBarItem.errorBackground') : worst >= 90 ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
+  // 색: 100% 또는 Claude가 심각하다고 표시한 한도는 빨강, 90% 이상 또는 Claude가 경고로 표시한 한도는 노랑(Claude Code 자신의 표시와 맞춤)
+  const all = cw.concat(xw);
+  const bad = all.some((w) => w.percent >= 100 || /critical|exceed|block|error/i.test(w.severity || ''));
+  const warn = all.some((w) => w.percent >= 90 || /warn/i.test(w.severity || ''));
+  usageItem.backgroundColor = bad ? new vscode.ThemeColor('statusBarItem.errorBackground') : warn ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
   const tip = new vscode.MarkdownString(md);
   tip.isTrusted = false;
   usageItem.tooltip = tip;
@@ -3828,7 +3841,7 @@ function activate(context) {
   statusItem = vscode.window.createStatusBarItem('claudeSessionChanges.status', vscode.StatusBarAlignment.Left, 100);
   statusItem.name = 'Session Watchtower';
   statusItem.command = SESSIONS_VIEW + '.focus';
-  usageItem = vscode.window.createStatusBarItem('claudeSessionChanges.usage', vscode.StatusBarAlignment.Left, 99);
+  usageItem = vscode.window.createStatusBarItem('claudeSessionChanges.usage', vscode.StatusBarAlignment.Right, 100); // 오른쪽(사용자 요청)
   usageItem.name = L('Plan usage');
   context.subscriptions.push(
     treeView,
