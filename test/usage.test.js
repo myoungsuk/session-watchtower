@@ -117,4 +117,51 @@ test('Codex 기록 끝 읽기: 잘린 첫 줄은 건너뛰고 마지막 한도�
   assert.strictEqual(usage.readCodex(path.join(home, 'none.jsonl')), null);
 });
 
+test('다시 받기: 값이 오래됐고 그 뒤에 Claude 세션이 일했으면 Claude Code 명령(claude -p /usage)을 한 번 돌려 새 값을 받게 하고, 누르면 바로 받는다', async () => {
+  stub.changeConfig('includeCodex', true);
+  // 2시간 전에 받아 둔 값 + 그 뒤에 일한 Claude 세션
+  writeClaude({ seven_day: win(70, now + 50 * H) }, Date.now() - 2 * H);
+  const SIDC = 'c1a0de00-1111-4111-8111-111111111111';
+  fx.claudeSession(home, project, SIDC, [{ type: 'user', message: { role: 'user', content: 'hello' }, cwd: project, sessionId: SIDC, timestamp: new Date().toISOString(), uuid: 'u1' }]);
+  // 진짜 claude 대신: 받은 인자·폴더·환경을 적고, Claude Code처럼 ~/.claude.json에 새 값을 써 넣는 대역
+  const bin = path.join(home, 'fake-claude');
+  const log = path.join(home, 'fake-claude.log');
+  fs.writeFileSync(bin, `#!/bin/sh\necho "$PWD|$*|entry=\${CLAUDE_CODE_ENTRYPOINT:-none}|cc=\${CLAUDECODE:-none}" >> '${log}'\nnode -e 'const f=process.argv[1];const fs=require("fs");const d=JSON.parse(fs.readFileSync(f,"utf8"));d.cachedUsageUtilization={fetchedAtMs:Date.now(),utilization:{seven_day:{utilization:88,resets_at:new Date(Date.now()+180000000).toISOString()}}};fs.writeFileSync(f,JSON.stringify(d,null,2))' '${CFG}'\n`);
+  fs.chmodSync(bin, 0o755);
+  ext._test.setClaudeBin(bin);
+  process.env.CLAUDE_CODE_ENTRYPOINT = 'claude-vscode';
+  process.env.CLAUDECODE = '1';
+  stub.changeConfig('usageRefreshMinutes', 15);
+  stub.commands.get('claudeSessionChanges.refresh')();
+  await waitFor(() => /Claude 88%/.test(item().text), '자동으로 다시 받음', 15000);
+  const lines = fs.readFileSync(log, 'utf8').trim().split('\n');
+  assert.strictEqual(lines.length, 1, '한 번만');
+  assert.strictEqual(lines[0], `${project}|-p /usage --no-session-persistence --strict-mcp-config --mcp-config {"mcpServers":{}}|entry=none|cc=none`, '이 폴더에서, MCP 서버 없이, 기록 없이, 이 세션의 표시를 빼고');
+  assert.match(item().tooltip.value, /re-check this every 15 minutes/);
+  assert.match(item().tooltip.value, /never reads your login/);
+  // 값이 새것이면 다시 돌리지 않는다
+  await sleep(4500);
+  assert.strictEqual(fs.readFileSync(log, 'utf8').trim().split('\n').length, 1, '새 값이면 다시 받지 않음');
+  // 누르면(상태 표시줄 명령) 바로 받는다
+  assert.strictEqual(item().command, 'claudeSessionChanges.refreshUsage');
+  stub.commands.get('claudeSessionChanges.refreshUsage')();
+  await waitFor(() => fs.readFileSync(log, 'utf8').trim().split('\n').length === 2, '눌러서 다시 받음', 10000);
+  delete process.env.CLAUDE_CODE_ENTRYPOINT;
+  delete process.env.CLAUDECODE;
+  stub.changeConfig('usageRefreshMinutes', 0);
+});
+
+test('세션 숫자도 오른쪽(사용량 바로 왼쪽), SDK로 돌린 짧은 실행(claude -p)은 실행 중인 세션으로 세지 않는다', () => {
+  const st = stub.statusItems.find((i) => i.id === 'claudeSessionChanges.status');
+  assert.strictEqual(st.alignment, 2);
+  assert.ok(st.priority > item().priority, '오른쪽 묶음에서 사용량보다 왼쪽');
+  const { readRegistry } = require('../scanner.js');
+  const SIDX = 'abcd0000-1111-4111-8111-111111111111';
+  fx.registerSession(home, process.pid, SIDX, { status: 'busy', cwd: project, entrypoint: 'sdk-cli', name: 'x', nameSource: 'derived' });
+  assert.ok(!readRegistry().has(SIDX), 'claude -p(entrypoint sdk-cli)는 뺀다');
+  fx.registerSession(home, process.pid, SIDX, { status: 'busy', cwd: project, entrypoint: 'claude-vscode', name: 'x', nameSource: 'derived' });
+  assert.ok(readRegistry().has(SIDX), '보통 세션은 센다');
+  fs.unlinkSync(path.join(home, '.claude', 'sessions', process.pid + '.json'));
+});
+
 test.after(() => { ext.deactivate(); });

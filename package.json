@@ -2,7 +2,7 @@
   "name": "session-watchtower",
   "displayName": "Session Watchtower for Claude Code",
   "description": "%description%",
-  "version": "0.25.1",
+  "version": "0.26.0",
   "scripts": {
     "test": "node --test test/*.test.js",
     "shot": "bash tools/screenshot/run.sh"
@@ -207,6 +207,12 @@
         "title": "%command.planTeam%",
         "category": "Session Watchtower",
         "icon": "$(lightbulb)"
+      },
+      {
+        "command": "claudeSessionChanges.refreshUsage",
+        "title": "%command.refreshUsage%",
+        "category": "Session Watchtower",
+        "icon": "$(sync)"
       },
       {
         "command": "claudeSessionChanges.checkMcp",
@@ -462,6 +468,13 @@
           "type": "boolean",
           "default": true,
           "description": "%config.usageStatusBar%"
+        },
+        "claudeSessionChanges.usageRefreshMinutes": {
+          "type": "number",
+          "default": 15,
+          "minimum": 0,
+          "maximum": 240,
+          "description": "%config.usageRefreshMinutes%"
         },
         "claudeSessionChanges.notifyWaiting": {
           "type": "boolean",

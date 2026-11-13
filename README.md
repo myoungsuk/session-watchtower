@@ -26,7 +26,7 @@ If you run several Claude Code sessions at once, you lose track quickly: which o
 - **Plan usage in the status bar**: how much of your Claude Code and Codex limits you have used, read from files already on your machine.
 - **MCP servers**: the MCP servers Claude Code uses in this folder (yours, this folder's, the project's, plugins' and claude.ai connectors) and Codex's, with a status check and a switch to turn a Claude Code server off for this folder.
 
-It never touches your project files. Nothing leaves your machine, except when you press *Check status* in the MCP Servers view: that runs Claude Code's own `claude mcp list`, which connects to your servers the way a new session does.
+It never touches your project files and never reads your Claude login. The extension itself sends nothing anywhere; two features run Claude Code's own commands that do: *Check status* in the MCP Servers view (`claude mcp list`) and the plan usage re-check (`claude -p /usage`).
 
 ## Contents
 
@@ -138,6 +138,8 @@ The **board** button on a group opens its board, a page for the whole group:
 | Changes no session log explains | Uncommitted files in the group's repositories that changed within the time range but are in no session log: edited by hand or by another tool. Older uncommitted files, such as backups never added to git, are left out. Check these before you build a release |
 | Instructions and results | What you typed to the group's sessions, newest first, with the first line of each session's last answer to it (people who ask their sessions to lead with the conclusion get a one-line result). Messages from other sessions and system notes are left out, and the same message sent to several sessions is shown once. Each session has its own color, also in the Sessions table; click a session name to open it. Long rows show three lines; click a row to read all of it. Rows are split into pages (`boardPageSize`, 20 by default) |
 | Shared memo | A Markdown file the sessions also read and write, such as a coordination board with decisions and handoff notes. Link an existing file, or create a new one with sections for decisions waiting, the decision log and handoff: in the project folder (sessions read it without asking; you pick the place) or in the extension's storage (the project stays untouched, but a session may ask before reading a file outside the project). It is shown as rendered Markdown and refreshes when the file changes |
+
+**The lead hands out roles on its own.** For every group the extension keeps a team roster file in its private storage: each session's name, tool, state, message address (the name Claude Code sessions use to message each other) and role, plus who joined or left and when. It is rewritten whenever the group changes. The lead's role note points to this file and tells the lead to re-read it with every report, give each new session a role and a first instruction, share out the work of a session that left, write the roles in the board table, and tell sessions about changes directly when they have a message address. The extension itself still never types into a session.
 
 Click a heading (Waiting for you, Sessions, Instructions and results, Shared memo) to fold that part away, and again to open it (Enter or Space work too). The board remembers what you folded for each group.
 
@@ -273,12 +275,16 @@ The right side of the status bar shows how much of your plan limits you have use
 
 | | Where the number comes from | How fresh |
 |---|---|---|
-| Claude | The usage Claude Code saves in `~/.claude.json` when it checks your limits (overall and per model, 5 hours and 7 days when your plan has them) | Only as fresh as Claude Code's last check. Claude Code does not re-check on every message (in one test the value stayed the same for 47 minutes while sessions worked); the tooltip says when an hour has passed, and running `/usage` in Claude Code makes it check |
+| Claude | The usage Claude Code saves in `~/.claude.json` when it checks your limits (overall and per model, 5 hours and 7 days when your plan has them) | Claude Code does not re-check on every message (in one test the value stayed the same for 47 minutes while sessions worked). So while you use Claude, the extension has Claude Code re-check every 15 minutes (`usageRefreshMinutes`), and a click on the item re-checks now |
 | Codex | The limits recorded in your most recent Codex session log | Updated after every Codex turn; the last value is kept until its limit resets |
 
 A limit whose reset time has passed is hidden, because its number is out of date. Turn the item off with `usageStatusBar`.
 
-**Light on CPU.** Some usage extensions re-read every log or ask a server again and again. This one makes no network requests and reads no logs for it: on each check (every `pollSeconds`) it only looks at the size and time of two files, and reads them only when they changed. Measured on a real machine: 0.004 ms per check when nothing changed; about 1 ms to read Claude Code's settings file and about 1 ms for the end of a Codex log when they did.
+**How the re-check works.** The extension runs Claude Code's own local command `claude -p /usage` (without MCP servers and without saving a conversation), and Claude Code fetches and saves the usage itself. The extension never reads your login or talks to Anthropic. It runs only when the saved value is older than `usageRefreshMinutes` and a Claude session worked since, at most once per interval across all windows, and it pauses for an hour when it gets nothing new (for example when Claude Code is not signed in to a subscription). One re-check took about 3 seconds and 3 seconds of CPU on a test machine; it does not call a model, so it does not use your limits. Set `usageRefreshMinutes` to 0 to turn it off.
+
+**Light on CPU.** Some usage extensions re-read every log or ask a server again and again. This one reads no logs for it: on each check (every `pollSeconds`) it only looks at the size and time of two files, and reads them only when they changed. Measured on a real machine: 0.004 ms per check when nothing changed; about 1 ms to read Claude Code's settings file and about 1 ms for the end of a Codex log when they did. The only heavier part is the re-check above, at most every 15 minutes while you work.
+
+The session counts sit right next to the usage, on the right side of the status bar.
 
 ## Themes
 
@@ -305,7 +311,7 @@ Session state is read from the files Claude Code writes in `~/.claude/sessions/`
 - **It keeps** its own files in VS Code's private storage for this extension: a read cache, the list of archived sessions, the files you silenced for overlap warnings, and an index of the messages you typed (for the conversation search).
 - **Groups** (names, members, roles and the linked memo file) are kept in the same private storage. A memo file you create from a board goes either there or, only if you choose it, to the place you pick in your project; a memo file you link is only read.
 - **It writes outside that storage only when you ask it to**: renaming a session appends one title line to that session's log, and an MCP switch changes this folder's `disabledMcpServers` list in `~/.claude.json`, both exactly as Claude Code does it. Your project files are never changed.
-- **Network.** The extension makes no network requests and collects no telemetry. *Check status* in the MCP Servers view runs Claude Code's `claude mcp list`, and that program connects to your MCP servers.
+- **Network.** The extension makes no network requests and collects no telemetry. Two features run Claude Code's own commands, which do connect: *Check status* in the MCP Servers view (`claude mcp list`, connects to your MCP servers) and the usage re-check (`claude -p /usage`, asks Anthropic for your usage). The extension never reads your Claude login.
 
 ## Requirements and limitations
 
@@ -338,6 +344,7 @@ All settings start with `claudeSessionChanges.`
 | `pollSeconds` | 5 | How often to check for new log lines. |
 | `statusBar` | true | Show the status bar summary. |
 | `usageStatusBar` | true | Show Claude Code and Codex plan usage in the status bar. |
+| `usageRefreshMinutes` | 15 | While you use Claude, have Claude Code re-check the usage this often (0 = never). |
 | `notifyWaiting` | true | Notify when a session in this folder starts waiting for you. |
 | `notifyOverlap` | true | Notify when a session changes a file that another session also changed. |
 | `overlapIgnore` | Claude's memory folder | Glob patterns of files that never get an overlap warning. |
@@ -356,6 +363,7 @@ Available from the Command Palette under **Session Watchtower**, and from the me
 
 | Command | What it does |
 |---|---|
+| Re-check Claude plan usage now | Have Claude Code fetch your current usage (also a click on the usage item). |
 | Check MCP server status | Open the MCP Servers view and check every server of this folder. |
 | Start a team with a lead session | Copy a request that makes a session the lead: it recommends the team, creates the team board and then takes reports and gives instructions. |
 | New group / Open a group board / Rename a group / Delete a group | Work with groups (deleting a group leaves its sessions as they are). |
@@ -391,7 +399,8 @@ Claude Code 세션을 여러 개 돌릴 때 **어느 세션이 일하는 중이�
 - **정리**: 보관함, 세션 이름 바꾸기, 변경 요약을 마크다운으로 복사.
 - **바깥에서 열기**: 데스크톱 알림 같은 다른 프로그램이 `vscode://kms-labs.session-watchtower/open?title=…` 주소로 그 세션의 대화를 열 수 있습니다.
 - **Codex** 세션도 함께 나옵니다.
-- **요금제 사용량**: 상태 표시줄 오른쪽에 Claude Code·Codex 한도를 몇 % 썼는지(예: `Claude 83% · Fable 21% · Codex 23%`) 보여 줍니다. Fable처럼 모델마다 따로 있는 주간 한도도 따로 나옵니다. 마우스를 올리면 칸별 값, 초기화 시각, 모델이 주간 한도의 몇 %까지 쓸 수 있는지, 이번 주 사용 비율, 몇 분 전 값인지가 나옵니다. Claude는 Claude Code가 `~/.claude.json`에 받아 둔 값이라 Claude Code가 다시 확인할 때만 바뀝니다(`/usage`를 열면 확인). Codex는 마지막 Codex 기록의 값입니다. 인터넷에 묻지 않고, 두 파일의 크기·시각만 보다가 바뀌었을 때만 읽어서 CPU를 거의 쓰지 않습니다.
+- **요금제 사용량**: 상태 표시줄 오른쪽에 Claude Code·Codex 한도를 몇 % 썼는지(예: `Claude 83% · Fable 21% · Codex 23%`) 보여 줍니다. Fable처럼 모델마다 따로 있는 주간 한도도 따로 나옵니다. 마우스를 올리면 칸별 값, 초기화 시각, 모델이 주간 한도의 몇 %까지 쓸 수 있는지, 이번 주 사용 비율, 몇 분 전 값인지가 나옵니다. Claude는 Claude Code가 `~/.claude.json`에 받아 둔 값이고, Claude를 쓰는 동안 15분마다 Claude Code 자신의 명령(`claude -p /usage`, 모델을 부르지 않음)으로 다시 확인하게 합니다. 누르면 바로 확인합니다. 확장은 로그인 정보를 읽지 않습니다. Codex는 마지막 Codex 기록의 값입니다. 세션 숫자도 사용량 바로 옆(오른쪽)에 있습니다. 인터넷에 묻지 않고, 두 파일의 크기·시각만 보다가 바뀌었을 때만 읽어서 CPU를 거의 쓰지 않습니다.
+- **대장이 스스로 역할 나누기**: 그룹마다 팀 명단 파일(세션 이름·도구·상태·메시지 주소·역할·들어오고 빠진 기록)을 확장 저장소에 쓰고 그룹이 바뀔 때마다 새로 씁니다. 대장의 "역할 안내"에 명단 경로와 규칙(새 세션에 역할과 첫 지시, 빠진 세션의 일 나누기, 보드 표에 역할 적기, 메시지 주소로 직접 알리기)이 들어갑니다.
 - **보드 목차 접기**: 그룹 보드의 나를 기다리는 것·세션·지시와 결과·공유 메모 제목을 누르면 접히고, 그룹마다 기억합니다.
 - **MCP 서버 창**: 이 폴더에서 Claude Code가 쓰는 MCP 서버(직접 추가·이 폴더·프로젝트 `.mcp.json`·플러그인·claude.ai 커넥터)와 Codex 서버를 봅니다. "상태 확인"은 누를 때만 `claude mcp list`를 실행합니다(서버마다 한 번 붙어 보고 로컬 서버는 잠깐 실행). 스위치는 Claude Code의 `/mcp disable`과 같은 곳(`~/.claude.json`의 이 폴더 `disabledMcpServers`)에 써서 **이 폴더에서만** 끄고 켭니다. 새로 여는 세션부터 적용되고, 알림과 창 맨 위에 "되돌리기"가 있습니다. 명령·주소·환경 변수 값은 화면에 나오지 않습니다. Codex 서버는 보기만 합니다.
 

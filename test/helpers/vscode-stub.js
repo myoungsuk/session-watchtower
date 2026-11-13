@@ -12,7 +12,8 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
   const webviewProviders = {};
   const statusItems = [];
   const reveals = [];
-  const state = { contentProvider: null, decoProvider: null, decoProviders: [], config: { ...config } };
+  // 사용량 다시 받기(claude -p /usage)는 시험에서 진짜 claude를 띄우지 않게 기본으로 끈다(그 시험만 켠다)
+  const state = { contentProvider: null, decoProvider: null, decoProviders: [], config: { usageRefreshMinutes: 0, ...config } };
   const bundle = language === 'ko' ? JSON.parse(fs.readFileSync(path.join(extDir, 'l10n', 'bundle.l10n.ko.json'), 'utf8')) : {};
 
   class EventEmitter { constructor() { this.ls = []; this.event = (f) => { this.ls.push(f); return { dispose() {} }; }; } fire(v) { this.ls.forEach((f) => f(v)); } }

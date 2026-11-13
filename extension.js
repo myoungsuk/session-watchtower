@@ -70,6 +70,7 @@ function cfg() {
     archiveAfter: String(c.get('archiveAfter', 'claude')),
     statusBar: c.get('statusBar', true) !== false,
     usageStatusBar: c.get('usageStatusBar', true) !== false,
+    usageRefreshMinutes: (() => { const v = Number(c.get('usageRefreshMinutes', 15)); return !isFinite(v) || v <= 0 ? 0 : Math.max(5, Math.min(240, v)); })(),
     includeCodex: c.get('includeCodex', true) !== false,
     attentionDir: expandHome(String(c.get('attentionMarkerDir', '~/.cache/claude-attention') || '')),
   };
@@ -1136,6 +1137,19 @@ function roleBrief(groupId, sid) {
     if (mixed) r.push(memo ? '이 그룹에는 Claude Code 세션과 Codex 세션이 섞여 있어 서로 메시지를 직접 보낼 수 없습니다. 주고받을 내용은 공유 메모에 적습니다.' : '이 그룹에는 Claude Code 세션과 Codex 세션이 섞여 있어 서로 메시지를 직접 보낼 수 없습니다. 주고받을 내용은 사용자에게 전해 달라고 합니다.');
     if (memo) r.push('일을 멈추거나 대화를 정리하기 전에 공유 메모의 "인계"에 넘길 내용을 짧게 적습니다.');
     r.forEach((x, i) => L1.push(`${i + 1}. ${x}`));
+    if (isLead) {
+      L1.push('', '역할 나누기 (대장이 스스로 합니다):', `- 팀 명단: ${rosterPath(groupId) || '(없음)'}`,
+        '  Session Watchtower가 그룹에 세션이 들어오거나 빠질 때, 상태·역할이 바뀔 때마다 새로 쓰는 파일입니다. 보고를 받을 때와 새 일을 나눌 때마다 다시 읽습니다.');
+      const k = [
+        '명단의 세션마다 지금 할 일에 맞는 역할을 정합니다. 대장과 배포는 고정이고(바꾸려면 사용자 승인), 나머지는 할 일이 바뀔 때마다 바꿉니다.',
+        memo ? '정한 역할은 공유 메모의 "세션과 역할" 표에 적습니다: 역할 칸에는 짧은 이름(개발·시험·검토·문서·배포 등), 자세한 내용은 맡은 범위 칸. 세션 이름은 명단의 굵은 이름 그대로 씁니다(Session Watchtower가 이 표를 읽어 꼬리표를 바꿉니다).'
+          : '공유 메모가 아직 없습니다. 보드 파일을 만들어 "세션과 역할" 표에 역할을 적고, 사용자에게 Session Watchtower 그룹 보드에서 그 파일을 연결해 달라고 부탁합니다.',
+        '명단에 새 세션이 보이면 표에 줄을 넣고 역할과 첫 지시를 줍니다. 빠진 세션은 줄을 지우고, 하던 일을 남은 세션에 나눕니다. 세션이 너무 적거나 많으면 사용자에게 늘리거나 줄이자고 제안합니다.',
+        '역할이나 할 일이 바뀐 세션에는 바로 알립니다: 명단에 메시지 주소가 있으면 그 이름으로 메시지를 보내고, 없으면(Codex·꺼진 세션) 공유 메모에 적고 사용자에게 붙여 넣을 글을 줍니다.',
+        '자기 변경을 자기가 검토·시험하지 않게, 같은 파일을 두 세션이 동시에 고치지 않게 나눕니다.',
+      ];
+      k.forEach((x, i) => L1.push(`${i + 1}. ${x}`));
+    }
     L1.push('', '이 안내를 읽었으면 내 역할을 한 줄로 확인해 주세요.');
   } else {
     L1.push(isLead ? `[Team note] This session is the lead of the group "${g.name}"${effAll.get(sid).extra ? ` (also: ${effAll.get(sid).extra})` : ''}. The user talks only to the lead; the other sessions get their instructions from the lead and report to it.` : `[Team note] This session is ${role ? `the ${role} member` : 'a member'} of the group "${g.name}".`);
@@ -1153,6 +1167,19 @@ function roleBrief(groupId, sid) {
     if (mixed) r.push(memo ? 'This group mixes Claude Code and Codex sessions, which cannot message each other directly. Exchange work through the shared memo.' : 'This group mixes Claude Code and Codex sessions, which cannot message each other directly. Ask the user to pass things on.');
     if (memo) r.push('Before you stop or clear the conversation, write a short handoff under "Handoff" in the shared memo.');
     r.forEach((x, i) => L1.push(`${i + 1}. ${x}`));
+    if (isLead) {
+      L1.push('', 'Handing out roles (the lead does this on its own):', `- Team roster: ${rosterPath(groupId) || '(none)'}`,
+        '  Session Watchtower rewrites this file whenever a session joins or leaves the group, or a state or role changes. Re-read it whenever a report comes in and before handing out work.');
+      const k = [
+        'Give every session in the roster a role that fits the current work. The lead and the deployer are fixed (changing them needs the user\'s approval); change the others whenever the work changes.',
+        memo ? 'Write the roles in the "Sessions and roles" table of the shared memo: a short name in the role column (develop, test, review, docs, deploy and so on), details in the scope column, and each session\'s name exactly as the bold name in the roster (Session Watchtower reads this table for its role tags).'
+          : 'There is no shared memo yet. Create a board file with a "Sessions and roles" table, write the roles there, and ask the user to link the file on the Session Watchtower group board.',
+        'When a new session appears in the roster, add a row and give it a role and a first instruction. When a session leaves, remove its row and share out its work. If there are too few or too many sessions for the work, suggest adding or removing some to the user.',
+        'Tell a session right away when its role or work changes: if the roster shows a message address, message it by that name; otherwise (Codex, or a session that is off) write it in the shared memo and give the user a note to paste.',
+        'Never let a session review or test its own change, and never have two sessions change the same files at once.',
+      ];
+      k.forEach((x, i) => L1.push(`${i + 1}. ${x}`));
+    }
     L1.push('', 'When you have read this, confirm your role in one line.');
   }
   return L1.join('\n') + '\n';
@@ -1167,6 +1194,93 @@ async function copyRoleBrief(groupId, sid) {
   const canOpen = s && (s.agent === 'codex' ? UUID_RE.test(codexId(s.sid)) : inWorkspace(s));
   const pick = await vscode.window.showInformationMessage(L('Copied the role note for "{0}". Paste it into that session.', s ? s.title : sid.slice(0, 8)), ...(canOpen ? [open] : []));
   if (pick === open) openClaudeSession(sid);
+}
+
+// ---------- 팀 명단 파일 ----------
+// 대장이 읽는 명단: 그룹에 세션이 들어오거나 빠질 때, 이름·상태·역할이 바뀔 때마다 확장 저장소에 새로 쓴다(프로젝트 파일은 건드리지 않음).
+// 확장은 세션에 글을 넣을 수 없으니, 대장이 이 파일을 다시 읽어 새로 온 세션을 알아채고 역할을 나눈다.
+// 실행 중인 Claude Code 세션은 "메시지 주소"(Claude Code가 세션끼리 메시지를 보낼 때 쓰는 이름)를 함께 적어 대장이 직접 지시할 수 있게 한다.
+const ROSTER_EVENTS_MAX = 20;
+const rosterWritten = new Map(); // 그룹 ID → 마지막으로 쓴 내용(시각 줄 뺀 것)
+function rosterDir() { return ctx && ctx.globalStorageUri ? path.join(ctx.globalStorageUri.fsPath, 'teams') : null; }
+function rosterPath(id) { const d = rosterDir(); return d ? path.join(d, String(id).replace(/[^\w-]/g, '_') + '.md') : null; }
+const cell = (v) => String(v == null ? '' : v).replace(/\|/g, '/').replace(/\s+/g, ' ').trim();
+function stampKst(ms) {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function rosterBody(g, events) {
+  const ko = isKo();
+  const eff = effectiveRoles(g);
+  const lead = leadOf(g);
+  const sids = Object.keys(g.members).sort((a, b) => Number(b === lead) - Number(a === lead));
+  const rows = sids.map((sid) => {
+    const s = sessionBySid(sid);
+    const e = eff.get(sid) || {};
+    const title = s ? s.title : sid.slice(0, 8);
+    const codex = (s && s.agent === 'codex') || sid.startsWith('codex:');
+    const state = s ? stateOf(s).short : (ko ? '찾지 못함' : 'not found');
+    const addr = s && s.alive && !codex && s.peer ? s.peer : '';
+    const role = sid === lead ? (ko ? '대장' : 'Lead') + (e.extra ? ' · ' + e.extra : '') : e.role || '';
+    return `| **${cell(title)}** | ${codex ? 'Codex' : 'Claude Code'} | ${cell(state)} | ${cell(addr) || '-'} | ${cell(role) || '-'} | ${sid.replace(/^codex:/, '').slice(0, 8)} |`;
+  });
+  const out = [];
+  if (ko) {
+    out.push(`# 팀 명단: ${cell(g.name)}`, '',
+      'Session Watchtower가 그룹에 세션이 들어오거나 빠질 때, 이름·상태·역할이 바뀔 때마다 이 파일을 새로 씁니다. 고치지 마세요(다시 덮어씁니다).',
+      '대장은 보고를 받을 때와 일을 나눌 때마다 이 파일을 다시 읽고, 새로 들어온 세션에는 역할과 첫 지시를 주고, 빠진 세션이 하던 일은 남은 세션에 나눕니다.',
+      '"메시지 주소"가 있는 세션은 그 이름으로 직접 메시지를 보낼 수 있습니다(Claude Code의 세션 간 메시지). 없으면 공유 메모에 적고 사용자에게 붙여 넣을 글을 줍니다.', '',
+      '| 세션 이름 | 도구 | 상태 | 메시지 주소 | 역할 | 세션 ID |', '|---|---|---|---|---|---|', ...(rows.length ? rows : ['| (아직 없음) | | | | | |']));
+    if (g.memo) out.push('', `공유 메모(보드): ${g.memo}`);
+    out.push('', '## 최근 바뀐 것 (최근 것이 위)', ...(events.length ? events.map((x) => `- ${stampKst(x.t)} "${cell(x.title)}" ${x.kind === 'join' ? '들어옴' : '빠짐'}`) : ['- (없음)']));
+  } else {
+    out.push(`# Team roster: ${cell(g.name)}`, '',
+      'Session Watchtower rewrites this file whenever a session joins or leaves the group, or a name, state or role changes. Do not edit it (it is overwritten).',
+      'The lead re-reads it whenever a report comes in and before handing out work: give each new session a role and a first instruction, and share out the work of a session that left.',
+      'A session with a "message address" can be messaged directly by that name (Claude Code\'s messages between sessions). Without one, write it in the shared memo and give the user a note to paste.', '',
+      '| Session name | Tool | State | Message address | Role | Session ID |', '|---|---|---|---|---|---|', ...(rows.length ? rows : ['| (none yet) | | | | | |']));
+    if (g.memo) out.push('', `Shared memo (board): ${g.memo}`);
+    out.push('', '## Recent changes (newest first)', ...(events.length ? events.map((x) => `- ${stampKst(x.t)} "${cell(x.title)}" ${x.kind === 'join' ? 'joined' : 'left'}`) : ['- (none)']));
+  }
+  return out.join('\n') + '\n';
+}
+
+// 그룹마다 명단 파일을 쓴다(내용이 바뀌었을 때만). 들어오고 빠진 세션은 옆의 .json에 지난 명단과 비교해 기록한다
+function writeTeamRosters() {
+  const dir = rosterDir();
+  if (!dir) return;
+  const groups = loadGroups().groups || [];
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const keep = new Set();
+    for (const g of groups) {
+      const file = rosterPath(g.id);
+      const side = file.replace(/\.md$/, '.json');
+      keep.add(path.basename(file)); keep.add(path.basename(side));
+      let st = null;
+      try { st = JSON.parse(fs.readFileSync(side, 'utf8')); } catch { st = null; }
+      const now = {};
+      for (const sid of Object.keys(g.members)) { const s = sessionBySid(sid); now[sid] = s ? s.title : sid.slice(0, 8); }
+      let events = st && Array.isArray(st.events) ? st.events : [];
+      let changed = !st;
+      if (st && st.members && typeof st.members === 'object') {
+        const t = Date.now();
+        for (const sid of Object.keys(now)) if (!(sid in st.members)) { events.unshift({ t, kind: 'join', title: now[sid] }); changed = true; }
+        for (const sid of Object.keys(st.members)) if (!(sid in now)) { events.unshift({ t, kind: 'leave', title: st.members[sid] }); changed = true; }
+        events = events.slice(0, ROSTER_EVENTS_MAX);
+      }
+      if (changed || !st || JSON.stringify(st.members) !== JSON.stringify(now)) fs.writeFileSync(side, JSON.stringify({ members: now, events }));
+      const body = rosterBody(g, events);
+      if (rosterWritten.get(g.id) === body && fs.existsSync(file)) continue;
+      const stamp = (isKo() ? '마지막으로 바뀐 때: ' : 'Last changed: ') + stampKst(Date.now()) + '\n';
+      fs.writeFileSync(file, body.replace(/\n\n/, '\n\n' + stamp + '\n'));
+      rosterWritten.set(g.id, body);
+    }
+    // 지운 그룹의 명단은 지운다
+    for (const f of fs.readdirSync(dir)) if (!keep.has(f) && /\.(md|json)$/.test(f)) { try { fs.unlinkSync(path.join(dir, f)); } catch { /* 이미 없음 */ } }
+  } catch { /* 저장소를 못 쓰면 명단만 빠진다 */ }
 }
 
 // ---------- 협업 보드 틀 ----------
@@ -1248,6 +1362,7 @@ async function planTeam(groupId) {
       '이 세션이 이 일의 대장(리드)을 맡아 주세요. 사용자는 앞으로 이 세션하고만 이야기하고, 다른 세션은 이 세션이 지시하고 보고받습니다.', '',
       `만들 것: ${what.trim()}`, `작업 폴더: ${ws ? ws.uri.fsPath : '(없음)'}`, `쓸 수 있는 세션 수(이 대장 세션 포함): ${n}`, `도구: ${toolName}`);
     if (have.length) out.push('', `지금 "${g.name}" 그룹에 있는 세션(되도록 이 세션들을 쓰는 쪽으로):`, ...have);
+    if (g) out.push('', `팀 명단 파일: ${rosterPath(g.id)}`, '(Session Watchtower가 그룹에 세션이 들어오거나 빠질 때마다 새로 씁니다. 4단계에서 보고를 받을 때마다 다시 읽고, 새로 온 세션에는 역할과 첫 지시를 주고, 빠진 세션의 일은 나눕니다. 메시지 주소가 있는 세션에는 직접 메시지를 보낼 수 있습니다.)');
     out.push('', '고를 수 있는 역할(직접 만든 역할도 됩니다):', ...roles, '',
       '## 1단계: 팀 구성 추천 (이 단계에서는 파일을 만들거나 고치지 마세요)',
       '판단 기준:',
@@ -1279,6 +1394,7 @@ async function planTeam(groupId) {
       'Please be the lead for this work. From now on the user talks only to this session; the other sessions get their instructions from you and report to you.', '',
       `What I will build: ${what.trim()}`, `Project folder: ${ws ? ws.uri.fsPath : '(none)'}`, `Sessions available (including this lead): ${n}`, `Tool: ${toolName}`);
     if (have.length) out.push('', `Sessions already in the group "${g.name}" (prefer using these):`, ...have);
+    if (g) out.push('', `Team roster file: ${rosterPath(g.id)}`, '(Session Watchtower rewrites it whenever a session joins or leaves the group. In step 4, re-read it whenever a report comes in: give new sessions a role and a first instruction, and share out the work of sessions that left. Sessions with a message address can be messaged directly.)');
     out.push('', 'Roles to choose from (custom roles are fine too):', ...roles, '',
       '## Step 1: recommend the team (do not create or change files in this step)',
       'How to decide:',
@@ -2066,6 +2182,7 @@ function rebuildSessions() {
   }
   sessionsWebview.post();
   refreshBoards();
+  writeTeamRosters();
 }
 
 class Provider {
@@ -3443,11 +3560,61 @@ function claudeLimitLabel(w) {
   return w.scope ? span + ' · ' + w.scope : span;
 }
 
+// Claude 사용량 다시 받기: 토큰을 직접 만지지 않고 Claude Code 자신의 명령(claude -p /usage)을 돌려 Claude Code가 받아 두게 한다.
+// 실제로 쓰는 동안만(받아 둔 값보다 나중에 Claude 세션이 일했을 때), usageRefreshMinutes보다 오래됐을 때만, 창 여러 개면 하나만 돌린다.
+// 한 번에 약 3초·CPU 3초(측정). 모델을 부르지 않는 명령이라 사용량은 줄지 않는다. 받지 못하면(로그인 안 함 등) 1시간 쉰다.
+let usageRefreshing = false;
+let usageBackoffUntil = 0;
+const USAGE_BACKOFF_MS = 3600e3;
+function usageStampFile() { return ctx && ctx.globalStorageUri ? path.join(ctx.globalStorageUri.fsPath, 'usage-refresh.stamp') : null; }
+function cleanClaudeEnv() {
+  // 이 확장 호스트가 Claude 세션 안에서 떴더라도 그 세션의 것으로 보이지 않게(세션 ID·메시지 통로 등은 빼고 설정 폴더는 둔다)
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) if (/^(CLAUDECODE|CLAUDE_PID|CLAUDE_CODE_(ENTRYPOINT|SESSION_ID|SESSION_ATTENDED|MESSAGING_\w+|CHILD_SESSION|SSE_PORT))$/.test(k)) delete env[k];
+  return env;
+}
+function refreshClaudeUsage(force) {
+  if (usageRefreshing) return false;
+  const minutes = cfg().usageRefreshMinutes;
+  const now = Date.now();
+  if (!force) {
+    if (!minutes || !cfg().usageStatusBar || now < usageBackoffUntil) return false;
+    const cur = usage.readClaude();
+    if (cur && now - cur.at < minutes * 60e3) return false;
+    // 받아 둔 값 이후에 Claude 세션이 일했을 때만(가만히 있는데 계속 받지 않는다)
+    const since = cur ? cur.at : 0;
+    if (!raw.some((s) => s.agent !== 'codex' && (s.lastActivity || 0) > since)) return false;
+  }
+  // 창이 여러 개면 하나만: 같은 컴퓨터의 창들이 함께 보는 표시 파일
+  const stamp = usageStampFile();
+  if (stamp && !force) {
+    try { if (now - fs.statSync(stamp).mtimeMs < Math.max(minutes, 5) * 60e3) return false; } catch { /* 처음 */ }
+  }
+  try { if (stamp) { fs.mkdirSync(path.dirname(stamp), { recursive: true }); fs.writeFileSync(stamp, String(now)); } } catch { /* 표시만 못 함 */ }
+  const before = usage.readClaude();
+  const bin = claudeBin();
+  const win = process.platform === 'win32';
+  const shell = win && !/\.exe$/i.test(bin);
+  // MCP 서버는 띄우지 않고(빈 설정), 대화 기록도 남기지 않는다
+  const args = ['-p', '/usage', '--no-session-persistence', ...(shell ? [] : ['--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}'])];
+  usageRefreshing = true;
+  if (usageItem && usageShown) usageItem.text = usageItem.text.replace('$(dashboard)', '$(sync~spin)');
+  execFile(bin, args, { cwd: mcpFolder() || os.homedir(), timeout: 60000, maxBuffer: 1024 * 1024, windowsHide: true, shell, env: cleanClaudeEnv() }, () => {
+    usageRefreshing = false;
+    const after = usage.readClaude();
+    if (!after || (before && after.at === before.at)) usageBackoffUntil = Date.now() + USAGE_BACKOFF_MS;
+    usageShown = '';
+    updateUsage();
+  });
+  return true;
+}
+
 function updateUsage() {
   if (!usageItem) return;
   if (!cfg().usageStatusBar) { if (usageShown) { usageItem.hide(); usageShown = ''; } return; }
   const now = Date.now();
   const claude = usage.readClaude();
+  refreshClaudeUsage(false);
   if (cfg().includeCodex) {
     // 가장 최근에 쓴 Codex 세션의 기록 끝만 본다(그 파일이 바뀌었을 때만 읽음)
     let cx = null;
@@ -3476,7 +3643,9 @@ function updateUsage() {
     for (const w of cw) md += row(claudeLimitLabel(w), w.percent, when(w.resetsAt));
     for (const w of cw) if (w.scope && w.share) md += '\n' + L('{0} can use up to {1}% of the weekly limit; it has used {2}% so far.', w.scope, Math.round(w.share.allowance), Math.round(w.share.used)) + '\n';
     if (claude.breakdown && claude.breakdown.length) md += '\n' + L('This week by product: {0}', claude.breakdown.map((r) => r.name + ' ' + Math.round(r.percent) + '%').join(' · ')) + '\n';
-    if (now - claude.at > 3600e3) md += '\n' + L('This is more than an hour old. Claude Code refreshes it when it checks your usage (for example /usage).') + '\n';
+    const mins = cfg().usageRefreshMinutes;
+    if (mins) md += '\n' + L('While you use Claude, Session Watchtower has Claude Code re-check this every {0} minutes. Click to re-check now.', mins) + '\n';
+    else if (now - claude.at > 3600e3) md += '\n' + L('This is more than an hour old. Claude Code refreshes it when it checks your usage (for example /usage).') + '\n';
     md += '\n';
   }
   if (xw.length) {
@@ -3484,7 +3653,7 @@ function updateUsage() {
     for (const w of xw) md += row(spanOfMinutes(w.minutes) || w.key, w.percent, when(w.resetsAt));
     md += '\n';
   }
-  md += L('Read from files already on this computer; nothing is fetched from the internet.');
+  md += cfg().usageRefreshMinutes ? L('Claude Code itself does the re-check (claude -p /usage); the extension never reads your login.') : L('Read from files already on this computer; nothing is fetched from the internet.');
   const key = text + '\u0000' + md;
   if (key === usageShown) return;
   usageShown = key;
@@ -3838,17 +4007,19 @@ function activate(context) {
   vscode.commands.executeCommand('setContext', CTX_ALIVE, aliveOnly);
 
   treeView = vscode.window.createTreeView(VIEW, { treeDataProvider: provider, showCollapseAll: true });
-  statusItem = vscode.window.createStatusBarItem('claudeSessionChanges.status', vscode.StatusBarAlignment.Left, 100);
+  statusItem = vscode.window.createStatusBarItem('claudeSessionChanges.status', vscode.StatusBarAlignment.Right, 101); // 오른쪽, 사용량 바로 왼쪽(사용자 요청)
   statusItem.name = 'Session Watchtower';
   statusItem.command = SESSIONS_VIEW + '.focus';
   usageItem = vscode.window.createStatusBarItem('claudeSessionChanges.usage', vscode.StatusBarAlignment.Right, 100); // 오른쪽(사용자 요청)
   usageItem.name = L('Plan usage');
+  usageItem.command = 'claudeSessionChanges.refreshUsage';
   context.subscriptions.push(
     treeView,
     statusItem,
     usageItem,
     vscode.window.registerWebviewViewProvider(SESSIONS_VIEW, sessionsWebview),
     vscode.window.registerWebviewViewProvider(MCP_VIEW, mcpWebview),
+    vscode.commands.registerCommand('claudeSessionChanges.refreshUsage', () => refreshClaudeUsage(true)),
     vscode.commands.registerCommand('claudeSessionChanges.checkMcp', () => { vscode.commands.executeCommand(MCP_VIEW + '.focus'); return mcpCheck(); }),
     vscode.commands.registerCommand('claudeSessionChanges.openSessionChanges', (arg) => openSessionChanges(arg)),
     vscode.commands.registerCommand('claudeSessionChanges.archiveSession', (arg) => setArchived(arg, true)),
@@ -3923,4 +4094,4 @@ function deactivate() {
   });
 }
 
-module.exports = { activate, deactivate, _test: { parseBoardRoles, hunksToSides, applyEdit, displayDir, fmtTime, sidesForCodex, sameTitle, sessionKeyOf, setCodexCli: (v) => { codexCli = v; hasCodexCli.fixed = true; }, setClaudeBin: (p) => { claudeBinFixed = p; } } };
+module.exports = { activate, deactivate, _test: { usageRefreshing: () => usageRefreshing, parseBoardRoles, hunksToSides, applyEdit, displayDir, fmtTime, sidesForCodex, sameTitle, sessionKeyOf, setCodexCli: (v) => { codexCli = v; hasCodexCli.fixed = true; }, setClaudeBin: (p) => { claudeBinFixed = p; } } };

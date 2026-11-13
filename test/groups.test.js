@@ -465,6 +465,33 @@ test('대장: 그룹에 하나뿐인 고정 지위라 왕관 배지로 맨 위�
   await waitFor(() => panel.lastPayload().lead === null, '보드 대장 칸 없음');
 });
 
+test('팀 명단 파일: 대장이 읽도록 그룹마다 명단(대장 먼저·굵은 이름·도구·상태·메시지 주소·역할)을 쓰고, 빠지고 들어온 세션을 적는다. 대장 역할 안내에 명단과 역할 나누기 규칙이 들어간다', async () => {
+  const g = team('Chatbot ops');
+  const file = path.join(stub.context.globalStorageUri.fsPath, 'teams', g.id + '.md');
+  const read = () => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '');
+  // 앞 시험들에서 Developer를 뺐고(공유 메모), Loner를 보드에서 넣었다(유동 역할)
+  await waitFor(() => /"Loner" joined/.test(read()) && /"Developer" left/.test(read()), '들어오고 빠진 기록');
+  assert.match(read(), /^# Team roster: Chatbot ops\n\nLast changed: \d{4}-\d\d-\d\d \d\d:\d\d\n/);
+  assert.match(read(), /\| Session name \| Tool \| State \| Message address \| Role \| Session ID \|/);
+  assert.match(read(), /\| \*\*Watcher\*\* \| Claude Code \| [^|]+ \| w \| /, '실행 중인 세션은 메시지 주소를 적는다');
+  // 대장을 정하면 명단 맨 위, 대장 역할 안내에 명단 경로와 역할 나누기 규칙
+  await pickRoles(() => web.send({ type: 'role', sid: SID.w }), ['Lead']);
+  await waitFor(() => /\| Role \| Session ID \|\n\|---\|---\|---\|---\|---\|---\|\n\| \*\*Watcher\*\* \|[^\n]*\| Lead \|/.test(read()), '대장이 맨 위');
+  const panel = stub.state.panels.find((p) => !p.disposed);
+  panel.send({ type: 'brief', sid: SID.w });
+  await waitFor(() => /Handing out roles/.test(stub.state.clipboard || ''), '대장 역할 안내');
+  const brief = stub.state.clipboard;
+  assert.ok(brief.includes('Team roster: ' + file), '명단 경로');
+  assert.match(brief, /When a new session appears in the roster, add a row and give it a role and a first instruction/);
+  assert.match(brief, /if the roster shows a message address, message it by that name/);
+  assert.match(brief, /There is no shared memo yet/, '메모가 없으면 보드를 만들라고');
+  panel.send({ type: 'brief', sid: SID.d });
+  await waitFor(() => /This session is .*member of the group/.test(stub.state.clipboard || ''), '작업 세션 역할 안내');
+  assert.ok(!/Handing out roles/.test(stub.state.clipboard), '역할 나누기는 대장 안내에만');
+  await pickRoles(() => web.send({ type: 'role', sid: SID.w }), ['Watch']);
+  await waitFor(() => !/\| Lead \|/.test(read()), '대장 풀림');
+});
+
 test('세션은 그룹 하나에만: 다른 그룹에 넣으면 앞 그룹에서 빠지고 역할은 따라간다. 다른 창이 바꾼 그룹도 반영한다', async () => {
   stub.state.pick = (items) => items.find((i) => /New group/.test(i.label));
   stub.state.input = 'Second';
@@ -493,6 +520,7 @@ test('그룹 이름 바꾸기와 지우기: 지우면 세션은 그대로 목록
   await waitFor(() => !team('Ops'), '그룹 지워짐');
   assert.ok(panel.disposed, '그 그룹의 보드는 닫힌다');
   assert.ok(P().mine.some((r) => r.sid === SID.d), '세션은 목록으로 돌아온다');
+  await waitFor(() => !fs.existsSync(path.join(stub.context.globalStorageUri.fsPath, 'teams', id + '.md')), '지운 그룹의 명단 파일도 지운다');
   const warn = stub.calls.find((c) => c[0] === 'warn' && /Delete the group "Ops"/.test(c[1]));
   assert.deepStrictEqual(warn[2][0], { modal: true }, '지우기 전에 확인을 받는다');
 });

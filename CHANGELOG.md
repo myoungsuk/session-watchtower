@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.26.0
+
+- **Usage stays fresh.** While you use Claude, the extension has Claude Code re-check your plan usage every 15 minutes by running Claude Code's own local `claude -p /usage` (no model call, no saved conversation, no MCP servers; about 3 seconds of CPU). A click on the usage item re-checks now. The extension still never reads your login. Setting `usageRefreshMinutes` (0 = never).
+- **Session counts on the right**, next to the usage.
+- **The lead hands out roles on its own.** Each group gets a team roster file (names, tools, states, message addresses, roles, who joined or left), rewritten when the group changes. The lead's role note points to it and tells the lead to give new sessions a role and a first instruction, share out the work of sessions that left, and tell sessions about changes directly.
+- Short runs started through the SDK (`claude -p`) no longer count as running sessions, as in Claude Code's own list.
+
 ## 0.25.1
 
 - **Per-model limits.** The usage item now reads the limits list Claude Code saves today: the overall weekly limit and a model's own weekly limit (for example `Claude 83% · Fable 21%`), how much of the weekly limit that model may use, and which products the week's usage came from. Older saved values still work.

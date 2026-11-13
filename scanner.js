@@ -1312,6 +1312,8 @@ function readRegistry() {
     if (!d || !d.sessionId || !d.pid) continue;
     const alive = isAlive(d.pid, d.procStart);
     if (!alive) continue;
+    // SDK로 돌린 짧은 실행(claude -p, 사용량 다시 받기 등)은 Claude Code 세션 목록처럼 세지 않는다
+    if (typeof d.entrypoint === 'string' && d.entrypoint.startsWith('sdk-')) continue;
     map.set(d.sessionId, { pid: d.pid, status: d.status || null, waitingFor: typeof d.waitingFor === 'string' ? d.waitingFor : null, statusSince: Number(d.statusUpdatedAt) || null, name: d.name || null, nameSource: d.nameSource || null, cwd: d.cwd || null, entrypoint: d.entrypoint || null });
   }
   return map;
@@ -1923,6 +1925,7 @@ function createModel() {
         sid, title, titleSource,
         agent: main.agent || 'claude',
         address: reg && reg.nameSource === 'derived' ? reg.name : null,
+        peer: reg && reg.name ? String(reg.name).slice(0, 80) : null, // 다른 세션이 메시지를 보낼 때 쓰는 이름(실행 중일 때만)
         // Claude Code가 만든 git worktree(<저장소>/.claude/worktrees/<이름>)는 저장소 이름으로 묶는다
         project: worktree ? path.basename(worktree[1]) : projectCwd ? path.basename(projectCwd) : main.project,
         worktree: worktree ? worktree[2] : null,
