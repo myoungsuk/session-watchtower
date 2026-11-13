@@ -3771,8 +3771,11 @@ function refreshPhoneBoards(force) {
 async function phoneBoardPair() {
   let folder = phoneboard.boardFolder(cfg().phoneBoardFolder);
   if (!folder) {
+    // 처음 쓰는 사람: 휴대폰 보드는 따로 설치하는 프로그램이라는 것부터 알린다(설치한 사람만 폴더를 고르면 된다)
     const pick = L('Choose the folder…');
-    const b = await vscode.window.showInformationMessage(L('Where is the phone board (session-board) installed? Choose its folder (the one with cli.js).'), pick);
+    const more = L('How it works');
+    const b = await vscode.window.showInformationMessage(L('No phone board (session-board) was found on this computer. It is a separate program that is not published yet; if you installed it in another folder, choose that folder (the one with cli.js).'), pick, more);
+    if (b === more) { vscode.commands.executeCommand('extension.open', ctx.extension.id); return; }
     if (b !== pick) return;
     const f = await vscode.window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: L('Use this folder') });
     if (!f || !f[0]) return;
@@ -3818,13 +3821,21 @@ function showPhonePanel(r, boards, folder) {
         vscode.env.clipboard.writeText(m.type === 'copyLink' ? phonePanel.secret.url : phonePanel.secret.code);
         vscode.window.showInformationMessage(m.type === 'copyLink' ? L('Copied the link. It works once, within 10 minutes.') : L('Copied the code. It works once, within 10 minutes.'));
       } else if (m.type === 'copyCmd' && typeof m.text === 'string' && m.text.length < 200) vscode.env.clipboard.writeText(m.text);
-      else if (m.type === 'openBoard' && phonePanel.board) vscode.env.openExternal(vscode.Uri.parse('http://127.0.0.1:' + phonePanel.board.port + '/'));
+      else if (m.type === 'openBoard' && phonePanel.secret && phonePanel.last) {
+        // 보드 주소만 열면 연결 안 된 브라우저는 보드의 "연결이 필요합니다" 화면에서 막힌다 → 지금 코드가 든 링크로 이 브라우저를 연결한다.
+        // 코드는 한 번만 쓰이므로, 휴대폰에는 새 링크가 필요하다고 패널에 표시한다
+        const r0 = phonePanel.last.r;
+        vscode.env.openExternal(vscode.Uri.parse(r0.url));
+        phonePanel.secret = null;
+        phonePanel.webview.html = phoneHtml(phonePanel.webview, { ...r0, used: true }, phonePanel.last.boards, phonePanel.last.folder, phonePanel.last.media);
+      }
       else if (m.type === 'link' && Object.values(TS_LINKS).includes(m.url)) vscode.env.openExternal(vscode.Uri.parse(m.url));
       else if (m.type === 'again') phoneBoardPair();
     });
   }
   phonePanel.secret = { url: r.url, code: r.code };
   phonePanel.board = boards.find((b) => b.local) || boards[0];
+  phonePanel.last = { r, boards, folder, media };
   phonePanel.webview.html = phoneHtml(phonePanel.webview, r, boards, folder, media);
   phonePanel.reveal();
 }
@@ -3872,6 +3883,7 @@ function phoneHtml(webview, r, boards, folder, media) {
   .qr { padding: 6px; background: #fff; border-radius: 6px; line-height: 0; flex: 0 0 auto; }
   .qr.small svg { width: 110px; height: 110px; }
   .qr.big svg { width: 230px; height: 230px; }
+  .qr.used { opacity: 0.25; }
   a { color: var(--vscode-textLink-foreground); }
   code { font-family: var(--vscode-editor-font-family); font-size: 12.5px; padding: 1px 5px; border-radius: 3px; background: var(--vscode-textCodeBlock-background, rgba(128,128,128,.15)); }
   details.pc summary { cursor: pointer; color: var(--vscode-charts-green); }
@@ -3904,12 +3916,13 @@ function phoneHtml(webview, r, boards, folder, media) {
 </div>
 <h2>${esc(L('Board code for your phone'))}</h2>
 <div class="pair">
-  <div class="qr big">${qr(r.url, 6)}</div>
+  <div class="qr big${r.used ? ' used' : ''}">${qr(r.url, 6)}</div>
   <div>
     <div class="muted">${esc(L('Code'))}</div>
     <div class="code">${esc(r.code)}</div>
     <div class="plink">${esc(r.url)}</div>
-    <button data-act="copyLink">${esc(L('Copy link'))}</button><button data-act="copyCode">${esc(L('Copy code'))}</button><button data-act="again">${esc(L('Make a new link'))}</button><button data-act="openBoard">${esc(L('Open the board here'))}</button>
+    ${r.used ? `<div class="warn" style="margin:0 0 8px">${esc(L('This code was used to open the board in this computer\'s browser. For the phone, press "Make a new link".'))}</div><button data-act="again">${esc(L('Make a new link'))}</button>`
+      : `<button data-act="copyLink">${esc(L('Copy link'))}</button><button data-act="copyCode">${esc(L('Copy code'))}</button><button data-act="again">${esc(L('Make a new link'))}</button><button data-act="openBoard" title="${esc(L('Uses this code for the browser on this computer; the phone then needs a new link.'))}">${esc(L('Also open it in this computer\'s browser'))}</button>`}
     <div class="muted">${esc(r.until ? L('Works once, until {0}. A new link makes this one stop working. Do not send it to anyone else.', r.until) : L('Works once, within 10 minutes. A new link makes this one stop working. Do not send it to anyone else.'))}</div>
   </div>
 </div>

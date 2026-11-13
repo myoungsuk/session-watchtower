@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.28.5
+
+- **No dead end on the board's "connection needed" page.** "Also open it in this computer's browser" (was "Open the board here") now opens the board with the current code, so this browser gets connected instead of stopping at the board's "connection needed" page; the panel then says the phone needs a new link.
+- Running *Phone board: make a link* on a computer without session-board now says first that the phone board is a separate program that is not published yet, with *How it works*.
+- Tests now clear `CODEX_HOME`, `CLAUDE_CONFIG_DIR` and `BOARD_STATE_DIR`, so they can never read or change your real settings.
+
 ## 0.28.4
 
 - **Codex sessions open in the Codex panel.** When the Codex extension (openai.chatgpt) is installed, clicking a Codex session opens that conversation in the Codex panel (`vscode://openai.chatgpt/local/<id>`); without it, it still continues in a terminal with `codex resume`.

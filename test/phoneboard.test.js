@@ -140,6 +140,17 @@ test('확장: 보드가 켜져 있으면 세션 창에 단추, 누르면 QR·코
   assert.strictEqual(stub.state.clipboard, 'https://board.example.ts.net/pair?c=AB12CD34');
   const stored = fs.readdirSync(stub.context.globalStorageUri.fsPath).map((f) => { try { return fs.readFileSync(path.join(stub.context.globalStorageUri.fsPath, f), 'utf8'); } catch { return ''; } }).join('');
   assert.ok(!stored.includes('AB12CD34'), '코드를 확장 저장소에 남기지 않는다');
+  // "이 컴퓨터 브라우저로도 보기": 보드 주소만 열면 연결 안 된 브라우저는 "연결이 필요합니다"에서 막히므로, 지금 코드가 든 링크로 연다. 코드는 쓰였으니 휴대폰에는 새 링크가 필요하다고 표시
+  while (Date.now() < until5 + 9000 && !/AB12CD34/.test(panel.webview.html)) await sleep(50);
+  stub.calls.length = 0;
+  panel.send({ type: 'openBoard' });
+  await sleep(30);
+  assert.deepStrictEqual(stub.calls.filter((c) => c[0] === 'openExternal').map((c) => c[1]), ['https://board.example.ts.net/pair?c=AB12CD34']);
+  assert.match(panel.webview.html, /class="qr big used"/);
+  assert.match(panel.webview.html, /This code was used to open the board in this computer&#39;s browser/);
+  panel.send({ type: 'copyCode' });
+  await sleep(20);
+  assert.notStrictEqual(stub.state.clipboard, 'AB12CD34', '쓴 코드는 더 복사하지 않는다');
   // 보드가 꺼지면 단추가 사라지고, 링크를 만들려 하면 안내한다
   a.close(); b.close();
   stub.calls.length = 0;

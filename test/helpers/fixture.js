@@ -12,6 +12,8 @@ function makeHome() {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'swt-home-')));
   process.env.HOME = home;
   process.env.USERPROFILE = home;
+  // 진짜 설정을 가리키는 환경 변수가 있으면 시험이 사용자 파일을 읽고 쓴다(11-13 CODEX_HOME으로 진짜 config.toml을 고친 일) → 시험에서는 늘 지운다
+  for (const k of ['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'BOARD_STATE_DIR']) delete process.env[k];
   const project = path.join(home, 'work', 'demo-app');
   fs.mkdirSync(project, { recursive: true });
   return { home, project, markers: path.join(home, '.cache', 'claude-attention') };

@@ -377,7 +377,6 @@
   "{0} is on again for Codex. New Codex sessions will start it.": "Codex에서 {0}을(를) 다시 켰습니다. 새로 여는 Codex 세션부터 들어갑니다.",
   "Phone board is running. Click for a link to open it on your phone.": "휴대폰 보드가 켜져 있습니다. 누르면 휴대폰으로 여는 링크를 만듭니다.",
   "Choose the folder…": "폴더 고르기…",
-  "Where is the phone board (session-board) installed? Choose its folder (the one with cli.js).": "휴대폰 보드(session-board)가 어디에 설치돼 있나요? 그 폴더(cli.js가 있는 곳)를 골라 주세요.",
   "Use this folder": "이 폴더 쓰기",
   "There is no cli.js in that folder.": "그 폴더에 cli.js가 없습니다.",
   "No phone board is running on this computer (checked port {0}). Start the board first.": "이 컴퓨터에서 휴대폰 보드가 켜져 있지 않습니다(확인한 포트 {0}). 먼저 보드를 켜세요.",
@@ -391,7 +390,6 @@
   "Copy link": "링크 복사",
   "Copy code": "코드 복사",
   "Make a new link": "새 링크 만들기",
-  "Open the board here": "여기서 보드 열기",
   "Works once, until {0}. A new link makes this one stop working. Do not send it to anyone else.": "{0}까지 한 번만 쓸 수 있습니다. 새로 만들면 이 링크는 못 씁니다. 다른 사람에게 보내지 마세요.",
   "Works once, within 10 minutes. A new link makes this one stop working. Do not send it to anyone else.": "10분 안에 한 번만 쓸 수 있습니다. 새로 만들면 이 링크는 못 씁니다. 다른 사람에게 보내지 마세요.",
   "More than one board answers on this computer. This link is for the board in the phone board folder (setting phoneBoard.folder).": "이 컴퓨터에서 보드가 둘 이상 답합니다. 이 링크는 휴대폰 보드 폴더(설정 phoneBoard.folder)에 있는 보드의 것입니다.",
@@ -423,5 +421,9 @@
   "It opens in Chrome or Safari. Add it to the home screen to open it like an app. On an iPhone home-screen app, type only the code.": "Chrome이나 Safari로 열립니다. \"홈 화면에 추가\"를 하면 앱처럼 열 수 있습니다. 아이폰 홈 화면 앱에서는 코드만 넣습니다.",
   "(Optional) Get a buzz when a session waits for you": "(선택) 세션이 나를 기다리면 휴대폰 알림 받기",
   "At the bottom of the board on the phone: Notifications → Get them on this device.": "휴대폰 보드 맨 아래: 알림 → 이 기기로 받기.",
-  "Board code for your phone": "휴대폰으로 찍을 보드 QR"
+  "Board code for your phone": "휴대폰으로 찍을 보드 QR",
+  "No phone board (session-board) was found on this computer. It is a separate program that is not published yet; if you installed it in another folder, choose that folder (the one with cli.js).": "이 컴퓨터에서 휴대폰 보드(session-board)를 찾지 못했습니다. 휴대폰 보드는 따로 설치하는 프로그램이고 아직 공개 전입니다. 다른 폴더에 설치했다면 그 폴더(cli.js가 있는 곳)를 골라 주세요.",
+  "This code was used to open the board in this computer's browser. For the phone, press \"Make a new link\".": "이 코드는 이 컴퓨터 브라우저를 연결하는 데 썼습니다. 휴대폰에는 \"새 링크 만들기\"를 누르세요.",
+  "Uses this code for the browser on this computer; the phone then needs a new link.": "지금 코드를 이 컴퓨터 브라우저에 씁니다. 그다음 휴대폰에는 새 링크가 필요합니다.",
+  "Also open it in this computer's browser": "이 컴퓨터 브라우저로도 보기"
 }
