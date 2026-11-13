@@ -352,5 +352,6 @@
   "{0} is off in this folder. New Claude sessions start without it.": "{0}을(를) 이 폴더에서 껐습니다. 새로 여는 Claude 세션부터 빠집니다.",
   "{0} is on again in this folder. New Claude sessions will start it.": "{0}을(를) 이 폴더에서 다시 켰습니다. 새로 여는 Claude 세션부터 들어갑니다.",
   "Not in the last check": "지난 확인 결과에 없음",
-  "Checking…": "확인 중…"
+  "Checking…": "확인 중…",
+  "Click to fold or unfold.": "누르면 접거나 펼칩니다."
 }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.24.1
+
+- **Fold Instructions and results.** Click the heading on a group board to fold the section away or open it again (also with Enter or Space). The board remembers it for each group, also after closing the board or reloading the window.
+
 ## 0.24.0
 
 - **MCP Servers view.** A new view (collapsed at the bottom of the side bar) lists the MCP servers Claude Code uses in this folder: added by you, added for this folder, the project's `.mcp.json` (with its approval state), plugins and claude.ai connectors, plus Codex's servers from `~/.codex/config.toml` (shown only).

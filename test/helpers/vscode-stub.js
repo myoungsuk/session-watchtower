@@ -111,7 +111,8 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
 
   const context = {
     subscriptions: [],
-    globalState: { get: (k, d) => d, update: async () => {} },
+    // 확장이 기억해 두는 값(접어 둔 칸 등): 같은 시험 파일 안에서는 남는다
+    globalState: { store: {}, get(k, d) { return k in this.store ? this.store[k] : d; }, async update(k, v) { this.store[k] = v; } },
     globalStorageUri: { fsPath: fs.mkdtempSync(path.join(os.tmpdir(), 'swt-storage-')) },
     extension: { id: 'kms-labs.session-watchtower' },
   };

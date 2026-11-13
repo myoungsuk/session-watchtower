@@ -224,6 +224,18 @@ test('그룹 보드: 기다리는 세션, 세션 현황(커밋 안 한 파일), 
   stub.changeConfig('boardPageSize', 20);
   await waitFor(() => panel.lastPayload().saidSize === 20, '쪽 크기 20');
 
+  // 지시와 결과 칸은 머리줄을 눌러 접고 편다: 화면 코드에 접기 머리줄이 있고, 접은 상태는 보드를 다시 그려도·다시 열어도 남는다
+  assert.match(panel.webview.html, /h2 class="fold/);
+  assert.match(panel.webview.html, /aria-expanded/);
+  assert.strictEqual(panel.lastPayload().saidFolded, false);
+  panel.send({ type: 'foldSaid', on: true });
+  panel.send({ type: 'refresh' });
+  await waitFor(() => panel.lastPayload().saidFolded === true, '접힘 기억');
+  assert.ok(panel.lastPayload().said.length > 0, '접어도 내용은 보내 둔다(펼치면 바로 보이게)');
+  panel.send({ type: 'foldSaid', on: false });
+  panel.send({ type: 'refresh' });
+  await waitFor(() => panel.lastPayload().saidFolded === false, '펼침 기억');
+
   panel.send({ type: 'copyBoard' });
   await waitFor(() => /### Waiting for you\n- Deployer: needs approval — `/.test(stub.state.clipboard || ''), '마크다운 복사');
   assert.match(stub.state.clipboard, /\| Watch \| Watcher \| Just finished \| \d+m ago \| 0 \| 0 \|/);

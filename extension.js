@@ -1402,6 +1402,10 @@ async function dirtyFilesOf(cwd) {
   return res;
 }
 
+// 그룹 보드에서 접어 둔 칸(지금은 "지시와 결과"만): { 그룹 ID: true }. 보드를 닫았다 열어도, 창을 다시 불러와도 유지
+const BOARD_FOLD_KEY = 'claudeSessionChanges.boardSaidFolded';
+const saidFolded = (id) => !!(ctx && (ctx.globalState.get(BOARD_FOLD_KEY, {}) || {})[id]);
+
 async function boardPayload(id) {
   const g = groupById(id);
   if (!g) return { gone: true, strings: boardStrings() };
@@ -1472,7 +1476,7 @@ async function boardPayload(id) {
   return {
     setup, warnings, sync, lead: leadRow ? { sid: leadRow.sid, title: leadRow.title, state: leadRow.state, stateLabel: leadRow.stateLabel, canOpen: leadRow.canOpen, color: leadRow.color } : null,
     strings: boardStrings(), id, name: g.name, waiting, members, unknown: unknown.slice(0, 200), unknownMore: Math.max(0, unknown.length - 200),
-    said, saidAll: all, saidTotal: all.length, saidPage: page, saidPages: pages, saidSize: size, saidBusy: !!(b && b.saidBusy), memo, span: spanShort(cfg().lookbackHours),
+    said, saidAll: all, saidTotal: all.length, saidPage: page, saidPages: pages, saidSize: size, saidBusy: !!(b && b.saidBusy), saidFolded: saidFolded(id), memo, span: spanShort(cfg().lookbackHours),
     roots: (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath),
   };
 }
@@ -1509,7 +1513,7 @@ function boardStrings() {
     role: L('Role'), session: L('Session'), state: L('State'), now: L('Doing now'), changed: L('Changed'), uncommitted: L('Not committed'), commits: L('Commits'), last: L('Last talk'),
     setRole: L('Set role'), remove: L('Remove from group'), open: L('Open conversation'), otherFolder: L('From another folder ({0}): open it from a VS Code window with that folder.', '{0}'),
     unknownTitle: L('Changes no session log explains (last {0})', '{0}'), unknownTip: L('Uncommitted files in these repositories that changed within the time range but are not in any session log: edited by hand or by another tool. Older uncommitted files (backups, files never added to git) are left out.'),
-    said: L('Instructions and results'), saidTip: L('What you typed to these sessions, newest first, with the first line of each session\'s last answer to it. Messages from other sessions and system notes are left out; the same message sent to several sessions is shown once.'),
+    said: L('Instructions and results'), foldTip: L('Click to fold or unfold.'), saidTip: L('What you typed to these sessions, newest first, with the first line of each session\'s last answer to it. Messages from other sessions and system notes are left out; the same message sent to several sessions is shown once.'),
     saidNone: L('Nothing yet.'), saidBusy: L('Reading your messages…'), moreTip: L('Click to see the whole text'), openTip: L('Open this session'), prev: L('Previous'), next: L('Next'), first: L('Newest'),
     range: L('{0}–{1} of {2}', '{0}', '{1}', '{2}'), perPage: L('{0} per page · change', '{0}'), noReply: L('(no written answer)'),
     memo: L('Shared memo'), memoNone: L('No memo file linked. Link a Markdown file the sessions also read and write (like a coordination board), or create a new one.'),
@@ -1715,6 +1719,11 @@ async function openGroupBoard(id) {
       b.saidPage = m.dir === 'first' ? 0 : m.dir === 'prev' ? (b.saidPage || 0) - 1 : (b.saidPage || 0) + 1;
       postBoard(g.id);
     } else if (m.type === 'pageSetting') vscode.commands.executeCommand('workbench.action.openSettings', 'claudeSessionChanges.boardPageSize');
+    else if (m.type === 'foldSaid') {
+      const f = { ...(ctx.globalState.get(BOARD_FOLD_KEY, {}) || {}) };
+      if (m.on) f[g.id] = true; else delete f[g.id];
+      ctx.globalState.update(BOARD_FOLD_KEY, f);
+    }
     else if (m.type === 'add') addSessionsToGroup(g.id);
     else if (m.type === 'linkMemo') linkMemo(g.id);
     else if (m.type === 'newMemo') newMemo(g.id);
@@ -1743,6 +1752,12 @@ function boardHtml(webview) {
   body { margin: 0; padding: 14px 22px 40px; font-family: var(--vscode-font-family); font-size: 13px; color: var(--vscode-foreground); background: var(--vscode-editor-background); }
   h1 { margin: 0 0 4px; font-size: 18px; font-weight: 600; }
   h2 { margin: 22px 0 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--vscode-descriptionForeground); display: flex; align-items: center; gap: 8px; }
+  h2.fold { cursor: pointer; user-select: none; }
+  h2.fold:hover { color: var(--vscode-foreground); }
+  h2.fold:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+  h2.fold .chev { display: inline-block; width: 10px; transform: rotate(90deg); transition: transform 0.1s; }
+  h2.fold.closed .chev { transform: none; }
+  @media (prefers-reduced-motion: reduce) { h2.fold .chev { transition: none; } }
   .count { min-width: 18px; padding: 0 6px; font-size: 11px; line-height: 17px; text-align: center; border-radius: 9px; color: var(--vscode-badge-foreground); background: var(--vscode-badge-background); letter-spacing: 0; }
   .bar { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
   button { font: inherit; font-size: 12.5px; padding: 3px 10px; border-radius: 3px; border: 1px solid var(--vscode-button-border, transparent); color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); cursor: pointer; }
@@ -1900,7 +1915,10 @@ function boardHtml(webview) {
         + '<ul class="paths">' + p.unknown.map((f) => '<li><code title="' + esc(f) + '">' + esc(rel(f)) + '</code></li>').join('') + '</ul></div>';
     }
     // 4. 내가 한 말
-    h += '<h2 title="' + esc(S.saidTip) + '">' + esc(S.said) + (p.saidTotal ? '<span class="count">' + p.saidTotal + '</span>' : '') + '</h2>';
+    // 머리줄을 누르면 접고 편다(누른 값을 먼저 쓰고, 확장에도 알려 다음에 열 때도 유지)
+    const folded = foldLocal === null ? !!p.saidFolded : foldLocal;
+    h += '<h2 class="fold' + (folded ? ' closed' : '') + '" role="button" tabindex="0" aria-expanded="' + (folded ? 'false' : 'true') + '" title="' + esc(S.saidTip + '\\n' + S.foldTip) + '"><span class="chev">›</span>' + esc(S.said) + (p.saidTotal ? '<span class="count">' + p.saidTotal + '</span>' : '') + '</h2>';
+    h += '<div class="foldbody"' + (folded ? ' hidden' : '') + '>';
     if (p.saidBusy && !p.said.length) h += '<div class="muted">' + esc(S.saidBusy) + '</div>';
     else if (!p.said.length) h += '<div class="muted">' + esc(S.saidNone) + '</div>';
     else {
@@ -1925,6 +1943,7 @@ function boardHtml(webview) {
         + (p.saidPages > 1 ? '<button data-act="saidPage" data-dir="next"' + (p.saidPage < p.saidPages - 1 ? '' : ' disabled') + '>' + esc(S.next) + ' ›</button>' : '')
         + '<button class="link" data-act="pageSetting">' + esc(String(S.perPage || '').replace('{0}', p.saidSize)) + '</button></div>';
     }
+    h += '</div>';
     // 5. 공유 메모
     h += '<h2>' + esc(S.memo) + (p.memo.name ? ' · <span style="text-transform:none;letter-spacing:0">' + esc(p.memo.name) + '</span>' : '') + '</h2>';
     if (!p.memo.file) h += '<div class="muted">' + esc(S.memoNone) + '</div><div class="bar"><button data-act="linkMemo">' + esc(S.linkMemo) + '</button><button data-act="newMemo">' + esc(S.newMemo) + '</button></div>';
@@ -1935,7 +1954,22 @@ function boardHtml(webview) {
     root.innerHTML = h;
   }
   const opened = new Set();
+  let foldLocal = null;
+  function toggleFold(h2) {
+    foldLocal = !h2.classList.contains('closed');
+    h2.classList.toggle('closed', foldLocal);
+    h2.setAttribute('aria-expanded', foldLocal ? 'false' : 'true');
+    const body = h2.nextElementSibling;
+    if (body && body.classList.contains('foldbody')) body.hidden = foldLocal;
+    vscode.postMessage({ type: 'foldSaid', on: foldLocal });
+  }
+  root.addEventListener('keydown', (e) => {
+    const f = e.target.closest && e.target.closest('h2.fold');
+    if (f && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleFold(f); }
+  });
   root.addEventListener('click', (e) => {
+    const fold = e.target.closest('h2.fold');
+    if (fold) { toggleFold(fold); return; }
     const it = e.target.closest('.said .it');
     if (it && !e.target.closest('[data-act]')) {
       const k = it.dataset.key;
