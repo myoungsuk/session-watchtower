@@ -2011,7 +2011,21 @@ function boardHtml(webview) {
     const f = isFolded(key);
     return '<h2 class="fold' + (f ? ' closed' : '') + '" data-fold="' + key + '" role="button" tabindex="0" aria-expanded="' + (f ? 'false' : 'true') + '" title="' + esc((tip ? tip + '\\n' : '') + S.foldTip) + '"><span class="chev">›</span>' + inner + '</h2><div class="foldbody"' + (f ? ' hidden' : '') + '>';
   }
+  // 보드는 세션이 일할 때마다(몇 초마다) 다시 그려진다. 내용이 같으면 그리지 않고,
+  // 다시 그릴 때는 안쪽 스크롤 칸(공유 메모·경로 목록)과 페이지의 스크롤 위치를 그대로 둔다(안 그러면 읽던 메모가 맨 위로 튄다)
+  let lastJson = '';
   function render(p) {
+    const json = JSON.stringify(p);
+    if (json === lastJson) return;
+    lastJson = json;
+    const keep = {};
+    root.querySelectorAll('[data-scroll]').forEach((el) => { keep[el.dataset.scroll] = [el.scrollTop, el.scrollLeft]; });
+    const pageY = window.scrollY;
+    draw(p);
+    root.querySelectorAll('[data-scroll]').forEach((el) => { const k = keep[el.dataset.scroll]; if (k) { el.scrollTop = k[0]; el.scrollLeft = k[1]; } });
+    if (Math.abs(window.scrollY - pageY) > 1) window.scrollTo(0, pageY);
+  }
+  function draw(p) {
     S = p.strings || {};
     roots = p.roots || [];
     folded0 = p.folded || {};
@@ -2082,7 +2096,7 @@ function boardHtml(webview) {
     // 3. 세션 기록으로 설명되지 않는 커밋 전 변경
     if (p.unknown.length) {
       h += '<div class="warnbox" title="' + esc(S.unknownTip) + '"><b>⚠ ' + esc(String(S.unknownTitle || '').replace('{0}', p.span)) + ' · ' + (p.unknown.length + p.unknownMore) + '</b>'
-        + '<ul class="paths">' + p.unknown.map((f) => '<li><code title="' + esc(f) + '">' + esc(rel(f)) + '</code></li>').join('') + '</ul></div>';
+        + '<ul class="paths" data-scroll="paths">' + p.unknown.map((f) => '<li><code title="' + esc(f) + '">' + esc(rel(f)) + '</code></li>').join('') + '</ul></div>';
     }
     // 4. 내가 한 말
     h += foldHead('said', esc(S.said) + (p.saidTotal ? '<span class="count">' + p.saidTotal + '</span>' : ''), S.saidTip);
@@ -2116,7 +2130,7 @@ function boardHtml(webview) {
     if (!p.memo.file) h += '<div class="muted">' + esc(S.memoNone) + '</div><div class="bar"><button data-act="linkMemo">' + esc(S.linkMemo) + '</button><button data-act="newMemo">' + esc(S.newMemo) + '</button></div>';
     else {
       h += '<div class="bar"><button data-act="openMemo">' + esc(S.openMemo) + '</button><button data-act="linkMemo">' + esc(S.linkMemo) + '</button><button data-act="unlinkMemo">' + esc(S.unlinkMemo) + '</button><span class="muted" style="align-self:center" title="' + esc(p.memo.file) + '">' + esc(p.memo.shown || p.memo.file) + '</span></div>';
-      h += p.memo.error ? '<div class="muted">' + esc(p.memo.error) + '</div>' : '<div class="memo">' + p.memo.html + '</div>';
+      h += p.memo.error ? '<div class="muted">' + esc(p.memo.error) + '</div>' : '<div class="memo" data-scroll="memo">' + p.memo.html + '</div>';
     }
     h += '</div>';
     root.innerHTML = h;

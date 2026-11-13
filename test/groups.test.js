@@ -166,6 +166,10 @@ test('그룹 보드: 기다리는 세션, 세션 현황(커밋 안 한 파일), 
   const code = /<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(panel.webview.html);
   assert.ok(code, '보드 화면 코드가 있어야 함');
   assert.doesNotThrow(() => new (require('vm').Script)(code[1]), '보드 화면 코드가 문법 오류 없이 읽힌다');
+  // 보드는 몇 초마다 다시 그려진다: 같은 내용이면 그리지 않고, 공유 메모 칸의 스크롤 위치를 지킨다(11-13 "내리면 자꾸 위로 초기화")
+  assert.match(code[1], /if \(json === lastJson\) return;/);
+  assert.match(code[1], /data-scroll="memo"/);
+  assert.match(code[1], /el\.scrollTop = k\[0\]/);
 
   // 보드에서 세션 여러 개 넣기(다른 폴더 세션 포함)
   stub.state.pick = (items) => items.filter((i) => ['Deployer', 'Developer', 'Outside'].includes(i.label));

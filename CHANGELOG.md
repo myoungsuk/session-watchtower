@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.26.2
+
+- Fixed: on a group board, the shared memo jumped back to the top every few seconds while sessions worked, because the board was redrawn on every update. The board now skips a redraw when nothing changed and keeps the scroll position of the memo, the file list and the page.
+
 ## 0.26.1
 
 - **The lead can link the board itself.** When a group has no shared memo, the lead writes the board file's full path into a request file next to the team roster; the extension links it within seconds, deletes the request and notes the result in the roster. The lead's role note now says how, describes the roles table format, and ends with what to do right away (read the roster, link the board, give every session a role, tell them, report to the user).
