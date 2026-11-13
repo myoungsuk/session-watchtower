@@ -330,9 +330,7 @@
   "Connected or removed in your claude.ai settings. Here you can only turn one off for this folder.": "연결과 삭제는 claude.ai 설정에서 합니다. 여기서는 이 폴더에서 끄는 것만 됩니다.",
   "Other servers": "그 밖의 서버",
   "Off (enabled = false)": "꺼짐 (enabled = false)",
-  "Codex settings are not changed here.": "Codex 설정은 여기서 바꾸지 않습니다.",
   "Codex (every folder)": "Codex (모든 폴더)",
-  "Read from ~/.codex/config.toml. Shown only; change them in that file or with the codex mcp command.": "~/.codex/config.toml에서 읽었습니다. 보기만 하며, 바꾸려면 그 파일이나 codex mcp 명령을 쓰세요.",
   "Could not find the Claude Code program. Install the Claude Code extension, or put \"claude\" on PATH.": "Claude Code 실행 파일을 찾지 못했습니다. Claude Code 확장을 설치하거나 \"claude\"를 PATH에 두세요.",
   "The status check took longer than {0} seconds and was stopped.": "상태 확인이 {0}초를 넘겨 멈췄습니다.",
   "The status check did not finish. Run \"claude mcp list\" in a terminal to see why.": "상태 확인이 끝나지 않았습니다. 터미널에서 \"claude mcp list\"를 실행해 이유를 보세요.",
@@ -366,5 +364,15 @@
   "This week by product: {0}": "이번 주 사용 비율: {0}",
   "While you use Claude, Session Watchtower has Claude Code re-check this every {0} minutes. Click to re-check now.": "Claude를 쓰는 동안 Session Watchtower가 {0}분마다 Claude Code에게 다시 확인하게 합니다. 누르면 지금 확인합니다.",
   "Claude Code itself does the re-check (claude -p /usage); the extension never reads your login.": "다시 확인은 Claude Code 자신이 합니다(claude -p /usage). 확장은 로그인 정보를 읽지 않습니다.",
-  "\"{0}\": the lead linked {1} as the shared memo.": "\"{0}\": 대장이 {1}을(를) 공유 메모로 연결했습니다."
+  "\"{0}\": the lead linked {1} as the shared memo.": "\"{0}\": 대장이 {1}을(를) 공유 메모로 연결했습니다.",
+  "This server is written on one line in config.toml; change it there.": "이 서버는 config.toml에 한 줄로 적혀 있어 여기서 바꾸지 않습니다. 그 파일에서 바꾸세요.",
+  "Switching one here sets enabled = false in ~/.codex/config.toml, for every folder. New Codex sessions use the change.": "여기서 끄면 ~/.codex/config.toml에 enabled = false가 적혀 모든 폴더에 적용됩니다. 새로 여는 Codex 세션부터 적용됩니다.",
+  "{0} is off for Codex in every folder.": "Codex에서 {0}을(를) 모든 폴더에서 껐습니다.",
+  "{0} is on again for Codex.": "Codex에서 {0}을(를) 다시 켰습니다.",
+  "{0} is no longer in ~/.codex/config.toml.": "{0}이(가) ~/.codex/config.toml에 더 이상 없습니다.",
+  "Could not read ~/.codex/config.toml, so nothing was changed.": "~/.codex/config.toml을 읽지 못해 바꾸지 않았습니다.",
+  "Could not save ~/.codex/config.toml, so nothing was changed.": "~/.codex/config.toml을 저장하지 못해 바꾸지 않았습니다.",
+  "The change to {0} did not stay: another program rewrote ~/.codex/config.toml. Try again.": "{0} 변경이 남지 않았습니다. 다른 프로그램이 ~/.codex/config.toml을 다시 썼습니다. 다시 해 보세요.",
+  "{0} is off for Codex in every folder. New Codex sessions start without it.": "Codex에서 {0}을(를) 모든 폴더에서 껐습니다. 새로 여는 Codex 세션부터 빠집니다.",
+  "{0} is on again for Codex. New Codex sessions will start it.": "Codex에서 {0}을(를) 다시 켰습니다. 새로 여는 Codex 세션부터 들어갑니다."
 }

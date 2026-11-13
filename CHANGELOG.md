@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.27.0
+
+- **Codex MCP switches.** Codex servers in the MCP Servers view can now be turned off or on: the extension changes only the `enabled` line of that server's table in `~/.codex/config.toml` (for every folder, as Codex has no per-folder setting), keeps a copy of the original the first time, checks that the change stayed, and offers Undo. A server written on one line stays read-only.
+- Fixed: turning a server off and undoing it right away could show a false "the change did not stay" warning.
+- README pictures for plan usage, the team roster and folded board parts; the session counts and usage item now always sit side by side.
+
 ## 0.26.2
 
 - Fixed: on a group board, the shared memo jumped back to the top every few seconds while sessions worked, because the board was redrawn on every update. The board now skips a redraw when nothing changed and keeps the scroll position of the memo, the file list and the page.

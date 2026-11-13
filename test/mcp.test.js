@@ -83,8 +83,8 @@ test('이 폴더 기준으로 칸마다 서버가 나오고, 비밀 값은 화�
   assert.deepStrictEqual(sec(p, 'claudeai').rows.map((r) => [r.label, r.state, r.on]), [['Gmail', 'off', false], ['Notion', 'on', true], ['Old', 'on', true]]);
   assert.deepStrictEqual(sec(p, 'plugins').rows, []);
   assert.match(sec(p, 'plugins').note, /Check status/);
-  // Codex는 보기만
-  assert.deepStrictEqual(sec(p, 'codex').rows.map((r) => [r.label, r.type, r.on, r.readonly, r.can]), [['markitdown', 'stdio', true, true, false], ['openai docs', 'http', false, true, false]]);
+  // Codex도 스위치(config.toml, 모든 폴더)
+  assert.deepStrictEqual(sec(p, 'codex').rows.map((r) => [r.label, r.type, r.on, r.can]), [['markitdown', 'stdio', true, true], ['openai docs', 'http', false, true]]);
   assert.match(p.keyNote, /whole repository/, '하위 폴더를 열었으면 저장소 기준이라고 알린다');
   assert.strictEqual(p.writeNote, '');
   const out = JSON.stringify(p) + web.view.webview.html;
@@ -132,7 +132,6 @@ test('화면에 스위치로 없던 이름·거절된 프로젝트 서버는 바
   const text = fs.readFileSync(CFG, 'utf8');
   web.send({ type: 'toggle', name: 'not-a-server', off: true });
   web.send({ type: 'toggle', name: 'legacy', off: false });
-  web.send({ type: 'toggle', name: 'codex:markitdown', off: true });
   await sleep(300);
   assert.strictEqual(fs.readFileSync(CFG, 'utf8'), text);
 });
@@ -227,7 +226,7 @@ test('출력·설정 읽기 도우미', () => {
   const m = mcp.parseMcpList('a: x - y - ✔ Connected\nweird line\nb: cmd - ! Connected · tools fetch failed\nc:  - Not configured\n');
   assert.deepStrictEqual([...m.entries()].map(([k, v]) => [k, v.state]), [['a', 'ok'], ['b', 'warn'], ['c', 'unset']]);
   assert.deepStrictEqual(mcp.parseCodexMcp('[mcp_servers]\ninline = { command = "x", enabled = false }\nweb = { url = "https://w" }\n[other]\nenabled = false\n'), [
-    { name: 'inline', type: 'stdio', enabled: false }, { name: 'web', type: 'http', enabled: true },
+    { name: 'inline', type: 'stdio', enabled: false, inline: true }, { name: 'web', type: 'http', enabled: true, inline: true },
   ]);
   assert.strictEqual(mcp.cleanDetail('see https://h.example:8443/a/b?c=d and ws://x.example/y'), 'see https://h.example:8443 and ws://x.example');
 });
@@ -237,6 +236,40 @@ test('MCP 창 화면 코드가 문법 오류 없이 읽히고 외부 자원을 �
   assert.ok(m);
   assert.doesNotThrow(() => new vm.Script(m[1]));
   assert.match(web.view.webview.html, /default-src 'none'/);
+});
+
+test('Codex 서버 끄고 켜기: config.toml의 그 표에 enabled 한 줄만 넣거나 바꾸고, 다른 줄·비밀 값은 그대로, 처음 한 번 원본을 남긴다', async () => {
+  const CX = path.join(home, '.codex', 'config.toml');
+  const original = fs.readFileSync(CX, 'utf8');
+  stub.calls.length = 0;
+  web.send({ type: 'toggle', name: 'codex:markitdown', off: true });
+  await waitFor(() => /enabled = false/.test(fs.readFileSync(CX, 'utf8').split('[mcp_servers.markitdown.env]')[0]), 'markitdown 끔');
+  const after = fs.readFileSync(CX, 'utf8');
+  assert.strictEqual(after, original.replace('[mcp_servers.markitdown]\n', '[mcp_servers.markitdown]\nenabled = false\n'), '그 표 머리 바로 아래 한 줄만 들어간다');
+  assert.strictEqual(fs.readFileSync(CX + '.watchtower-backup', 'utf8'), original, '처음 바꿀 때 원본을 한 번 남긴다');
+  await waitFor(() => toasts('info').some((m) => /markitdown is off for Codex in every folder/.test(m)), '알림');
+  await waitFor(() => rowOf(web.lastPayload(), 'codex', 'markitdown').on === false, '줄이 꺼짐으로');
+  assert.match(web.lastPayload().last.text, /markitdown is off for Codex/);
+  // 따옴표 이름 + 이미 enabled = false인 서버를 켜면 그 줄만 true로
+  web.send({ type: 'toggle', name: 'codex:openai docs', off: false });
+  await waitFor(() => /\[mcp_servers\."openai docs"\]\nurl = [^\n]+\nenabled = true\n/.test(fs.readFileSync(CX, 'utf8')), 'openai docs 켬');
+  assert.ok(fs.readFileSync(CX, 'utf8').includes(SECRET), '다른 값(비밀 포함)은 그대로 둔다');
+  // 되돌리기
+  web.send({ type: 'undo' });
+  await waitFor(() => /\[mcp_servers\."openai docs"\]\nurl = [^\n]+\nenabled = false\n/.test(fs.readFileSync(CX, 'utf8')), '되돌리기');
+  await sleep(1700);
+  assert.ok(!toasts('warn').some((m) => /did not stay/.test(m)), '저장한 값이 남아 있다');
+  // 한 줄 표 꼴은 고치지 않는다
+  const inl = path.join(home, 'inline-codex');
+  fs.mkdirSync(inl, { recursive: true });
+  fs.writeFileSync(path.join(inl, 'config.toml'), '[mcp_servers]\nfoo = { command = "x" }\n');
+  const prev = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = inl;
+  try {
+    assert.deepStrictEqual(mcp.setCodexEnabled('foo', false), { ok: false, reason: 'inline' });
+    assert.deepStrictEqual(mcp.setCodexEnabled('nope', false), { ok: false, reason: 'missing' });
+  } finally { if (prev === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = prev; }
+  assert.strictEqual(fs.readFileSync(path.join(inl, 'config.toml'), 'utf8'), '[mcp_servers]\nfoo = { command = "x" }\n');
 });
 
 test.after(() => { ext.deactivate(); });

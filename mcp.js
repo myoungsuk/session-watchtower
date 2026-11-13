@@ -75,10 +75,58 @@ function parseCodexMcp(text) {
       else if (k === 'enabled') cur.enabled = !/^false\b/.test(kv[2]);
     } else if (inTable && kv[2].startsWith('{')) {
       const name = unq(kv[1]);
-      out.push({ name, type: /\burl\s*=/.test(kv[2]) ? 'http' : 'stdio', enabled: !/\benabled\s*=\s*false\b/.test(kv[2]) });
+      out.push({ name, type: /\burl\s*=/.test(kv[2]) ? 'http' : 'stdio', enabled: !/\benabled\s*=\s*false\b/.test(kv[2]), inline: true });
     }
   }
   return out;
+}
+
+// Codex 서버 하나를 끄거나 켠다: config.toml의 [mcp_servers.<이름>] 표 안 enabled 줄만 바꾸거나(없으면 끌 때만 한 줄 넣음) 다른 줄은 그대로 둔다.
+// Codex 설정은 모든 폴더에 적용된다. 처음 바꿀 때 원본을 <config.toml>.watchtower-backup으로 한 번 남긴다.
+// 결과: { ok, changed } 또는 { ok:false, reason: read|missing|inline|write }
+const TOML_HEADER = /^\s*\[\s*([A-Za-z0-9_\-."' ]+?)\s*\]\s*(#.*)?$/;
+function setCodexEnabled(name, on) {
+  const file = codexConfigPath();
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return { ok: false, reason: 'read' }; }
+  const nl = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/);
+  const unq = (x) => x.replace(/^"(.*)"$|^'(.*)'$/, (m, a, b) => (a !== undefined ? a : b));
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const h = TOML_HEADER.exec(lines[i]);
+    if (!h) continue;
+    const parts = h[1].match(/"[^"]*"|'[^']*'|[^.\s]+/g) || [];
+    if (parts.length === 2 && parts[0] === 'mcp_servers' && unq(parts[1]) === name) { start = i; break; }
+  }
+  if (start < 0) {
+    const s = parseCodexMcp(text).find((x) => x.name === name);
+    return { ok: false, reason: s && s.inline ? 'inline' : 'missing' };
+  }
+  let end = lines.length;
+  for (let j = start + 1; j < lines.length; j++) if (TOML_HEADER.test(lines[j]) || /^\s*\[\[/.test(lines[j])) { end = j; break; }
+  let found = -1;
+  for (let j = start + 1; j < end; j++) if (/^\s*enabled\s*=/.test(lines[j])) { found = j; break; }
+  if (found >= 0) {
+    const cur = !/^\s*enabled\s*=\s*false\b/.test(lines[found]);
+    if (cur === on) return { ok: true, changed: false };
+    const indent = lines[found].match(/^\s*/)[0];
+    const comment = (lines[found].match(/\s+#.*$/) || [''])[0];
+    lines[found] = `${indent}enabled = ${on ? 'true' : 'false'}${comment}`;
+  } else {
+    if (on) return { ok: true, changed: false }; // 줄이 없으면 이미 켜짐(기본값)
+    lines.splice(start + 1, 0, 'enabled = false');
+  }
+  try {
+    const backup = file + '.watchtower-backup';
+    if (!fs.existsSync(backup)) { fs.writeFileSync(backup, text, { mode: fs.statSync(file).mode & 0o777 }); }
+    writeAtomic(file, lines.join(nl));
+  } catch { return { ok: false, reason: 'write' }; }
+  return { ok: true, changed: true };
+}
+
+function codexEnabled(name) {
+  try { const s = parseCodexMcp(fs.readFileSync(codexConfigPath(), 'utf8')).find((x) => x.name === name); return s ? s.enabled : null; } catch { return null; }
 }
 
 // .mcp.json(프로젝트 서버)은 폴더에서 저장소 뿌리까지 올라가며 모은다(가까운 것이 이긴다)
@@ -249,4 +297,4 @@ function checkStatus(bin, folder, timeoutMs = LIST_TIMEOUT_MS) {
   });
 }
 
-module.exports = { claudeConfigPath, codexConfigPath, projectKey, listServers, setDisabled, isDisabled, parseMcpList, parseCodexMcp, checkStatus, cleanDetail, withLock };
+module.exports = { claudeConfigPath, codexConfigPath, projectKey, listServers, setDisabled, isDisabled, setCodexEnabled, codexEnabled, parseMcpList, parseCodexMcp, checkStatus, cleanDetail, withLock };

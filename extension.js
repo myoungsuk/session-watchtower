@@ -3749,6 +3749,8 @@ const mcpChecks = new Map(); // 폴더 → { at, servers: Map(이름 → { state
 const mcpBusy = new Set(); // 지금 저장 중인 서버 이름
 let mcpChecking = false;
 let mcpLast = null; // 마지막으로 바꾼 것 { name, off, folder } — 화면 맨 위 "되돌리기"
+const mcpIntent = new Map(); // 이름 → 마지막으로 바꾼 차례(저장 뒤 확인은 그 뒤에 또 바꾸지 않았을 때만: 곧바로 되돌리면 앞 확인이 헛경고를 냈다)
+let mcpSeq = 0;
 let mcpAllowed = new Set(); // 화면에 스위치로 보여 준 이름만 바꿀 수 있다
 let mcpWatched = null;
 let claudeBinFixed = null; // 시험용
@@ -3824,8 +3826,14 @@ function mcpPayload() {
   add('plugins', L('From plugins'), check ? '' : L('Plugin servers show up after "Check status".'), plugins, true);
   add('claudeai', L('claude.ai connectors'), L('Connected or removed in your claude.ai settings. Here you can only turn one off for this folder.'), ai);
   add('other', L('Other servers'), '', other);
-  const codexRows = info.codex.map((s) => ({ name: 'codex:' + s.name, label: s.name, type: s.type, state: s.enabled ? 'on' : 'off', stateText: s.enabled ? ST.on : L('Off (enabled = false)'), detail: '', on: s.enabled, can: false, readonly: true, why: L('Codex settings are not changed here.') }));
-  if (codexRows.length) sections.push({ id: 'codex', title: L('Codex (every folder)'), note: L('Read from ~/.codex/config.toml. Shown only; change them in that file or with the codex mcp command.'), rows: codexRows });
+  // Codex: config.toml의 enabled를 바꾼다(모든 폴더). 한 줄 표 꼴(이름 = { … })은 고치지 않는다
+  const codexRows = info.codex.map((s) => {
+    const name = 'codex:' + s.name;
+    const why = s.inline ? L('This server is written on one line in config.toml; change it there.') : '';
+    if (!why) allowed.add(name);
+    return { name, label: s.name, type: s.type, state: s.enabled ? 'on' : 'off', stateText: s.enabled ? ST.on : L('Off (enabled = false)'), detail: '', on: s.enabled, can: !why && !mcpBusy.has(name), busy: mcpBusy.has(name), why };
+  });
+  if (codexRows.length) sections.push({ id: 'codex', title: L('Codex (every folder)'), note: L('Switching one here sets enabled = false in ~/.codex/config.toml, for every folder. New Codex sessions use the change.'), rows: codexRows });
   mcpAllowed = allowed;
   const errText = check && check.err ? ({
     nobin: L('Could not find the Claude Code program. Install the Claude Code extension, or put "claude" on PATH.'),
@@ -3839,7 +3847,9 @@ function mcpPayload() {
     checking: mcpChecking,
     checked: check && check.at ? L('Checked {0}', fmtTime(check.at)) : '',
     checkErr: errText,
-    last: mcpLast && mcpLast.folder === folder ? { name: mcpLast.name, text: mcpLast.off ? L('{0} is off in this folder.', mcpLast.name) : L('{0} is on again in this folder.', mcpLast.name) } : null,
+    last: mcpLast && mcpLast.folder === folder ? { name: mcpLast.name, text: mcpLast.name.startsWith('codex:')
+      ? (mcpLast.off ? L('{0} is off for Codex in every folder.', mcpLast.name.slice(6)) : L('{0} is on again for Codex.', mcpLast.name.slice(6)))
+      : (mcpLast.off ? L('{0} is off in this folder.', mcpLast.name) : L('{0} is on again in this folder.', mcpLast.name)) } : null,
     sections,
     foot: L('Switches are saved in ~/.claude.json for this folder, the same place as /mcp disable in Claude Code. New Claude sessions use the change; a session that is already open may keep the old state until you reconnect the server in its /mcp.'),
     t: {
@@ -3868,9 +3878,40 @@ async function mcpCheck() {
   postMcp();
 }
 
+// Codex 서버 끄고 켜기(config.toml, 모든 폴더)
+async function mcpToggleCodex(name, off) {
+  const short = name.slice('codex:'.length);
+  mcpBusy.add(name);
+  postMcp();
+  let r;
+  try { r = mcp.setCodexEnabled(short, !off); } catch { r = { ok: false, reason: 'write' }; }
+  mcpBusy.delete(name);
+  if (!r.ok) {
+    postMcp();
+    vscode.window.showWarningMessage({
+      inline: L('This server is written on one line in config.toml; change it there.'),
+      missing: L('{0} is no longer in ~/.codex/config.toml.', short),
+      read: L('Could not read ~/.codex/config.toml, so nothing was changed.'),
+    }[r.reason] || L('Could not save ~/.codex/config.toml, so nothing was changed.'));
+    return;
+  }
+  mcpLast = { name, off: !!off, folder: mcpFolder() };
+  const seq = ++mcpSeq;
+  mcpIntent.set(name, seq);
+  postMcp();
+  setTimeout(() => {
+    if (mcpIntent.get(name) === seq && mcp.codexEnabled(short) !== !off) vscode.window.showWarningMessage(L('The change to {0} did not stay: another program rewrote ~/.codex/config.toml. Try again.', short));
+    postMcp();
+  }, MCP_VERIFY_MS);
+  const undo = L('Undo');
+  const msg = off ? L('{0} is off for Codex in every folder. New Codex sessions start without it.', short) : L('{0} is on again for Codex. New Codex sessions will start it.', short);
+  vscode.window.showInformationMessage(msg, undo).then((b) => { if (b === undo) { mcpAllowed.add(name); mcpToggle(name, !off); } });
+}
+
 async function mcpToggle(name, off) {
   const folder = mcpFolder();
   if (!folder || typeof name !== 'string' || !mcpAllowed.has(name) || mcpBusy.has(name)) return;
+  if (name.startsWith('codex:')) return mcpToggleCodex(name, off);
   mcpBusy.add(name);
   postMcp();
   let r;
@@ -3887,10 +3928,12 @@ async function mcpToggle(name, off) {
     return;
   }
   mcpLast = { name, off: !!off, folder };
+  const seq = ++mcpSeq;
+  mcpIntent.set(name, seq);
   postMcp();
-  // 저장한 뒤 잠시 있다가 다시 읽어, 다른 프로그램이 덮어쓰지 않았는지 본다
+  // 저장한 뒤 잠시 있다가 다시 읽어, 다른 프로그램이 덮어쓰지 않았는지 본다(그사이 같은 서버를 또 바꿨으면 보지 않는다)
   setTimeout(() => {
-    if (mcp.isDisabled(folder, name) !== !!off) vscode.window.showWarningMessage(L('The change to {0} did not stay: another program rewrote ~/.claude.json. Try again.', name));
+    if (mcpIntent.get(name) === seq && mcp.isDisabled(folder, name) !== !!off) vscode.window.showWarningMessage(L('The change to {0} did not stay: another program rewrote ~/.claude.json. Try again.', name));
     postMcp();
   }, MCP_VERIFY_MS);
   const undo = L('Undo');
