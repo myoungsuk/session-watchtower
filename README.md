@@ -23,6 +23,7 @@ If you run several Claude Code sessions at once, you lose track quickly: which o
 - **Groups and a board per group**: put the sessions that work together (for example a watcher, a developer and a deployer) in a group, give each a role, and watch them on one board.
 - **Housekeeping**: archive, rename, copy a summary of the changes as Markdown.
 - **Codex too**: Codex sessions appear next to Claude Code sessions.
+- **Plan usage in the status bar**: how much of your Claude Code and Codex limits you have used, read from files already on your machine.
 - **MCP servers**: the MCP servers Claude Code uses in this folder (yours, this folder's, the project's, plugins' and claude.ai connectors) and Codex's, with a status check and a switch to turn a Claude Code server off for this folder.
 
 It never touches your project files. Nothing leaves your machine, except when you press *Check status* in the MCP Servers view: that runs Claude Code's own `claude mcp list`, which connects to your servers the way a new session does.
@@ -42,6 +43,7 @@ It never touches your project files. Nothing leaves your machine, except when yo
 - [Archive, rename and older work](#archive-rename-and-older-work)
 - [Codex](#codex)
 - [MCP servers](#mcp-servers)
+- [Plan usage](#plan-usage)
 - [Themes](#themes)
 - [Where the data comes from](#where-the-data-comes-from)
 - [Privacy and what is written](#privacy-and-what-is-written)
@@ -134,8 +136,10 @@ The **board** button on a group opens its board, a page for the whole group:
 | Waiting for you | Sessions waiting for your approval or answer, with the command they want to run |
 | Sessions | Role, state, what each is doing now, files changed, files **not committed yet**, commits and the last conversation |
 | Changes no session log explains | Uncommitted files in the group's repositories that changed within the time range but are in no session log: edited by hand or by another tool. Older uncommitted files, such as backups never added to git, are left out. Check these before you build a release |
-| Instructions and results | What you typed to the group's sessions, newest first, with the first line of each session's last answer to it (people who ask their sessions to lead with the conclusion get a one-line result). Messages from other sessions and system notes are left out, and the same message sent to several sessions is shown once. Each session has its own color, also in the Sessions table; click a session name to open it. Long rows show three lines; click a row to read all of it. Rows are split into pages (`boardPageSize`, 20 by default). Click the heading to fold the section away; the board remembers it per group |
+| Instructions and results | What you typed to the group's sessions, newest first, with the first line of each session's last answer to it (people who ask their sessions to lead with the conclusion get a one-line result). Messages from other sessions and system notes are left out, and the same message sent to several sessions is shown once. Each session has its own color, also in the Sessions table; click a session name to open it. Long rows show three lines; click a row to read all of it. Rows are split into pages (`boardPageSize`, 20 by default) |
 | Shared memo | A Markdown file the sessions also read and write, such as a coordination board with decisions and handoff notes. Link an existing file, or create a new one with sections for decisions waiting, the decision log and handoff: in the project folder (sessions read it without asking; you pick the place) or in the extension's storage (the project stays untouched, but a session may ask before reading a file outside the project). It is shown as rendered Markdown and refreshes when the file changes |
+
+Click a heading (Waiting for you, Sessions, Instructions and results, Shared memo) to fold that part away, and again to open it (Enter or Space work too). The board remembers what you folded for each group.
 
 *Copy board as Markdown* puts a snapshot of the board on the clipboard, for example to paste into the shared memo.
 
@@ -263,6 +267,19 @@ The **MCP Servers** view (collapsed at the bottom of the side bar) lists the MCP
 - **Secrets stay hidden.** Only server names, types (stdio, http, sse) and states are shown. Commands, URLs, headers and environment variables are never displayed; in an error message, a URL is cut down to its host.
 - The switches work once Claude Code has been started in this folder (the extension never creates the folder's entry itself).
 
+## Plan usage
+
+The status bar shows how much of your plan limits you have used, for example `Claude 67% · Codex 23%` (the highest of the limits shown). Hover it for each limit, when it resets and how old the value is. At 90% it turns yellow, at 100% red.
+
+| | Where the number comes from | How fresh |
+|---|---|---|
+| Claude | The usage Claude Code saves in `~/.claude.json` when it checks your limits (5 hours, 7 days, and per model when your plan has them) | As fresh as Claude Code's last check, at most once a minute. The tooltip says when an hour has passed; running `/usage` in Claude Code refreshes it |
+| Codex | The limits recorded in your most recent Codex session log | Updated after every Codex turn; the last value is kept until its limit resets |
+
+A limit whose reset time has passed is hidden, because its number is out of date. Turn the item off with `usageStatusBar`.
+
+**Light on CPU.** Some usage extensions re-read every log or ask a server again and again. This one makes no network requests and reads no logs for it: on each check (every `pollSeconds`) it only looks at the size and time of two files, and reads them only when they changed. Measured on a real machine: 0.004 ms per check when nothing changed; about 1 ms to read Claude Code's settings file and about 1 ms for the end of a Codex log when they did.
+
 ## Themes
 
 Dark and light themes are both supported; colors come from the active VS Code theme.
@@ -284,7 +301,7 @@ Session state is read from the files Claude Code writes in `~/.claude/sessions/`
 
 ## Privacy and what is written
 
-- **It reads** `~/.claude/projects`, `~/.claude/sessions` and `~/.codex/sessions`, and runs `git` in your repositories (`git log`, `git status`, `git show`). The MCP Servers view also reads `~/.claude.json`, the project's `.mcp.json` and `.claude/settings*.json`, and `~/.codex/config.toml`, keeping only server names, types and on/off settings.
+- **It reads** `~/.claude/projects`, `~/.claude/sessions` and `~/.codex/sessions`, and runs `git` in your repositories (`git log`, `git status`, `git show`). The plan usage item reads Claude Code's saved usage in `~/.claude.json` and the end of the latest Codex log. The MCP Servers view also reads `~/.claude.json`, the project's `.mcp.json` and `.claude/settings*.json`, and `~/.codex/config.toml`, keeping only server names, types and on/off settings.
 - **It keeps** its own files in VS Code's private storage for this extension: a read cache, the list of archived sessions, the files you silenced for overlap warnings, and an index of the messages you typed (for the conversation search).
 - **Groups** (names, members, roles and the linked memo file) are kept in the same private storage. A memo file you create from a board goes either there or, only if you choose it, to the place you pick in your project; a memo file you link is only read.
 - **It writes outside that storage only when you ask it to**: renaming a session appends one title line to that session's log, and an MCP switch changes this folder's `disabledMcpServers` list in `~/.claude.json`, both exactly as Claude Code does it. Your project files are never changed.
@@ -320,6 +337,7 @@ All settings start with `claudeSessionChanges.`
 | `includeSubagents` | true | Include files changed by subagents under their parent session. |
 | `pollSeconds` | 5 | How often to check for new log lines. |
 | `statusBar` | true | Show the status bar summary. |
+| `usageStatusBar` | true | Show Claude Code and Codex plan usage in the status bar. |
 | `notifyWaiting` | true | Notify when a session in this folder starts waiting for you. |
 | `notifyOverlap` | true | Notify when a session changes a file that another session also changed. |
 | `overlapIgnore` | Claude's memory folder | Glob patterns of files that never get an overlap warning. |
@@ -373,6 +391,8 @@ Claude Code 세션을 여러 개 돌릴 때 **어느 세션이 일하는 중이�
 - **정리**: 보관함, 세션 이름 바꾸기, 변경 요약을 마크다운으로 복사.
 - **바깥에서 열기**: 데스크톱 알림 같은 다른 프로그램이 `vscode://kms-labs.session-watchtower/open?title=…` 주소로 그 세션의 대화를 열 수 있습니다.
 - **Codex** 세션도 함께 나옵니다.
+- **요금제 사용량**: 상태 표시줄에 Claude Code·Codex 한도를 몇 % 썼는지(예: `Claude 67% · Codex 23%`) 보여 줍니다. 마우스를 올리면 5시간·7일 칸별 값, 초기화 시각, 몇 분 전 값인지가 나옵니다. Claude는 Claude Code가 `~/.claude.json`에 받아 둔 값, Codex는 마지막 Codex 기록의 값입니다. 인터넷에 묻지 않고, 두 파일의 크기·시각만 보다가 바뀌었을 때만 읽어서 CPU를 거의 쓰지 않습니다.
+- **보드 목차 접기**: 그룹 보드의 나를 기다리는 것·세션·지시와 결과·공유 메모 제목을 누르면 접히고, 그룹마다 기억합니다.
 - **MCP 서버 창**: 이 폴더에서 Claude Code가 쓰는 MCP 서버(직접 추가·이 폴더·프로젝트 `.mcp.json`·플러그인·claude.ai 커넥터)와 Codex 서버를 봅니다. "상태 확인"은 누를 때만 `claude mcp list`를 실행합니다(서버마다 한 번 붙어 보고 로컬 서버는 잠깐 실행). 스위치는 Claude Code의 `/mcp disable`과 같은 곳(`~/.claude.json`의 이 폴더 `disabledMcpServers`)에 써서 **이 폴더에서만** 끄고 켭니다. 새로 여는 세션부터 적용되고, 알림과 창 맨 위에 "되돌리기"가 있습니다. 명령·주소·환경 변수 값은 화면에 나오지 않습니다. Codex 서버는 보기만 합니다.
 
 프로젝트 파일은 건드리지 않고, 기록은 이 컴퓨터 밖으로 나가지 않습니다(MCP "상태 확인"을 누르면 Claude Code 프로그램이 서버에 접속하는 것은 예외). 세션 이름을 바꿀 때 그 세션의 대화 기록 끝에 제목 한 줄을 덧붙이고, MCP 스위치를 누를 때 `~/.claude.json`의 이 폴더 항목 한 칸을 바꿉니다(둘 다 Claude Code가 하는 방식과 같습니다).

@@ -59,6 +59,7 @@ if [ "$SCENE" = mcp ]; then
     fs.writeFileSync(home + "/.claude.json", JSON.stringify({
       mcpServers: { "docs-search": { type: "http", url: "https://docs.example.com/mcp" }, markitdown: { type: "stdio", command: "markitdown-mcp", args: [] } },
       claudeAiMcpEverConnected: ["claude.ai Notion", "claude.ai Google Drive"],
+      cachedUsageUtilization: { fetchedAtMs: Date.now() - 8 * 60000, utilization: { five_hour: { utilization: 42, resets_at: new Date(Date.now() + 2 * 3600e3).toISOString() }, seven_day: { utilization: 67, resets_at: new Date(Date.now() + 60 * 3600e3).toISOString() } } },
       projects: { [web]: { allowedTools: [], mcpServers: { "local-db": { type: "stdio", command: "db-mcp", args: [] } }, disabledMcpServers: ["markitdown"], hasTrustDialogAccepted: true } },
     }, null, 2));
     fs.writeFileSync(web + "/.mcp.json", JSON.stringify({ mcpServers: { "lint-rules": { command: "lint-mcp" }, browser: { command: "browser-mcp" } } }, null, 2));

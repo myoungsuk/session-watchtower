@@ -57,5 +57,6 @@
   "command.planTeam": "Start a team with a lead session (copy the request)",
   "config.boardPageSize": "How many rows of Instructions and results a group board shows per page.",
   "view.mcp": "MCP Servers",
-  "command.checkMcp": "Check MCP server status"
+  "command.checkMcp": "Check MCP server status",
+  "config.usageStatusBar": "Show Claude Code and Codex plan usage (percent of the 5-hour and weekly limits) in the status bar. Read from files already on this computer: Claude Code's saved usage and the last Codex log."
 }

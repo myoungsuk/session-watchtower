@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.25.0
+
+- **Plan usage in the status bar.** Shows how much of your Claude Code and Codex limits you have used (`Claude 67% · Codex 23%`, the highest limit of each); hover for every limit, its reset time and how old the value is. Claude's number is the usage Claude Code saves in `~/.claude.json`; Codex's comes from the latest Codex log. No network requests: the extension only checks the two files' size and time, and reads them when they change. Setting `usageStatusBar`.
+- **Fold any part of a group board.** Waiting for you, Sessions, Instructions and results and Shared memo each fold with a click on their heading, and the board remembers it per group. What you folded in 0.24.1 is kept.
+
 ## 0.24.1
 
 - **Fold Instructions and results.** Click the heading on a group board to fold the section away or open it again (also with Enter or Space). The board remembers it for each group, also after closing the board or reloading the window.

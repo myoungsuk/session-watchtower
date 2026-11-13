@@ -224,17 +224,25 @@ test('그룹 보드: 기다리는 세션, 세션 현황(커밋 안 한 파일), 
   stub.changeConfig('boardPageSize', 20);
   await waitFor(() => panel.lastPayload().saidSize === 20, '쪽 크기 20');
 
-  // 지시와 결과 칸은 머리줄을 눌러 접고 편다: 화면 코드에 접기 머리줄이 있고, 접은 상태는 보드를 다시 그려도·다시 열어도 남는다
-  assert.match(panel.webview.html, /h2 class="fold/);
+  // 목차(나를 기다리는 것·세션·지시와 결과·공유 메모)마다 머리줄을 눌러 접고 편다. 접은 칸은 그룹마다 기억하고, 0.24.1에서 접어 둔 지시와 결과도 이어받는다
+  assert.strictEqual((panel.webview.html.match(/foldHead\('/g) || []).length, 4, '네 목차에 접기 머리줄');
   assert.match(panel.webview.html, /aria-expanded/);
-  assert.strictEqual(panel.lastPayload().saidFolded, false);
-  panel.send({ type: 'foldSaid', on: true });
+  assert.deepStrictEqual(panel.lastPayload().folded, {});
+  await stub.context.globalState.update('claudeSessionChanges.boardSaidFolded', { [id]: true });
   panel.send({ type: 'refresh' });
-  await waitFor(() => panel.lastPayload().saidFolded === true, '접힘 기억');
+  await waitFor(() => panel.lastPayload().folded.said === true, '0.24.1에서 접어 둔 것 이어받기');
+  panel.send({ type: 'fold', key: 'said', on: false });
+  panel.send({ type: 'fold', key: 'memo', on: true });
+  panel.send({ type: 'fold', key: 'sessions', on: true });
+  panel.send({ type: 'fold', key: 'not-a-section', on: true });
+  panel.send({ type: 'refresh' });
+  await waitFor(() => panel.lastPayload().folded.memo === true, '접힘 기억');
+  assert.deepStrictEqual(panel.lastPayload().folded, { said: false, memo: true, sessions: true }, '펼친 것도 기억(옛 값이 다시 접지 않게), 없는 칸은 무시');
   assert.ok(panel.lastPayload().said.length > 0, '접어도 내용은 보내 둔다(펼치면 바로 보이게)');
-  panel.send({ type: 'foldSaid', on: false });
+  panel.send({ type: 'fold', key: 'memo', on: false });
+  panel.send({ type: 'fold', key: 'sessions', on: false });
   panel.send({ type: 'refresh' });
-  await waitFor(() => panel.lastPayload().saidFolded === false, '펼침 기억');
+  await waitFor(() => panel.lastPayload().folded.sessions === false, '펼침 기억');
 
   panel.send({ type: 'copyBoard' });
   await waitFor(() => /### Waiting for you\n- Deployer: needs approval — `/.test(stub.state.clipboard || ''), '마크다운 복사');

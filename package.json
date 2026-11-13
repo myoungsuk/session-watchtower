@@ -2,7 +2,7 @@
   "name": "session-watchtower",
   "displayName": "Session Watchtower for Claude Code",
   "description": "%description%",
-  "version": "0.24.1",
+  "version": "0.25.0",
   "scripts": {
     "test": "node --test test/*.test.js",
     "shot": "bash tools/screenshot/run.sh"
@@ -458,6 +458,11 @@
           "default": true,
           "description": "%config.statusBar%"
         },
+        "claudeSessionChanges.usageStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.usageStatusBar%"
+        },
         "claudeSessionChanges.notifyWaiting": {
           "type": "boolean",
           "default": true,
@@ -568,6 +573,7 @@
     "scanner.js",
     "worker.js",
     "mcp.js",
+    "usage.js",
     "media/icon.svg",
     "media/logo.png",
     "l10n/**",

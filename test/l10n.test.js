@@ -50,4 +50,8 @@ test('꾸러미에 넣을 파일이 모두 있고, 시험·비공개 파일은 �
   assert.ok(fs.existsSync(path.join(root, pkg.main)));
   assert.ok(!('preview' in pkg), '미리 보기 표시는 뺐다');
   for (const c of pkg.contributes.commands) assert.ok(read('extension.js').includes(`'${c.command}'`), '등록 안 된 명령: ' + c.command);
+  // 확장이 불러오는 내 파일(require('./…'))은 모두 꾸러미에 들어가야 한다(빠지면 설치한 확장이 켜지지 않는다)
+  for (const f of ['extension.js', 'scanner.js', 'worker.js', 'mcp.js', 'usage.js']) {
+    for (const m of read(f).matchAll(/require\('\.\/([\w-]+)'\)/g)) assert.ok(pkg.files.includes(m[1] + '.js'), f + '가 부르는 ' + m[1] + '.js가 꾸러미 목록에 없다');
+  }
 });

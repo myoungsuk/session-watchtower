@@ -57,5 +57,6 @@
   "command.planTeam": "대장 세션으로 팀 꾸리기(요청 글 복사)",
   "config.boardPageSize": "그룹 보드의 지시와 결과를 한 쪽에 몇 줄씩 보여 줄지.",
   "view.mcp": "MCP 서버",
-  "command.checkMcp": "MCP 서버 상태 확인"
+  "command.checkMcp": "MCP 서버 상태 확인",
+  "config.usageStatusBar": "상태 표시줄에 Claude Code·Codex 요금제 사용량(5시간·주간 한도의 몇 %)을 보여 줍니다. 이 컴퓨터에 이미 있는 파일(Claude Code가 받아 둔 사용량, 마지막 Codex 기록)에서 읽습니다."
 }

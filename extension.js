@@ -10,6 +10,7 @@ const { Worker } = require('worker_threads');
 const { execFile } = require('child_process');
 const { parsePatch, LIVE_MS, codexPatchText } = require('./scanner');
 const mcp = require('./mcp');
+const usage = require('./usage');
 
 // 화면 글자: 영어 원문 + l10n/bundle.l10n.ko.json(한국어). 날짜·시간 형식만 언어별로 직접 만든다.
 const L = (message, ...args) => vscode.l10n.t(message, ...args);
@@ -68,6 +69,7 @@ function cfg() {
     boardPageSize: Math.min(200, Math.max(5, Number(c.get('boardPageSize', 20)) || 20)),
     archiveAfter: String(c.get('archiveAfter', 'claude')),
     statusBar: c.get('statusBar', true) !== false,
+    usageStatusBar: c.get('usageStatusBar', true) !== false,
     includeCodex: c.get('includeCodex', true) !== false,
     attentionDir: expandHome(String(c.get('attentionMarkerDir', '~/.cache/claude-attention') || '')),
   };
@@ -1402,9 +1404,17 @@ async function dirtyFilesOf(cwd) {
   return res;
 }
 
-// 그룹 보드에서 접어 둔 칸(지금은 "지시와 결과"만): { 그룹 ID: true }. 보드를 닫았다 열어도, 창을 다시 불러와도 유지
-const BOARD_FOLD_KEY = 'claudeSessionChanges.boardSaidFolded';
-const saidFolded = (id) => !!(ctx && (ctx.globalState.get(BOARD_FOLD_KEY, {}) || {})[id]);
+// 그룹 보드에서 접어 둔 칸: { 그룹 ID: { 칸: true/false } }. 보드를 닫았다 열어도, 창을 다시 불러와도 유지
+// (0.24.1은 "지시와 결과"만 { 그룹 ID: true }로 따로 기억했다 — 새 값이 없을 때만 그것을 읽는다)
+const BOARD_FOLD_KEY = 'claudeSessionChanges.boardFolded';
+const BOARD_FOLD_OLD_KEY = 'claudeSessionChanges.boardSaidFolded';
+const BOARD_FOLDS = new Set(['waiting', 'sessions', 'said', 'memo']);
+function boardFolded(id) {
+  if (!ctx) return {};
+  const f = { ...((ctx.globalState.get(BOARD_FOLD_KEY, {}) || {})[id] || {}) };
+  if (!('said' in f) && (ctx.globalState.get(BOARD_FOLD_OLD_KEY, {}) || {})[id]) f.said = true;
+  return f;
+}
 
 async function boardPayload(id) {
   const g = groupById(id);
@@ -1476,7 +1486,7 @@ async function boardPayload(id) {
   return {
     setup, warnings, sync, lead: leadRow ? { sid: leadRow.sid, title: leadRow.title, state: leadRow.state, stateLabel: leadRow.stateLabel, canOpen: leadRow.canOpen, color: leadRow.color } : null,
     strings: boardStrings(), id, name: g.name, waiting, members, unknown: unknown.slice(0, 200), unknownMore: Math.max(0, unknown.length - 200),
-    said, saidAll: all, saidTotal: all.length, saidPage: page, saidPages: pages, saidSize: size, saidBusy: !!(b && b.saidBusy), saidFolded: saidFolded(id), memo, span: spanShort(cfg().lookbackHours),
+    said, saidAll: all, saidTotal: all.length, saidPage: page, saidPages: pages, saidSize: size, saidBusy: !!(b && b.saidBusy), folded: boardFolded(id), memo, span: spanShort(cfg().lookbackHours),
     roots: (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath),
   };
 }
@@ -1719,10 +1729,10 @@ async function openGroupBoard(id) {
       b.saidPage = m.dir === 'first' ? 0 : m.dir === 'prev' ? (b.saidPage || 0) - 1 : (b.saidPage || 0) + 1;
       postBoard(g.id);
     } else if (m.type === 'pageSetting') vscode.commands.executeCommand('workbench.action.openSettings', 'claudeSessionChanges.boardPageSize');
-    else if (m.type === 'foldSaid') {
-      const f = { ...(ctx.globalState.get(BOARD_FOLD_KEY, {}) || {}) };
-      if (m.on) f[g.id] = true; else delete f[g.id];
-      ctx.globalState.update(BOARD_FOLD_KEY, f);
+    else if (m.type === 'fold' && BOARD_FOLDS.has(m.key)) {
+      const all = { ...(ctx.globalState.get(BOARD_FOLD_KEY, {}) || {}) };
+      all[g.id] = { ...(all[g.id] || {}), [m.key]: !!m.on };
+      ctx.globalState.update(BOARD_FOLD_KEY, all);
     }
     else if (m.type === 'add') addSessionsToGroup(g.id);
     else if (m.type === 'linkMemo') linkMemo(g.id);
@@ -1844,9 +1854,18 @@ function boardHtml(webview) {
   const crown = '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M1.5 4.5 5 8l3-5 3 5 3.5-3.5L13 12.5H3z"/><rect x="3" y="13.2" width="10" height="1.6" rx=".5"/></svg>';
   // 작업 폴더 안 파일은 그 폴더 기준 경로로 짧게 보여 준다(전체 경로는 마우스 설명)
   const rel = (f) => { for (const r of roots) if (f.startsWith(r + '/') || f.startsWith(r + '\\\\')) return f.slice(r.length + 1); return f; };
+  // 목차(h2)마다 누르면 접고 편다. 누른 값을 먼저 쓰고(보드가 다시 그려져도 유지), 확장에도 알려 다음에 열 때도 남긴다
+  const foldLocal = {};
+  let folded0 = {};
+  const isFolded = (key) => (key in foldLocal ? foldLocal[key] : !!folded0[key]);
+  function foldHead(key, inner, tip) {
+    const f = isFolded(key);
+    return '<h2 class="fold' + (f ? ' closed' : '') + '" data-fold="' + key + '" role="button" tabindex="0" aria-expanded="' + (f ? 'false' : 'true') + '" title="' + esc((tip ? tip + '\\n' : '') + S.foldTip) + '"><span class="chev">›</span>' + inner + '</h2><div class="foldbody"' + (f ? ' hidden' : '') + '>';
+  }
   function render(p) {
     S = p.strings || {};
     roots = p.roots || [];
+    folded0 = p.folded || {};
     if (p.gone) { root.innerHTML = '<p class="muted">' + esc(S.gone) + '</p>'; return; }
     let h = '<h1>' + esc(p.name) + '</h1>'
       + '<div class="bar"><button data-act="add">' + esc(S.addSessions) + '</button><button data-act="planTeam" title="' + esc(S.planTip) + '">' + esc(S.plan) + '</button><button data-act="copyBoard">' + esc(S.copyBoard) + '</button><button data-act="refresh">' + esc(S.refresh) + '</button></div>';
@@ -1866,13 +1885,14 @@ function boardHtml(webview) {
         + step(!!su.memo, S.setup3) + step(false, S.setup4) + '</ol><div class="muted">' + esc(S.setupPlan) + '</div></div>';
     }
     // 1. 기다리는 것
-    h += '<h2>' + esc(S.waiting) + (p.waiting.length ? '<span class="count">' + p.waiting.length + '</span>' : '') + '</h2>';
+    h += foldHead('waiting', esc(S.waiting) + (p.waiting.length ? '<span class="count">' + p.waiting.length + '</span>' : ''));
     if (!p.waiting.length) h += '<div class="muted">' + esc(S.noneWaiting) + '</div>';
     for (const w of p.waiting) {
       h += '<div class="wait"><span class="t">' + esc(w.title) + '</span>' + (w.role ? '<span class="role">' + esc(w.role) + '</span>' : '')
         + '<span>' + esc(w.what) + '</span><span class="d" title="' + esc(w.detail) + '">' + esc(w.detail) + '</span><span class="muted">' + esc(w.since) + '</span>'
         + '<button data-act="open" data-sid="' + esc(w.sid) + '">' + esc(S.open) + '</button></div>';
     }
+    h += '</div>';
     // 보드와 그룹 맞추기
     if (p.sync) {
       const bo = p.sync.boardOnly, go = p.sync.groupOnly;
@@ -1888,7 +1908,7 @@ function boardHtml(webview) {
     // 고정 역할(대장·배포)이 겹치면 경고
     for (const w of p.warnings || []) h += '<div class="warnbox"><b>⚠ ' + esc(w) + '</b></div>';
     // 2. 세션 현황
-    h += '<h2>' + esc(S.sessions) + '<span class="count">' + p.members.length + '</span></h2>';
+    h += foldHead('sessions', esc(S.sessions) + '<span class="count">' + p.members.length + '</span>');
     if (!p.members.length) h += '<div class="muted">' + esc(S.empty) + '</div>';
     else {
       h += '<table><thead><tr><th>' + esc(S.role) + '</th><th>' + esc(S.session) + '</th><th>' + esc(S.state) + '</th><th>' + esc(S.now) + '</th><th class="num">' + esc(S.changed) + '</th><th class="num">' + esc(S.uncommitted) + '</th><th class="num">' + esc(S.commits) + '</th><th>' + esc(S.last) + '</th><th></th></tr></thead><tbody>';
@@ -1909,16 +1929,14 @@ function boardHtml(webview) {
       }
       h += '</tbody></table>';
     }
+    h += '</div>';
     // 3. 세션 기록으로 설명되지 않는 커밋 전 변경
     if (p.unknown.length) {
       h += '<div class="warnbox" title="' + esc(S.unknownTip) + '"><b>⚠ ' + esc(String(S.unknownTitle || '').replace('{0}', p.span)) + ' · ' + (p.unknown.length + p.unknownMore) + '</b>'
         + '<ul class="paths">' + p.unknown.map((f) => '<li><code title="' + esc(f) + '">' + esc(rel(f)) + '</code></li>').join('') + '</ul></div>';
     }
     // 4. 내가 한 말
-    // 머리줄을 누르면 접고 편다(누른 값을 먼저 쓰고, 확장에도 알려 다음에 열 때도 유지)
-    const folded = foldLocal === null ? !!p.saidFolded : foldLocal;
-    h += '<h2 class="fold' + (folded ? ' closed' : '') + '" role="button" tabindex="0" aria-expanded="' + (folded ? 'false' : 'true') + '" title="' + esc(S.saidTip + '\\n' + S.foldTip) + '"><span class="chev">›</span>' + esc(S.said) + (p.saidTotal ? '<span class="count">' + p.saidTotal + '</span>' : '') + '</h2>';
-    h += '<div class="foldbody"' + (folded ? ' hidden' : '') + '>';
+    h += foldHead('said', esc(S.said) + (p.saidTotal ? '<span class="count">' + p.saidTotal + '</span>' : ''), S.saidTip);
     if (p.saidBusy && !p.said.length) h += '<div class="muted">' + esc(S.saidBusy) + '</div>';
     else if (!p.said.length) h += '<div class="muted">' + esc(S.saidNone) + '</div>';
     else {
@@ -1945,23 +1963,25 @@ function boardHtml(webview) {
     }
     h += '</div>';
     // 5. 공유 메모
-    h += '<h2>' + esc(S.memo) + (p.memo.name ? ' · <span style="text-transform:none;letter-spacing:0">' + esc(p.memo.name) + '</span>' : '') + '</h2>';
+    h += foldHead('memo', esc(S.memo) + (p.memo.name ? ' · <span style="text-transform:none;letter-spacing:0">' + esc(p.memo.name) + '</span>' : ''));
     if (!p.memo.file) h += '<div class="muted">' + esc(S.memoNone) + '</div><div class="bar"><button data-act="linkMemo">' + esc(S.linkMemo) + '</button><button data-act="newMemo">' + esc(S.newMemo) + '</button></div>';
     else {
       h += '<div class="bar"><button data-act="openMemo">' + esc(S.openMemo) + '</button><button data-act="linkMemo">' + esc(S.linkMemo) + '</button><button data-act="unlinkMemo">' + esc(S.unlinkMemo) + '</button><span class="muted" style="align-self:center" title="' + esc(p.memo.file) + '">' + esc(p.memo.shown || p.memo.file) + '</span></div>';
       h += p.memo.error ? '<div class="muted">' + esc(p.memo.error) + '</div>' : '<div class="memo">' + p.memo.html + '</div>';
     }
+    h += '</div>';
     root.innerHTML = h;
   }
   const opened = new Set();
-  let foldLocal = null;
   function toggleFold(h2) {
-    foldLocal = !h2.classList.contains('closed');
-    h2.classList.toggle('closed', foldLocal);
-    h2.setAttribute('aria-expanded', foldLocal ? 'false' : 'true');
+    const key = h2.dataset.fold;
+    const on = !h2.classList.contains('closed');
+    foldLocal[key] = on;
+    h2.classList.toggle('closed', on);
+    h2.setAttribute('aria-expanded', on ? 'false' : 'true');
     const body = h2.nextElementSibling;
-    if (body && body.classList.contains('foldbody')) body.hidden = foldLocal;
-    vscode.postMessage({ type: 'foldSaid', on: foldLocal });
+    if (body && body.classList.contains('foldbody')) body.hidden = on;
+    vscode.postMessage({ type: 'fold', key, on });
   }
   root.addEventListener('keydown', (e) => {
     const f = e.target.closest && e.target.closest('h2.fold');
@@ -3269,6 +3289,7 @@ function onWorkerMessage(m) {
     statusSessions = raw.filter((s) => s.alive);
     rebuild();
     updateStatusBar();
+    updateUsage();
     if (pendingReveal) { const sid = pendingReveal; pendingReveal = null; revealSession(sid, true); }
   } else if (m.type === 'same' && Date.now() - lastFire > 60000) {
     provider.fire(); // "N분 전·N분째" 글자만 새로
@@ -3301,6 +3322,7 @@ function workingHere() {
 function startTimer() {
   if (timer) clearInterval(timer);
   timer = setInterval(() => {
+    updateUsage(); // 파일 시각만 본다(바뀌었을 때만 읽음)
     if (groupsChangedOnDisk() || boardFilesChanged()) rebuildSessions(); // 다른 VS Code 창이 그룹을 바꿨거나, 대장이 보드의 역할을 고쳤다
     if ((treeView && treeView.visible) || (sessionsView && sessionsView.visible)) { requestScan(false); return; }
     const bg = backgroundWanted();
@@ -3399,6 +3421,70 @@ function updateStatusBar() {
   md.appendMarkdown(L('Click to open the Sessions view.'));
   statusItem.tooltip = md;
   statusItem.show();
+}
+
+// ---------- 사용량(요금제 한도) 상태 표시줄 ----------
+// Claude는 Claude Code가 ~/.claude.json에 받아 둔 값, Codex는 가장 최근 Codex 기록의 마지막 한도 값(usage.js).
+// 인터넷에 묻지 않고, 매 주기에 파일 크기·시각만 보고 바뀌었을 때만 읽는다. 글자가 같으면 상태 표시줄을 다시 그리지 않는다.
+const USAGE_CODEX_KEY = 'claudeSessionChanges.usageCodexLast';
+let usageItem = null;
+let usageCodexLast = null; // 마지막으로 읽은 Codex 한도(창을 다시 불러와도 남게 globalState에도 둔다)
+let usageShown = '';
+
+function spanOfMinutes(m) {
+  if (!m) return '';
+  return m % 1440 === 0 ? L('{0} days', m / 1440) : L('{0} hours', Math.round((m / 60) * 10) / 10);
+}
+const CLAUDE_SPAN = () => ({ five_hour: L('{0} hours', 5), seven_day: L('{0} days', 7), seven_day_opus: L('{0} days (Opus)', 7), seven_day_sonnet: L('{0} days (Sonnet)', 7) });
+
+function updateUsage() {
+  if (!usageItem) return;
+  if (!cfg().usageStatusBar) { if (usageShown) { usageItem.hide(); usageShown = ''; } return; }
+  const now = Date.now();
+  const claude = usage.readClaude();
+  if (cfg().includeCodex) {
+    // 가장 최근에 쓴 Codex 세션의 기록 끝만 본다(그 파일이 바뀌었을 때만 읽음)
+    let cx = null;
+    for (const s of raw) if (s.agent === 'codex' && s.file && (!cx || (s.lastActivity || 0) > (cx.lastActivity || 0))) cx = s;
+    const v = cx ? usage.readCodex(cx.file) : null;
+    if (!usageCodexLast && ctx) usageCodexLast = ctx.globalState.get(USAGE_CODEX_KEY, null);
+    if (v && (!usageCodexLast || v.at > usageCodexLast.at)) { usageCodexLast = v; if (ctx) ctx.globalState.update(USAGE_CODEX_KEY, v); }
+  }
+  const codex = cfg().includeCodex ? usageCodexLast : null;
+  const cw = usage.liveWindows(claude, now);
+  const xw = usage.liveWindows(codex, now);
+  const top = (ws) => Math.max(...ws.map((w) => w.percent));
+  const parts = [];
+  if (cw.length) parts.push(`Claude ${Math.round(top(cw))}%`);
+  if (xw.length) parts.push(`Codex ${Math.round(top(xw))}%`);
+  if (!parts.length) { if (usageShown) { usageItem.hide(); usageShown = ''; } return; }
+  const text = '$(dashboard) ' + parts.join(' · ');
+  const span = CLAUDE_SPAN();
+  const when = (ms) => (ms ? L('resets {0}', fmtTime(ms)) : '');
+  const row = (label, pct, reset) => `| ${label} | ${Math.round(pct)}% | ${reset} |\n`;
+  let md = '**' + L('Plan usage') + '**\n\n';
+  if (cw.length) {
+    md += `**Claude** — ${L('saved by Claude Code {0}', fmtAgo(claude.at))}\n\n| | | |\n|---|---|---|\n`;
+    for (const w of cw) md += row(span[w.key] || w.key, w.percent, when(w.resetsAt));
+    if (now - claude.at > 3600e3) md += '\n' + L('This is more than an hour old. Claude Code refreshes it when it checks your usage (for example /usage).') + '\n';
+    md += '\n';
+  }
+  if (xw.length) {
+    md += `**Codex**${codex.plan ? ' (' + codex.plan.replace(/[^\w .-]/g, '') + ')' : ''} — ${L('from the last Codex log {0}', fmtAgo(codex.at))}\n\n| | | |\n|---|---|---|\n`;
+    for (const w of xw) md += row(spanOfMinutes(w.minutes) || w.key, w.percent, when(w.resetsAt));
+    md += '\n';
+  }
+  md += L('Read from files already on this computer; nothing is fetched from the internet.');
+  const key = text + '\u0000' + md;
+  if (key === usageShown) return;
+  usageShown = key;
+  usageItem.text = text;
+  const worst = Math.max(cw.length ? top(cw) : 0, xw.length ? top(xw) : 0);
+  usageItem.backgroundColor = worst >= 100 ? new vscode.ThemeColor('statusBarItem.errorBackground') : worst >= 90 ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
+  const tip = new vscode.MarkdownString(md);
+  tip.isTrusted = false;
+  usageItem.tooltip = tip;
+  usageItem.show();
 }
 
 // ---------- 명령 ----------
@@ -3742,9 +3828,12 @@ function activate(context) {
   statusItem = vscode.window.createStatusBarItem('claudeSessionChanges.status', vscode.StatusBarAlignment.Left, 100);
   statusItem.name = 'Session Watchtower';
   statusItem.command = SESSIONS_VIEW + '.focus';
+  usageItem = vscode.window.createStatusBarItem('claudeSessionChanges.usage', vscode.StatusBarAlignment.Left, 99);
+  usageItem.name = L('Plan usage');
   context.subscriptions.push(
     treeView,
     statusItem,
+    usageItem,
     vscode.window.registerWebviewViewProvider(SESSIONS_VIEW, sessionsWebview),
     vscode.window.registerWebviewViewProvider(MCP_VIEW, mcpWebview),
     vscode.commands.registerCommand('claudeSessionChanges.checkMcp', () => { vscode.commands.executeCommand(MCP_VIEW + '.focus'); return mcpCheck(); }),
@@ -3792,11 +3881,12 @@ function activate(context) {
       if (!e.affectsConfiguration(CFG)) return;
       startTimer();
       if (['lookbackHours', 'includeCodex', 'attentionMarkerDir', 'sessionListDays', 'archiveAfter'].some((k) => e.affectsConfiguration(CFG + '.' + k))) requestScan(true);
-      else { rebuild(); updateStatusBar(); }
+      else { rebuild(); updateStatusBar(); updateUsage(); }
     }),
     { dispose: () => { if (timer) clearInterval(timer); } },
   );
   startTimer();
+  updateUsage();
   if (treeView.visible) requestScan(true);
   else if (backgroundWanted() || cfg().statusBar || cfg().notifyWaiting) requestStatus();
 }
