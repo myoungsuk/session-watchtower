@@ -1,7 +1,7 @@
 #!/bin/bash
 # Take a real screenshot of the extension: desktop VS Code on a virtual display (Xvfb), with made-up demo sessions in a throwaway home folder.
 # Usage: xvfb-run -a -s "-screen 0 2400x2400x24" tools/screenshot/shoot.sh "<theme name>" <full.png> [scene]
-# Scenes: side (default), toasts, search, file, review, summary, tabs, groups, roles — see helper/main.js. "gif" and "explorer" write numbered frames next to <full.png>.
+# Scenes: side (default), toasts, search, file, review, summary, tabs, groups, roles, mcp — see helper/main.js. "gif" and "explorer" write numbered frames next to <full.png>.
 # Needs: desktop VS Code (CODE_BIN), xvfb-run, ImageMagick (import), node, python3.
 set -u
 V="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$V/../.." && pwd)"
@@ -49,6 +49,33 @@ if [ "$SCENE" = groups ] || [ "$SCENE" = roles ]; then
   ' "$RUN/home/demo.json"
   echo "// wip: token refresh" >> "$RUN/ws/web-app/src/middleware/auth.ts"
   mkdir -p "$RUN/ws/web-app/notes" && echo "scratch" > "$RUN/ws/web-app/notes/scratch.txt"
+fi
+if [ "$SCENE" = mcp ]; then
+  # demo MCP settings in the throwaway home (names and types only matter), a project .mcp.json, a Codex config,
+  # and a stand-in "claude" on PATH that prints a made-up "claude mcp list" result for the status check
+  mkdir -p "$RUN/bin" "$RUN/home/.codex" "$RUN/ws/web-app/.claude"
+  node -e '
+    const fs = require("fs"); const [home, web] = process.argv.slice(1);
+    fs.writeFileSync(home + "/.claude.json", JSON.stringify({
+      mcpServers: { "docs-search": { type: "http", url: "https://docs.example.com/mcp" }, markitdown: { type: "stdio", command: "markitdown-mcp", args: [] } },
+      claudeAiMcpEverConnected: ["claude.ai Notion", "claude.ai Google Drive"],
+      projects: { [web]: { allowedTools: [], mcpServers: { "local-db": { type: "stdio", command: "db-mcp", args: [] } }, disabledMcpServers: ["markitdown"], hasTrustDialogAccepted: true } },
+    }, null, 2));
+    fs.writeFileSync(web + "/.mcp.json", JSON.stringify({ mcpServers: { "lint-rules": { command: "lint-mcp" }, browser: { command: "browser-mcp" } } }, null, 2));
+    fs.writeFileSync(web + "/.claude/settings.local.json", JSON.stringify({ enabledMcpjsonServers: ["lint-rules"] }, null, 2));
+    fs.writeFileSync(home + "/.codex/config.toml", "[mcp_servers.markitdown]\ncommand = \"markitdown-mcp\"\n\n[mcp_servers.openai-docs]\nurl = \"https://developers.example.com/mcp\"\nenabled = false\n");
+  ' "$RUN/home" "$RUN/ws/web-app"
+  printf '#!/bin/sh\nsleep 2\ncat <<X\nChecking MCP server health...\n\ndocs-search: https://docs.example.com/mcp (HTTP) - \342\234\224 Connected\nmarkitdown: markitdown-mcp - \342\212\230 Disabled for this project (re-enable via /mcp)\nlocal-db: db-mcp - \342\234\230 Failed to connect \342\200\224 Connection closed\nlint-rules: lint-mcp - \342\234\224 Connected\nbrowser: browser-mcp - \342\217\270 Pending approval (run claude to approve)\nplugin:github:github: https://api.example.com/mcp - \342\234\224 Connected\nplugin:pdf-viewer:pdf: node server.js - \342\234\224 Connected\nplugin:tickets:tracker: https://tickets.example.com/mcp - ! Needs authentication\nclaude.ai Notion: https://mcp.example.com - \342\234\224 Connected\nclaude.ai Google Drive: https://drive.example.com - \342\234\224 Connected\nX\n' > "$RUN/bin/claude"
+  chmod +x "$RUN/bin/claude"
+  PATH="$RUN/bin:$PATH"
+  # hide the other two views of the side bar (VS Code keeps which views are hidden in the profile storage)
+  python3 -I - "$RUN/ud/User/globalStorage/state.vscdb" <<'PY'
+import sqlite3, sys, json
+c = sqlite3.connect(sys.argv[1])
+c.execute('INSERT INTO ItemTable VALUES (?, ?)', ('workbench.view.extension.claudeSessionChanges.state.hidden', json.dumps([
+  {'id': 'claudeSessionChanges.sessions', 'isHidden': True}, {'id': 'claudeSessionChanges.tree', 'isHidden': True}, {'id': 'claudeSessionChanges.mcp', 'isHidden': False}])))
+c.commit(); c.close()
+PY
 fi
 # Start with a clean environment: variables of a VS Code remote shell (ELECTRON_RUN_AS_NODE ...) stop the desktop app from starting.
 env -i HOME="$RUN/home" PATH="$PATH" DISPLAY="$DISPLAY" XAUTHORITY="${XAUTHORITY:-}" LANG="${LANG:-en_US.UTF-8}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}" SWT_SCENE="$SCENE" SWT_DEMO="$RUN/home/demo.json" \

@@ -23,8 +23,9 @@ If you run several Claude Code sessions at once, you lose track quickly: which o
 - **Groups and a board per group**: put the sessions that work together (for example a watcher, a developer and a deployer) in a group, give each a role, and watch them on one board.
 - **Housekeeping**: archive, rename, copy a summary of the changes as Markdown.
 - **Codex too**: Codex sessions appear next to Claude Code sessions.
+- **MCP servers**: the MCP servers Claude Code uses in this folder (yours, this folder's, the project's, plugins' and claude.ai connectors) and Codex's, with a status check and a switch to turn a Claude Code server off for this folder.
 
-It never touches your project files and nothing leaves your machine.
+It never touches your project files. Nothing leaves your machine, except when you press *Check status* in the MCP Servers view: that runs Claude Code's own `claude mcp list`, which connects to your servers the way a new session does.
 
 ## Contents
 
@@ -40,6 +41,7 @@ It never touches your project files and nothing leaves your machine.
 - [Copy a summary of the changes](#copy-a-summary-of-the-changes)
 - [Archive, rename and older work](#archive-rename-and-older-work)
 - [Codex](#codex)
+- [MCP servers](#mcp-servers)
 - [Themes](#themes)
 - [Where the data comes from](#where-the-data-comes-from)
 - [Privacy and what is written](#privacy-and-what-is-written)
@@ -239,6 +241,28 @@ Codex sessions from `~/.codex/sessions` appear with a *Codex* tag:
 - Review and sub-agent threads are folded into the session that started them.
 - Clicking a Codex session continues it in a terminal with the Codex CLI (`codex resume <id>`), started in that session's folder.
 
+## MCP servers
+
+<img src="media/readme/mcp.png" width="349" alt="The MCP Servers view: servers added by you, for this folder, by the project, by plugins and claude.ai connectors, and Codex, each with its state and a switch">
+
+The **MCP Servers** view (collapsed at the bottom of the side bar) lists the MCP servers for the folder open in this window:
+
+| Section | Where it comes from | Switch |
+|---|---|---|
+| Added by you (every folder) | `mcpServers` in `~/.claude.json` | Turns it off **in this folder only** |
+| Added for this folder only | This folder's entry in `~/.claude.json` | Same |
+| Project servers (`.mcp.json`) | The project's `.mcp.json`, with its approval state | Same; a rejected server stays locked until you approve it in Claude Code |
+| From plugins | Shown after *Check status* | Same |
+| claude.ai connectors | Shown after *Check status* (before that, the ones this machine ever connected) | Same; adding and removing them is done in your claude.ai settings |
+| Codex (every folder) | `[mcp_servers.*]` in `~/.codex/config.toml` | None: shown only |
+
+- **The switch does what `/mcp disable` and `/mcp enable` do in Claude Code**: it adds or removes the server's name in this folder's `disabledMcpServers` list in `~/.claude.json` (Claude Code keys that list by the repository root). It takes the same lock file Claude Code takes (`~/.claude.json.lock`), re-reads the file, changes only that list and writes the file in one step, so a running session's own writes are not lost. A moment later it reads the file again and warns if something rewrote it.
+- **Undo** is on the notification and at the top of the view.
+- **New sessions** use the change. A session that is already open may keep the old state until you reconnect the server in that session's `/mcp`.
+- **Check status** runs `claude mcp list` in this folder (the Claude Code program from the Claude Code extension, or `claude` on your PATH). It connects to every server once, as a new session does, and briefly starts the local (stdio) ones, so it only runs when you press it. In a test with 47 servers it took about 12 seconds; it stops after 90 seconds.
+- **Secrets stay hidden.** Only server names, types (stdio, http, sse) and states are shown. Commands, URLs, headers and environment variables are never displayed; in an error message, a URL is cut down to its host.
+- The switches work once Claude Code has been started in this folder (the extension never creates the folder's entry itself).
+
 ## Themes
 
 Dark and light themes are both supported; colors come from the active VS Code theme.
@@ -260,12 +284,11 @@ Session state is read from the files Claude Code writes in `~/.claude/sessions/`
 
 ## Privacy and what is written
 
-Everything stays on your machine. The extension makes no network requests and collects no telemetry.
-
-- **It reads** `~/.claude/projects`, `~/.claude/sessions` and `~/.codex/sessions`, and runs `git` in your repositories (`git log`, `git status`, `git show`).
+- **It reads** `~/.claude/projects`, `~/.claude/sessions` and `~/.codex/sessions`, and runs `git` in your repositories (`git log`, `git status`, `git show`). The MCP Servers view also reads `~/.claude.json`, the project's `.mcp.json` and `.claude/settings*.json`, and `~/.codex/config.toml`, keeping only server names, types and on/off settings.
 - **It keeps** its own files in VS Code's private storage for this extension: a read cache, the list of archived sessions, the files you silenced for overlap warnings, and an index of the messages you typed (for the conversation search).
 - **Groups** (names, members, roles and the linked memo file) are kept in the same private storage. A memo file you create from a board goes either there or, only if you choose it, to the place you pick in your project; a memo file you link is only read.
-- **It writes outside that storage only when you rename a session**: one title line is appended to that session's log, exactly as Claude Code does it. Your project files are never changed.
+- **It writes outside that storage only when you ask it to**: renaming a session appends one title line to that session's log, and an MCP switch changes this folder's `disabledMcpServers` list in `~/.claude.json`, both exactly as Claude Code does it. Your project files are never changed.
+- **Network.** The extension makes no network requests and collects no telemetry. *Check status* in the MCP Servers view runs Claude Code's `claude mcp list`, and that program connects to your MCP servers.
 
 ## Requirements and limitations
 
@@ -281,6 +304,7 @@ Everything stays on your machine. The extension makes no network requests and co
 - **Search.** Only your own messages are indexed, up to 2,000 characters each, from Claude Code and Codex sessions (Codex review and sub-agent threads are left out).
 - **Which sessions changed this file** and the summaries only cover the selected time range.
 - **Codex.** There is no list of running Codex sessions, so a Codex session counts as working only while its log changed in the last 90 seconds, and Codex sessions are shown only while their log changed inside the time range. A patch that the script builds at run time, or a script that failed after its patch was applied, is missed. Opening needs the `codex` command, and the Codex extension itself has no command to open a conversation by ID.
+- **MCP servers.** The switches follow Claude Code's own `/mcp disable` storage as of Claude Code 2.1.323; a later Claude Code may store it differently. Plugin servers and claude.ai connectors appear only after a status check, because Claude Code fetches them when it starts. If `CLAUDE_CONFIG_DIR` is set for the extension, its `.claude.json` is used. Not tested on Windows.
 - If the Sessions view says *There is no data provider registered* right after updating from 0.6.0, run **Developer: Reload Window** once.
 - The interface is in English and switches to Korean automatically when VS Code's display language is Korean.
 
@@ -314,6 +338,7 @@ Available from the Command Palette under **Session Watchtower**, and from the me
 
 | Command | What it does |
 |---|---|
+| Check MCP server status | Open the MCP Servers view and check every server of this folder. |
 | Start a team with a lead session | Copy a request that makes a session the lead: it recommends the team, creates the team board and then takes reports and gives instructions. |
 | New group / Open a group board / Rename a group / Delete a group | Work with groups (deleting a group leaves its sessions as they are). |
 | Search conversations | Find a session by what you wrote in it. |
@@ -329,7 +354,7 @@ Available from the Command Palette under **Session Watchtower**, and from the me
 
 No build step and no dependencies. Run the tests with `npm test` (Node 20 or newer). They use a fake home folder with made-up session logs and a stub of the VS Code API, so they never read your real `~/.claude`.
 
-`npm run shot` (Linux) takes the real screenshots used in this page: it starts desktop VS Code on a virtual display (Xvfb) with the extension and made-up demo sessions, and writes pictures to `.shots/`. Scenes: `side`, `toasts`, `search`, `file`, `review`, `summary`, `explorer`, `tabs`, `groups` and `gif`, for example `npm run shot -- side light`. It needs desktop VS Code, `xvfb-run`, ImageMagick and Python 3 with Pillow.
+`npm run shot` (Linux) takes the real screenshots used in this page: it starts desktop VS Code on a virtual display (Xvfb) with the extension and made-up demo sessions, and writes pictures to `.shots/`. Scenes: `side`, `toasts`, `search`, `file`, `review`, `summary`, `explorer`, `tabs`, `groups`, `roles`, `mcp` and `gif`, for example `npm run shot -- side light`. It needs desktop VS Code, `xvfb-run`, ImageMagick and Python 3 with Pillow.
 
 ## Feedback and contact
 
@@ -348,7 +373,8 @@ Claude Code 세션을 여러 개 돌릴 때 **어느 세션이 일하는 중이�
 - **정리**: 보관함, 세션 이름 바꾸기, 변경 요약을 마크다운으로 복사.
 - **바깥에서 열기**: 데스크톱 알림 같은 다른 프로그램이 `vscode://kms-labs.session-watchtower/open?title=…` 주소로 그 세션의 대화를 열 수 있습니다.
 - **Codex** 세션도 함께 나옵니다.
+- **MCP 서버 창**: 이 폴더에서 Claude Code가 쓰는 MCP 서버(직접 추가·이 폴더·프로젝트 `.mcp.json`·플러그인·claude.ai 커넥터)와 Codex 서버를 봅니다. "상태 확인"은 누를 때만 `claude mcp list`를 실행합니다(서버마다 한 번 붙어 보고 로컬 서버는 잠깐 실행). 스위치는 Claude Code의 `/mcp disable`과 같은 곳(`~/.claude.json`의 이 폴더 `disabledMcpServers`)에 써서 **이 폴더에서만** 끄고 켭니다. 새로 여는 세션부터 적용되고, 알림과 창 맨 위에 "되돌리기"가 있습니다. 명령·주소·환경 변수 값은 화면에 나오지 않습니다. Codex 서버는 보기만 합니다.
 
-프로젝트 파일은 건드리지 않고, 기록은 이 컴퓨터 밖으로 나가지 않습니다. 세션 이름을 바꿀 때만 그 세션의 대화 기록 끝에 제목 한 줄을 덧붙입니다(Claude Code가 하는 방식과 같습니다).
+프로젝트 파일은 건드리지 않고, 기록은 이 컴퓨터 밖으로 나가지 않습니다(MCP "상태 확인"을 누르면 Claude Code 프로그램이 서버에 접속하는 것은 예외). 세션 이름을 바꿀 때 그 세션의 대화 기록 끝에 제목 한 줄을 덧붙이고, MCP 스위치를 누를 때 `~/.claude.json`의 이 폴더 항목 한 칸을 바꿉니다(둘 다 Claude Code가 하는 방식과 같습니다).
 
 문의·버그 제보·아이디어: **k4858678@gmail.com**

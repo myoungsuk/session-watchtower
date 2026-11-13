@@ -1,5 +1,5 @@
 {
-  "description": "Claude Code 세션마다 작업 중·멈춤·쉬는 중 상태와, 그 세션이 바꾼 파일을 한 창에서 봅니다. Codex 세션도 함께 보여 줍니다. 프로젝트 파일은 건드리지 않습니다.",
+  "description": "Claude Code 세션마다 작업 중·멈춤·쉬는 중 상태와, 그 세션이 바꾼 파일을 한 창에서 봅니다. Codex 세션과 폴더별 MCP 서버(상태 확인·끄고 켜기)도 보여 줍니다. 프로젝트 파일은 건드리지 않습니다.",
   "view.sessions": "세션 상태",
   "view.changes": "세션별 변경 파일",
   "command.refresh": "새로 고침",
@@ -55,5 +55,7 @@
   "command.removeFromGroup": "그룹에서 빼기",
   "command.setSessionRole": "그룹 안 역할 정하기",
   "command.planTeam": "대장 세션으로 팀 꾸리기(요청 글 복사)",
-  "config.boardPageSize": "그룹 보드의 지시와 결과를 한 쪽에 몇 줄씩 보여 줄지."
+  "config.boardPageSize": "그룹 보드의 지시와 결과를 한 쪽에 몇 줄씩 보여 줄지.",
+  "view.mcp": "MCP 서버",
+  "command.checkMcp": "MCP 서버 상태 확인"
 }

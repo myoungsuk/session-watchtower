@@ -1,5 +1,6 @@
 'use strict';
-// Session Watchtower: Claude Code 세션마다 상태와 바뀐 파일을 옆 창에 보여 준다. 읽기 전용(되돌리기 없음).
+// Session Watchtower: Claude Code 세션마다 상태와 바뀐 파일을 옆 창에 보여 준다. 프로젝트 파일은 건드리지 않는다
+// (밖에 쓰는 것은 세션 이름 바꾸기의 제목 한 줄과 MCP 스위치의 ~/.claude.json 한 칸뿐, 둘 다 사용자가 누를 때).
 const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
@@ -8,6 +9,7 @@ const crypto = require('crypto');
 const { Worker } = require('worker_threads');
 const { execFile } = require('child_process');
 const { parsePatch, LIVE_MS, codexPatchText } = require('./scanner');
+const mcp = require('./mcp');
 
 // 화면 글자: 영어 원문 + l10n/bundle.l10n.ko.json(한국어). 날짜·시간 형식만 언어별로 직접 만든다.
 const L = (message, ...args) => vscode.l10n.t(message, ...args);
@@ -3388,6 +3390,315 @@ async function pickWindow() {
   await vscode.workspace.getConfiguration(CFG).update('lookbackHours', pick.h, vscode.ConfigurationTarget.Global);
 }
 
+// ── MCP 서버 창: 이 폴더 기준으로 Claude Code·Codex가 쓰는 MCP 서버를 보여 주고, Claude Code 서버는 이 폴더에서 끄고 켠다 ──
+// 끄고 켜기는 Claude Code의 /mcp disable·enable과 같은 곳(~/.claude.json의 이 폴더 항목 disabledMcpServers)에 쓴다(mcp.js).
+// 상태 확인은 누를 때만 `claude mcp list`를 돌린다(서버에 실제로 붙어 보고, 로컬 stdio 서버는 잠깐 실행된다).
+const MCP_VIEW = 'claudeSessionChanges.mcp';
+const MCP_VERIFY_MS = 1500;
+const mcpChecks = new Map(); // 폴더 → { at, servers: Map(이름 → { state, detail }), err }
+const mcpBusy = new Set(); // 지금 저장 중인 서버 이름
+let mcpChecking = false;
+let mcpLast = null; // 마지막으로 바꾼 것 { name, off, folder } — 화면 맨 위 "되돌리기"
+let mcpAllowed = new Set(); // 화면에 스위치로 보여 준 이름만 바꿀 수 있다
+let mcpWatched = null;
+let claudeBinFixed = null; // 시험용
+
+// 폴더를 홈 기준 짧은 경로로(~/…)
+const homeShort = (p) => { const h = os.homedir(); return h && p === h ? '~' : h && p.startsWith(h + path.sep) ? '~' + p.slice(h.length) : p; };
+
+function mcpFolder() {
+  const ws = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
+  return ws ? ws.uri.fsPath : null;
+}
+
+// Claude Code 확장에 든 실행 파일(세션이 쓰는 것과 같은 판), 없으면 PATH의 claude
+function claudeBin() {
+  if (claudeBinFixed) return claudeBinFixed;
+  const ext = vscode.extensions && vscode.extensions.getExtension && vscode.extensions.getExtension('anthropic.claude-code');
+  if (ext && ext.extensionPath) {
+    const p = path.join(ext.extensionPath, 'resources', 'native-binary', process.platform === 'win32' ? 'claude.exe' : 'claude');
+    if (fs.existsSync(p)) return p;
+  }
+  return 'claude';
+}
+
+const MCP_STATE_TEXT = () => ({
+  ok: L('Connected'), warn: L('Connected, tools not read'), auth: L('Needs sign-in'), fail: L('Failed to connect'), unset: L('Not set up'),
+  off: L('Off in this folder'), pending: L('Waiting for approval'), rejected: L('Rejected'), on: L('On'), other: L('Unknown'), gone: L('Not in the last check'),
+});
+
+function mcpPayload() {
+  const folder = mcpFolder();
+  if (!folder) return { message: L('Open a folder to see the MCP servers Claude Code uses there.') };
+  const info = mcp.listServers(folder);
+  const check = mcpChecks.get(folder);
+  const ST = MCP_STATE_TEXT();
+  const disabled = new Set(info.disabled);
+  const writeNote = !info.configOk
+    ? (info.configMissing ? L('Claude Code has not created ~/.claude.json yet. Start Claude Code once first.') : L('Could not read ~/.claude.json, so nothing can be switched.'))
+    : !info.hasProject ? L('Start Claude Code in this folder once; after that the switches work.') : '';
+  const allowed = new Set();
+  const row = (name, label, type, base) => {
+    const s = check && check.servers.get(name);
+    const off = disabled.has(name);
+    // 확인한 뒤에 바꾼 것은 설정 파일을 따른다
+    let state = s ? s.state : base || (off ? 'off' : 'on');
+    // 확인했는데 목록에 없던 것(예: claude.ai에서 지운 커넥터의 옛 연결 기록)
+    if (!s && !base && check && check.servers.size) state = 'gone';
+    if (off) state = 'off';
+    else if (state === 'off') state = 'on';
+    const why = writeNote || (state === 'rejected' ? L('This project server was rejected. Approve it in Claude Code (/mcp) first.') : '');
+    const can = !why && !mcpBusy.has(name);
+    if (!why) allowed.add(name);
+    return { name, label, type, state, stateText: ST[state] || ST.other, detail: s && s.detail ? s.detail : '', on: !off, can, busy: mcpBusy.has(name), why };
+  };
+  const known = new Set([...info.user, ...info.local, ...info.project].map((s) => s.name));
+  const names = new Set([...(check ? check.servers.keys() : []), ...info.disabled, ...info.claudeAi]);
+  const byLabel = (a, b) => a.label.localeCompare(b.label);
+  // 플러그인 서버: 서버가 둘 이상인 플러그인만 머리줄로 묶고, 하나뿐이면 "플러그인 · 서버"(이름이 같으면 하나만)
+  const plugins = [...names].filter((n) => n.startsWith('plugin:') && !known.has(n)).map((n) => {
+    const [, plugin, ...rest] = n.split(':');
+    return { ...row(n, rest.join(':') || plugin, ''), group: plugin };
+  }).sort((a, b) => a.group.localeCompare(b.group) || byLabel(a, b));
+  const perPlugin = new Map();
+  for (const r of plugins) perPlugin.set(r.group, (perPlugin.get(r.group) || 0) + 1);
+  for (const r of plugins) if (perPlugin.get(r.group) === 1) { if (r.label !== r.group) r.label = r.group + ' · ' + r.label; delete r.group; }
+  const ai = [...names].filter((n) => n.startsWith('claude.ai ') && !known.has(n)).map((n) => row(n, n.slice(10), '')).sort(byLabel);
+  const other = [...names].filter((n) => !n.startsWith('plugin:') && !n.startsWith('claude.ai ') && !known.has(n)).map((n) => row(n, n, '')).sort(byLabel);
+  const sections = [];
+  const add = (id, title, note, rows, always) => { if (rows.length || always) sections.push({ id, title, note, rows }); };
+  add('user', L('Added by you (every folder)'), L('Switching one off here turns it off in this folder only.'), info.user.map((s) => row(s.name, s.name, s.type)), true);
+  add('local', L('Added for this folder only'), '', info.local.map((s) => row(s.name, s.name, s.type)));
+  add('project', L('Project servers (.mcp.json)'), L('Shared with everyone who opens this project. A server that was never approved waits for your approval when a session starts.'),
+    info.project.map((s) => row(s.name, s.name, s.type, s.approval === 'pending' ? 'pending' : s.approval === 'rejected' ? 'rejected' : undefined)));
+  add('plugins', L('From plugins'), check ? '' : L('Plugin servers show up after "Check status".'), plugins, true);
+  add('claudeai', L('claude.ai connectors'), L('Connected or removed in your claude.ai settings. Here you can only turn one off for this folder.'), ai);
+  add('other', L('Other servers'), '', other);
+  const codexRows = info.codex.map((s) => ({ name: 'codex:' + s.name, label: s.name, type: s.type, state: s.enabled ? 'on' : 'off', stateText: s.enabled ? ST.on : L('Off (enabled = false)'), detail: '', on: s.enabled, can: false, readonly: true, why: L('Codex settings are not changed here.') }));
+  if (codexRows.length) sections.push({ id: 'codex', title: L('Codex (every folder)'), note: L('Read from ~/.codex/config.toml. Shown only; change them in that file or with the codex mcp command.'), rows: codexRows });
+  mcpAllowed = allowed;
+  const errText = check && check.err ? ({
+    nobin: L('Could not find the Claude Code program. Install the Claude Code extension, or put "claude" on PATH.'),
+    timeout: L('The status check took longer than {0} seconds and was stopped.', 90),
+  }[check.err] || L('The status check did not finish. Run "claude mcp list" in a terminal to see why.')) : '';
+  return {
+    folder: path.basename(folder) || folder,
+    folderPath: homeShort(folder),
+    keyNote: info.key !== info.folder ? L('Claude Code keeps these switches for the whole repository ({0}).', homeShort(info.key)) : '',
+    writeNote,
+    checking: mcpChecking,
+    checked: check && check.at ? L('Checked {0}', fmtTime(check.at)) : '',
+    checkErr: errText,
+    last: mcpLast && mcpLast.folder === folder ? { name: mcpLast.name, text: mcpLast.off ? L('{0} is off in this folder.', mcpLast.name) : L('{0} is on again in this folder.', mcpLast.name) } : null,
+    sections,
+    foot: L('Switches are saved in ~/.claude.json for this folder, the same place as /mcp disable in Claude Code. New Claude sessions use the change; a session that is already open may keep the old state until you reconnect the server in its /mcp.'),
+    t: {
+      check: L('Check status'), checking: L('Checking…'), refresh: L('Reload'), undo: L('Undo'),
+      checkTip: L('Runs "claude mcp list" in this folder. It connects to every server once, as a new session would, and briefly starts the local (stdio) ones.'),
+      none: L('None'), folder: L('This folder'),
+    },
+  };
+}
+
+function postMcp() {
+  if (!mcpWebview.view || !mcpWebview.ready) return;
+  mcpWebview.view.webview.postMessage({ type: 'render', payload: mcpPayload() });
+}
+
+async function mcpCheck() {
+  const folder = mcpFolder();
+  if (!folder || mcpChecking) return;
+  mcpChecking = true;
+  postMcp();
+  let r;
+  try { r = await mcp.checkStatus(claudeBin(), folder); } catch { r = { ok: false, err: 'failed' }; }
+  mcpChecking = false;
+  const prev = mcpChecks.get(folder);
+  mcpChecks.set(folder, r.ok ? { at: Date.now(), servers: r.servers, err: '' } : { at: prev ? prev.at : 0, servers: prev ? prev.servers : new Map(), err: r.err || 'failed' });
+  postMcp();
+}
+
+async function mcpToggle(name, off) {
+  const folder = mcpFolder();
+  if (!folder || typeof name !== 'string' || !mcpAllowed.has(name) || mcpBusy.has(name)) return;
+  mcpBusy.add(name);
+  postMcp();
+  let r;
+  try { r = await mcp.setDisabled(folder, name, !!off); } catch { r = { ok: false, reason: 'write' }; }
+  mcpBusy.delete(name);
+  if (!r.ok) {
+    postMcp();
+    const msg = {
+      busy: L('Claude Code is writing ~/.claude.json right now, so nothing was changed. Try again in a moment.'),
+      noProject: L('Start Claude Code in this folder once; after that the switches work.'),
+      read: L('Could not read ~/.claude.json, so nothing was changed.'),
+    }[r.reason] || L('Could not save ~/.claude.json, so nothing was changed.');
+    vscode.window.showWarningMessage(msg);
+    return;
+  }
+  mcpLast = { name, off: !!off, folder };
+  postMcp();
+  // 저장한 뒤 잠시 있다가 다시 읽어, 다른 프로그램이 덮어쓰지 않았는지 본다
+  setTimeout(() => {
+    if (mcp.isDisabled(folder, name) !== !!off) vscode.window.showWarningMessage(L('The change to {0} did not stay: another program rewrote ~/.claude.json. Try again.', name));
+    postMcp();
+  }, MCP_VERIFY_MS);
+  const undo = L('Undo');
+  const msg = off ? L('{0} is off in this folder. New Claude sessions start without it.', name) : L('{0} is on again in this folder. New Claude sessions will start it.', name);
+  vscode.window.showInformationMessage(msg, undo).then((b) => { if (b === undo) { mcpAllowed.add(name); mcpToggle(name, !off); } });
+}
+
+// 창이 보이는 동안만 설정 파일을 지켜본다(다른 세션의 /mcp disable 등을 바로 반영)
+function watchMcp(on) {
+  const file = mcp.claudeConfigPath();
+  if (mcpWatched && (!on || mcpWatched !== file)) { fs.unwatchFile(mcpWatched, onMcpFile); mcpWatched = null; }
+  if (on && !mcpWatched) { fs.watchFile(file, { interval: 2000, persistent: false }, onMcpFile); mcpWatched = file; }
+}
+function onMcpFile(cur, prev) { if (cur.mtimeMs !== prev.mtimeMs) postMcp(); }
+
+class McpWebview {
+  constructor() { this.view = undefined; this.ready = false; }
+
+  resolveWebviewView(view) {
+    this.view = view;
+    this.ready = false;
+    view.webview.options = { enableScripts: true, localResourceRoots: [] };
+    view.webview.html = mcpHtml(view.webview);
+    view.webview.onDidReceiveMessage((m) => {
+      if (!m || typeof m !== 'object') return;
+      if (m.type === 'ready') { this.ready = true; postMcp(); }
+      else if (m.type === 'check') mcpCheck();
+      else if (m.type === 'refresh') postMcp();
+      else if (m.type === 'toggle' && typeof m.name === 'string') mcpToggle(m.name, !!m.off);
+      else if (m.type === 'undo' && mcpLast) { mcpAllowed.add(mcpLast.name); mcpToggle(mcpLast.name, !mcpLast.off); }
+    });
+    view.onDidChangeVisibility(() => { watchMcp(view.visible); if (view.visible) postMcp(); });
+    view.onDidDispose(() => { if (this.view === view) { this.view = undefined; this.ready = false; watchMcp(false); } });
+    watchMcp(view.visible !== false);
+  }
+}
+
+const mcpWebview = new McpWebview();
+
+function mcpHtml(webview) {
+  const n = nonce();
+  return `<!DOCTYPE html>
+<html lang="${isKo() ? 'ko' : 'en'}"><head><meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${n}';">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  body { margin: 0; padding: 4px 0 10px; font-family: var(--vscode-font-family); font-size: 13px; color: var(--vscode-foreground); background: transparent; }
+  .bar { display: flex; align-items: center; gap: 6px; padding: 2px 8px 4px 10px; }
+  .where { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--vscode-descriptionForeground); }
+  .where b { color: var(--vscode-foreground); font-weight: 600; }
+  .btn { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border: 1px solid var(--vscode-button-border, transparent); border-radius: 4px; background: var(--vscode-button-secondaryBackground, transparent); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+  .btn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground)); }
+  .btn:disabled { opacity: 0.6; cursor: default; }
+  .btn:focus-visible, .sw:focus-visible, summary:focus-visible, .link:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+  .ibtn { width: 24px; padding: 0; justify-content: center; background: transparent; border-color: transparent; }
+  .info { margin: 2px 10px 6px; font-size: 11.5px; color: var(--vscode-descriptionForeground); }
+  .info.err { color: var(--vscode-errorForeground); }
+  .note { margin: 4px 10px 8px; padding: 6px 9px; border-left: 2px solid var(--vscode-editorWarning-foreground, #cca700); font-size: 12px; background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 8%, transparent); }
+  .last { display: flex; align-items: center; gap: 8px; margin: 2px 10px 8px; padding: 5px 9px; border-radius: 4px; font-size: 12px; background: var(--vscode-list-inactiveSelectionBackground); }
+  .last span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .link { border: 0; padding: 0; background: transparent; color: var(--vscode-textLink-foreground); font: inherit; cursor: pointer; }
+  .link:hover { text-decoration: underline; }
+  details { border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.25))); }
+  summary { list-style: none; display: flex; align-items: center; gap: 7px; min-height: 28px; padding: 0 10px; cursor: pointer; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--vscode-descriptionForeground); }
+  summary::-webkit-details-marker { display: none; }
+  summary:hover { background: var(--vscode-list-hoverBackground); }
+  .chev { display: inline-block; width: 10px; transition: transform 0.1s; }
+  details[open] > summary .chev { transform: rotate(90deg); }
+  .cnt { margin-left: auto; min-width: 18px; padding: 0 6px; font-size: 11px; line-height: 17px; text-align: center; border-radius: 9px; letter-spacing: 0; color: var(--vscode-badge-foreground); background: var(--vscode-badge-background); }
+  .snote { margin: -2px 10px 6px 27px; font-size: 11.5px; color: var(--vscode-descriptionForeground); }
+  .pg { margin: 6px 10px 2px 27px; font-size: 11px; font-weight: 600; color: var(--vscode-descriptionForeground); }
+  .row { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 10px 0 27px; }
+  .row:hover { background: var(--vscode-list-hoverBackground); }
+  /* 서버 이름은 줄의 58%까지 줄이지 않고, 자리가 모자라면 상태 글자를 먼저 줄인다(전체 글은 마우스 설명에) */
+  .nm { flex: 0 0 auto; max-width: 58%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nm + .ty, .nm + .st { margin-left: auto; }
+  .row.offrow .nm { opacity: 0.6; }
+  .ty { flex-shrink: 0; font-size: 10.5px; line-height: 15px; padding: 0 5px; border-radius: 3px; color: var(--vscode-descriptionForeground); border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35)); }
+  .st { flex: 0 1 auto; min-width: 7px; display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--vscode-descriptionForeground); }
+  .stt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .st i { flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--vscode-descriptionForeground); opacity: 0.5; }
+  .st.ok i { background: var(--vscode-charts-green); opacity: 1; }
+  .st.warn i, .st.auth i { background: var(--vscode-charts-yellow, #cca700); opacity: 1; }
+  .st.fail i, .st.rejected i { background: var(--vscode-charts-red); opacity: 1; }
+  .st.pending i { background: var(--vscode-charts-blue); opacity: 1; }
+  .st.off i { background: transparent; border: 1.5px solid var(--vscode-descriptionForeground); box-sizing: border-box; }
+  .sw { position: relative; flex-shrink: 0; width: 30px; height: 16px; padding: 0; border: 1px solid var(--vscode-checkbox-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.5))); border-radius: 9px; background: var(--vscode-checkbox-background, transparent); cursor: pointer; }
+  .sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--vscode-descriptionForeground); transition: left 0.12s; }
+  .sw[aria-checked="true"] { background: var(--vscode-button-background); border-color: var(--vscode-button-background); }
+  .sw[aria-checked="true"]::after { left: 16px; background: var(--vscode-button-foreground); }
+  .sw:disabled { opacity: 0.4; cursor: default; }
+  .sw.busy { opacity: 0.6; }
+  .ro { flex-shrink: 0; width: 30px; }
+  .empty { padding: 2px 10px 8px 27px; font-size: 12px; color: var(--vscode-descriptionForeground); }
+  .foot { margin: 10px 10px 0; padding-top: 8px; border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.25))); font-size: 11.5px; line-height: 1.45; color: var(--vscode-descriptionForeground); }
+  .msg { padding: 8px 14px; color: var(--vscode-descriptionForeground); font-size: 12.5px; }
+  @media (prefers-reduced-motion: reduce) { .sw::after, .chev { transition: none; } }
+</style></head>
+<body>
+<div id="root"></div>
+<script nonce="${n}">
+(function () {
+  const vscode = acquireVsCodeApi();
+  const saved = vscode.getState() || { open: {} };
+  const root = document.getElementById('root');
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const BIG = 8;
+  function rowHtml(r) {
+    const tip = r.detail ? r.stateText + ' — ' + r.detail : r.stateText;
+    let h = '<div class="row' + (r.on ? '' : ' offrow') + '"><span class="nm" title="' + esc(r.name) + '">' + esc(r.label) + '</span>';
+    if (r.type) h += '<span class="ty">' + esc(r.type) + '</span>';
+    h += '<span class="st ' + esc(r.state) + '" title="' + esc(tip) + '"><i></i><span class="stt">' + esc(r.stateText) + '</span></span>';
+    if (r.readonly) h += '<span class="ro" title="' + esc(r.why) + '"></span>';
+    else h += '<button class="sw' + (r.busy ? ' busy' : '') + '" role="switch" aria-checked="' + (r.on ? 'true' : 'false') + '" aria-label="' + esc(r.label + ': ' + r.stateText) + '" title="' + esc(r.why || r.name) + '" data-name="' + esc(r.name) + '"' + (r.can ? '' : ' disabled') + '></button>';
+    return h + '</div>';
+  }
+  function render(p) {
+    if (p.message) { root.innerHTML = '<div class="msg">' + esc(p.message) + '</div>'; return; }
+    const t = p.t || {};
+    let h = '<div class="bar"><span class="where" title="' + esc(p.folderPath) + '">' + esc(t.folder) + ': <b>' + esc(p.folder) + '</b></span>';
+    h += '<button class="btn" data-act="check" title="' + esc(t.checkTip) + '"' + (p.checking ? ' disabled' : '') + '>' + esc(p.checking ? t.checking : t.check) + '</button>';
+    h += '<button class="btn ibtn" data-act="refresh" title="' + esc(t.refresh) + '" aria-label="' + esc(t.refresh) + '"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v2.8h-2.8"/></svg></button></div>';
+    if (p.checked) h += '<div class="info">' + esc(p.checked) + '</div>';
+    if (p.checkErr) h += '<div class="info err">' + esc(p.checkErr) + '</div>';
+    if (p.keyNote) h += '<div class="info">' + esc(p.keyNote) + '</div>';
+    if (p.writeNote) h += '<div class="note">' + esc(p.writeNote) + '</div>';
+    if (p.last) h += '<div class="last"><span>' + esc(p.last.text) + '</span><button class="link" data-act="undo">' + esc(t.undo) + '</button></div>';
+    for (const s of p.sections || []) {
+      const open = s.id in saved.open ? saved.open[s.id] : s.rows.length <= BIG;
+      h += '<details data-key="' + esc(s.id) + '"' + (open ? ' open' : '') + '><summary><span class="chev">›</span>' + esc(s.title) + '<span class="cnt">' + s.rows.length + '</span></summary>';
+      if (s.note) h += '<div class="snote">' + esc(s.note) + '</div>';
+      if (!s.rows.length && !s.note) h += '<div class="empty">' + esc(t.none) + '</div>';
+      let g = null;
+      for (const r of s.rows) {
+        if (r.group !== undefined && r.group !== g) { g = r.group; h += '<div class="pg">' + esc(g) + '</div>'; }
+        h += rowHtml(r);
+      }
+      h += '</details>';
+    }
+    if (p.foot) h += '<div class="foot">' + esc(p.foot) + '</div>';
+    root.innerHTML = h;
+  }
+  root.addEventListener('click', (e) => {
+    const sw = e.target.closest('button.sw');
+    if (sw && !sw.disabled) { vscode.postMessage({ type: 'toggle', name: sw.dataset.name, off: sw.getAttribute('aria-checked') === 'true' }); return; }
+    const b = e.target.closest('button[data-act]');
+    if (b && !b.disabled) vscode.postMessage({ type: b.dataset.act });
+  });
+  root.addEventListener('toggle', (e) => {
+    const d = e.target;
+    if (d && d.tagName === 'DETAILS') { saved.open[d.dataset.key] = d.open; vscode.setState(saved); }
+  }, true);
+  window.addEventListener('message', (e) => { if (e.data && e.data.type === 'render') render(e.data.payload); });
+  vscode.postMessage({ type: 'ready' });
+})();
+</script></body></html>`;
+}
+
 function activate(context) {
   ctx = context;
   aliveOnly = !!context.globalState.get(CTX_ALIVE, false);
@@ -3401,6 +3712,8 @@ function activate(context) {
     treeView,
     statusItem,
     vscode.window.registerWebviewViewProvider(SESSIONS_VIEW, sessionsWebview),
+    vscode.window.registerWebviewViewProvider(MCP_VIEW, mcpWebview),
+    vscode.commands.registerCommand('claudeSessionChanges.checkMcp', () => { vscode.commands.executeCommand(MCP_VIEW + '.focus'); return mcpCheck(); }),
     vscode.commands.registerCommand('claudeSessionChanges.openSessionChanges', (arg) => openSessionChanges(arg)),
     vscode.commands.registerCommand('claudeSessionChanges.archiveSession', (arg) => setArchived(arg, true)),
     vscode.commands.registerCommand('claudeSessionChanges.revealSession', (arg) => revealSession(arg)),
@@ -3462,6 +3775,7 @@ function deactivate() {
   if (boardTimer) { clearTimeout(boardTimer); boardTimer = null; }
   for (const b of boards.values()) if (b.watched) fs.unwatchFile(b.watched, b.onMemo);
   stopSpin();
+  watchMcp(false);
   if (searchWorker) { try { searchWorker.terminate(); } catch { /* 이미 끝남 */ } searchWorker = null; }
   const w = worker;
   worker = null;
@@ -3472,4 +3786,4 @@ function deactivate() {
   });
 }
 
-module.exports = { activate, deactivate, _test: { parseBoardRoles, hunksToSides, applyEdit, displayDir, fmtTime, sidesForCodex, sameTitle, sessionKeyOf, setCodexCli: (v) => { codexCli = v; hasCodexCli.fixed = true; } } };
+module.exports = { activate, deactivate, _test: { parseBoardRoles, hunksToSides, applyEdit, displayDir, fmtTime, sidesForCodex, sameTitle, sessionKeyOf, setCodexCli: (v) => { codexCli = v; hasCodexCli.fixed = true; }, setClaudeBin: (p) => { claudeBinFixed = p; } } };

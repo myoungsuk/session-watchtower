@@ -7,7 +7,7 @@ im = Image.open(src)
 im = im.crop(im.convert('L').point(lambda v: 255 if v > 8 else 0).getbbox())
 W, H = im.size
 left = (48 + side) * 2 + 2      # activity bar + side bar
-if scene == 'side':
+if scene in ('side', 'mcp'):
     box = (0, 60, left, H)
 elif scene == 'explorer':        # side bar with the file Explorer, plus the start of the editor tabs
     box = (0, 60, left + 520, 60 + 760)

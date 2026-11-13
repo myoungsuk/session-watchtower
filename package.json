@@ -2,7 +2,7 @@
   "name": "session-watchtower",
   "displayName": "Session Watchtower for Claude Code",
   "description": "%description%",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "scripts": {
     "test": "node --test test/*.test.js",
     "shot": "bash tools/screenshot/run.sh"
@@ -23,6 +23,7 @@
   "activationEvents": [
     "onView:claudeSessionChanges.sessions",
     "onView:claudeSessionChanges.tree",
+    "onView:claudeSessionChanges.mcp",
     "onStartupFinished",
     "onUri"
   ],
@@ -48,6 +49,13 @@
           "id": "claudeSessionChanges.tree",
           "name": "%view.changes%",
           "icon": "media/icon.svg"
+        },
+        {
+          "id": "claudeSessionChanges.mcp",
+          "name": "%view.mcp%",
+          "icon": "media/icon.svg",
+          "type": "webview",
+          "visibility": "collapsed"
         }
       ]
     },
@@ -199,6 +207,12 @@
         "title": "%command.planTeam%",
         "category": "Session Watchtower",
         "icon": "$(lightbulb)"
+      },
+      {
+        "command": "claudeSessionChanges.checkMcp",
+        "title": "%command.checkMcp%",
+        "category": "Session Watchtower",
+        "icon": "$(pulse)"
       }
     ],
     "menus": {
@@ -553,6 +567,7 @@
     "extension.js",
     "scanner.js",
     "worker.js",
+    "mcp.js",
     "media/icon.svg",
     "media/logo.png",
     "l10n/**",

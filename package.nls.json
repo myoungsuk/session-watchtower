@@ -1,5 +1,5 @@
 {
-  "description": "See every Claude Code session at a glance — working, waiting or idle — and exactly which files each one changed. Also shows Codex sessions. Never touches your project files.",
+  "description": "See every Claude Code session at a glance — working, waiting or idle — and exactly which files each one changed. Also shows Codex sessions, and the MCP servers of each folder with a status check and an on/off switch. Never touches your project files.",
   "view.sessions": "Sessions",
   "view.changes": "Changed files",
   "command.refresh": "Refresh",
@@ -55,5 +55,7 @@
   "command.removeFromGroup": "Remove from group",
   "command.setSessionRole": "Set role in group",
   "command.planTeam": "Start a team with a lead session (copy the request)",
-  "config.boardPageSize": "How many rows of Instructions and results a group board shows per page."
+  "config.boardPageSize": "How many rows of Instructions and results a group board shows per page.",
+  "view.mcp": "MCP Servers",
+  "command.checkMcp": "Check MCP server status"
 }

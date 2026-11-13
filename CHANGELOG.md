@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.24.0
+
+- **MCP Servers view.** A new view (collapsed at the bottom of the side bar) lists the MCP servers Claude Code uses in this folder: added by you, added for this folder, the project's `.mcp.json` (with its approval state), plugins and claude.ai connectors, plus Codex's servers from `~/.codex/config.toml` (shown only).
+- **Turn a server off for this folder.** Each Claude Code server has a switch that does what `/mcp disable` and `/mcp enable` do: it changes this folder's `disabledMcpServers` list in `~/.claude.json`, under the same lock file Claude Code uses, and checks a moment later that the change stayed. *Undo* is on the notification and at the top of the view. New sessions use the change.
+- **Check status** runs `claude mcp list` in this folder only when you press it, and shows each server as connected, needs sign-in, failed, not set up, waiting for approval or off. Commands, URLs, headers and environment variable values are never shown.
+
 ## 0.23.0
 
 - **Board and group in line.** When a group's team board lists sessions that are not in the group, or the group has sessions the board does not list, the group board shows both lists. Sessions found on this computer can be added to the group with one click (one by one or all), and *Copy a note for the lead* asks the lead to add or remove rows. The group stays the list of the team; the extension never edits the board file.

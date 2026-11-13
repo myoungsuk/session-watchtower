@@ -10,6 +10,14 @@ exports.activate = async () => {
   await sleep(1500);
   await run('workbench.action.closeAuxiliaryBar');
   await run('workbench.action.closePanel');
+  if (scene === 'mcp') {
+    // only the MCP Servers view in the side bar, after a status check (the "claude" on PATH is a stand-in, see shoot.sh)
+    await run('claudeSessionChanges.mcp.focus');
+    await sleep(1500);
+    await run('claudeSessionChanges.checkMcp');
+    await run('workbench.action.focusActiveEditorGroup');
+    return;
+  }
   await run('claudeSessionChanges.tree.focus');
   await sleep(500);
   await run('claudeSessionChanges.sessions.focus');
