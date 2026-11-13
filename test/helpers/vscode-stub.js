@@ -65,7 +65,7 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
       createQuickPick: () => {
         const ev = () => { const ls = []; const f = (cb) => { ls.push(cb); return disposable(); }; f.fire = (v) => ls.forEach((cb) => cb(v)); return f; };
         const qp = { value: '', items: [], busy: false, title: undefined, placeholder: '', selectedItems: [], activeItems: [], shown: false,
-          onDidChangeValue: ev(), onDidAccept: ev(), onDidHide: ev(),
+          onDidChangeValue: ev(), onDidAccept: ev(), onDidHide: ev(), onDidChangeSelection: ev(),
           show() { this.shown = true; }, hide() { this.shown = false; this.onDidHide.fire(); }, dispose() {},
           type(v) { this.value = v; this.onDidChangeValue.fire(v); }, accept(item) { this.selectedItems = [item]; this.onDidAccept.fire(); } };
         state.quickPick = qp;

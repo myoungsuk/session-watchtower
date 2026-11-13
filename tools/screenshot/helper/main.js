@@ -24,6 +24,12 @@ exports.activate = async () => {
     }
     return;
   }
+  if (scene === 'roles') {
+    // the role picker for a session of the demo group
+    await sleep(9000);
+    run('claudeSessionChanges.setSessionRole', demo.sids['Fix flaky e2e tests']);
+    return;
+  }
   if (scene === 'groups') {
     // the board of the demo group (the group file is written before VS Code starts, see shoot.sh)
     await sleep(9000);

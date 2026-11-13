@@ -195,7 +195,6 @@
   "Put \"{0}\" in which group?": "\"{0}\"을(를) 어느 그룹에 넣을까요?",
   "Put the session in a group first. Roles belong to a group.": "먼저 세션을 그룹에 넣어 주세요. 역할은 그룹 안에서 정합니다.",
   "Role of \"{0}\" in {1}": "{1}에서 \"{0}\"의 역할",
-  "For example: watch, develop, deploy, docs (empty = no role)": "예: 감시, 개발, 배포, 문서 (비우면 역할 없음)",
   "Rename which group?": "어느 그룹의 이름을 바꿀까요?",
   "Delete which group?": "어느 그룹을 지울까요?",
   "Delete group": "그룹 지우기",
@@ -267,5 +266,8 @@
   "Leaves the project untouched, but a session may ask for permission to read a file outside the project.": "프로젝트는 건드리지 않지만, 세션이 프로젝트 밖 파일을 읽으려고 허락을 물을 수 있습니다.",
   "Where should the memo file go?": "메모 파일을 어디에 만들까요?",
   "Create": "만들기",
-  "Memo file linked: {0}. The role notes now point the sessions to it.": "메모 파일을 연결했습니다: {0}. 이제 역할 안내가 세션들에게 이 파일을 알려 줍니다."
+  "Memo file linked: {0}. The role notes now point the sessions to it.": "메모 파일을 연결했습니다: {0}. 이제 역할 안내가 세션들에게 이 파일을 알려 줍니다.",
+  "Custom role": "직접 넣은 역할",
+  "Check roles, or type your own (none checked = no role)": "역할을 체크하거나 직접 쳐 넣으세요(체크 없음 = 역할 없음)",
+  "Your own role: check it to use it": "직접 넣는 역할: 체크하면 씁니다"
 }

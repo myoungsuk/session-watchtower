@@ -119,7 +119,7 @@ Good to know:
 If you run several sessions as a team, each with its own job, put them in a **group**.
 
 - **Make a group and fill it.** Hover a session and press the group button, then pick a group or "New group…". A session belongs to one group at a time. The board's *Add sessions…* adds several at once, also from other folders.
-- **Roles.** Give each session a role such as *watch*, *develop* or *deploy*. It shows as a tag next to the name. A tag is only a label: the session does not know its role until you tell it, which is what the role note on the board is for.
+- **Roles.** Pick one or more roles from a list of the ones most projects need (Watch, Plan, Design, Develop, Test, Review, Docs, Deploy, Security, Research), each shown with what it does, or type your own. It shows as a tag next to the name. A tag is only a label: the session does not know its role until you tell it, which is what the role note on the board is for.
 - **The group stays together at the top** of the Sessions view; its sessions no longer repeat further down.
 - Groups are stored for this computer, so every VS Code window on it shows the same groups.
 

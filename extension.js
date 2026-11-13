@@ -700,6 +700,7 @@ function setArchived(arg, on) {
 // { groups: [{ id, name, memo: 메모 파일 절대 경로 또는 '', members: { 세션: { role, at } }, at }] }
 
 const EMPTY_GROUPS = { groups: [] };
+const ROLE_MAX = 40; // 역할 여러 개(예: "개발, 시험, 검토")가 들어갈 만큼
 let groupsMemo = { mtimeMs: -1, data: EMPTY_GROUPS };
 
 function groupsFile() {
@@ -717,7 +718,7 @@ function normalizeGroups(data) {
     for (const [sid, v] of Object.entries(m)) {
       if (seen.has(sid)) continue; // 세션 하나는 그룹 하나에만
       seen.add(sid);
-      members[sid] = { role: v && typeof v.role === 'string' ? v.role.slice(0, 24) : '', at: v && Number(v.at) > 0 ? Number(v.at) : 0 };
+      members[sid] = { role: v && typeof v.role === 'string' ? v.role.slice(0, ROLE_MAX) : '', at: v && Number(v.at) > 0 ? Number(v.at) : 0 };
     }
     groups.push({ id: g.id, name: g.name.slice(0, 60), memo: typeof g.memo === 'string' ? g.memo : '', members, at: Number(g.at) > 0 ? Number(g.at) : 0 });
   }
@@ -835,21 +836,67 @@ function removeFromGroup(arg) {
   });
 }
 
-async function setSessionRole(arg) {
+// 역할 고르기: 개발 프로젝트에 흔히 필요한 역할 목록에서 하나 이상 고르거나, 직접 쳐서 넣는다(여러 개면 "개발, 시험"처럼 쉼표로)
+function splitRoles(role) {
+  return String(role || '').split(/[,،、/]+/).map((x) => x.trim()).filter(Boolean);
+}
+
+function roleDuty(name) {
+  const d = ROLE_DUTIES.find((x) => x.re.test(name));
+  return d ? (isKo() ? d.ko : d.en) : '';
+}
+
+function setSessionRole(arg) {
   const sid = sidOf(arg);
   const g = sid && groupOfSession(sid);
-  if (!g) { vscode.window.showInformationMessage(L('Put the session in a group first. Roles belong to a group.')); return; }
+  if (!g) { vscode.window.showInformationMessage(L('Put the session in a group first. Roles belong to a group.')); return Promise.resolve(); }
   const s = sessionBySid(sid);
-  const role = await vscode.window.showInputBox({
-    prompt: L('Role of "{0}" in {1}', s ? s.title : sid.slice(0, 8), g.name),
-    placeHolder: L('For example: watch, develop, deploy, docs (empty = no role)'),
-    value: g.members[sid].role || '',
+  const ko = isKo();
+  const same = (a, b) => a.toLowerCase() === b.toLowerCase();
+  const current = splitRoles(g.members[sid].role);
+  const presets = ROLE_PRESETS.map((p) => (ko ? p.ko : p.en));
+  let items = presets.map((n) => ({ label: n, detail: roleDuty(n) }));
+  for (const r of current) if (!items.some((i) => same(i.label, r))) items.push({ label: r, description: L('Custom role') });
+  const qp = vscode.window.createQuickPick();
+  qp.canSelectMany = true;
+  qp.matchOnDetail = true;
+  qp.title = L('Role of "{0}" in {1}', s ? s.title : sid.slice(0, 8), g.name);
+  qp.placeholder = L('Check roles, or type your own (none checked = no role)');
+  qp.items = items;
+  qp.selectedItems = items.filter((i) => current.some((r) => same(r, i.label)));
+  // 친 글자가 목록에 없으면 "직접 넣기" 줄을 맨 위에 보여 준다. 고른 것은 다음 글자를 쳐도 남는다
+  qp.onDidChangeValue((v) => {
+    const t = v.trim().slice(0, 24);
+    const keep = qp.selectedItems.map((i) => i.label);
+    const typed = t && !items.some((i) => same(i.label, t)) ? [{ label: t, description: L('Your own role: check it to use it'), alwaysShow: true, custom: true }] : [];
+    qp.items = [...typed, ...items];
+    qp.selectedItems = qp.items.filter((i) => keep.some((k) => same(k, i.label)));
   });
-  if (role === undefined) return;
-  updateGroups((d) => {
-    const t = d.groups.find((x) => x.members[sid]);
-    if (!t) return false;
-    t.members[sid].role = role.trim().slice(0, 24);
+  if (qp.onDidChangeSelection) {
+    qp.onDidChangeSelection((sel) => {
+      for (const i of sel || []) if (i.custom && !items.some((x) => same(x.label, i.label))) items.push({ label: i.label, description: L('Custom role') });
+    });
+  }
+  return new Promise((resolve) => {
+    let done = false;
+    qp.onDidAccept(() => {
+      done = true;
+      let picked = qp.selectedItems.map((i) => i.label);
+      const t = qp.value.trim().slice(0, 24);
+      if (!picked.length && t) picked = [t]; // 아무것도 고르지 않고 글자만 친 채 Enter: 친 글자를 역할로
+      // 늘 같은 순서로(목록 순서, 직접 넣은 역할은 그 뒤): 고른 순서에 따라 "감시, 문서"와 "문서, 감시"가 갈리지 않게
+      const rank = (r) => { const i = presets.findIndex((n) => same(n, r)); return i < 0 ? presets.length : i; };
+      const role = [...new Set(picked)].map((r, i) => [r, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map((x) => x[0]).join(', ').slice(0, ROLE_MAX);
+      qp.hide();
+      updateGroups((d) => {
+        const x = d.groups.find((y) => y.members[sid]);
+        if (!x) return false;
+        x.members[sid].role = role;
+      });
+      resolve(role);
+    });
+    qp.onDidHide(() => { qp.dispose(); if (!done) resolve(undefined); });
+    qp.show();
   });
 }
 
@@ -877,13 +924,22 @@ async function deleteGroup(id) {
 // 역할 꼬리표는 사람이 보는 이름표라 세션은 모른다. 세션이 역할대로 일하게 하려면 그 세션에 직접 알려야 한다.
 // 그래서 세션마다 붙여 넣을 안내 글을 만든다: 그룹·역할·하는 일·동료·공유 메모·함께 일하는 규칙.
 // 처음 쓰는 사람(협업 규칙이 따로 없는 프로젝트)도 이 글만 붙여 넣으면 되게 규칙까지 넣는다. 화면 언어(한국어·영어)를 따른다.
+// 개발 프로젝트에 흔히 필요한 역할(고르기 창의 목록). 하는 일은 아래 ROLE_DUTIES에서 이름으로 찾는다
+const ROLE_PRESETS = [
+  { en: 'Watch', ko: '감시' }, { en: 'Plan', ko: '기획' }, { en: 'Design', ko: '설계' }, { en: 'Develop', ko: '개발' }, { en: 'Test', ko: '시험' },
+  { en: 'Review', ko: '검토' }, { en: 'Docs', ko: '문서' }, { en: 'Deploy', ko: '배포' }, { en: 'Security', ko: '보안' }, { en: 'Research', ko: '조사' },
+];
 const ROLE_DUTIES = [
   { re: /watch|monitor|감시|관제/i, en: 'Watch the other sessions, collect what needs the user\'s decision and ask the user. Do not change code or servers yourself.', ko: '다른 세션의 진행을 지켜보고, 사용자 결정이 필요한 것을 모아 사용자에게 묻습니다. 코드나 서버는 직접 고치지 않습니다.' },
+  { re: /plan|기획|요구|요건/i, en: 'Turn the request into clear tasks, split the work and set the order. Do not change code.', ko: '요청을 분명한 할 일로 정리하고, 일을 쪼개고, 순서를 정합니다. 코드는 고치지 않습니다.' },
+  { re: /design|architect|설계|구조/i, en: 'Decide the structure and the interfaces before code is written, and write them down.', ko: '코드를 짜기 전에 구조와 연결 방식(인터페이스)을 정하고 문서로 남깁니다.' },
   { re: /dev|code|build|개발|구현|코드/i, en: 'Change the code for your part and run the tests. Do not deploy.', ko: '맡은 부분의 코드를 고치고 시험을 돌립니다. 배포는 하지 않습니다.' },
   { re: /deploy|release|ops|배포|운영|승격/i, en: 'Build releases and put them on the servers. Before a release, check whose commits it contains; put it on production only after the user approves.', ko: '판을 만들고 서버에 올립니다. 판을 만들기 전에 들어가는 커밋이 누구 것인지 확인하고, 실서버에는 사용자가 승인한 뒤에만 올립니다.' },
   { re: /doc|문서|기록/i, en: 'Keep the documents and the change log up to date.', ko: '문서와 변경 기록을 최신으로 유지합니다.' },
   { re: /test|qa|verif|시험|테스트|검증/i, en: 'Test what changed and report the results in a table. Do not fix code; report the problems.', ko: '바뀐 기능을 시험하고 결과를 표로 남깁니다. 코드는 고치지 않고 문제만 알립니다.' },
   { re: /review|리뷰|검토/i, en: 'Read the other sessions\' changes and report problems.', ko: '다른 세션의 변경을 읽고 문제를 찾아 알립니다.' },
+  { re: /secur|보안/i, en: 'Check secrets, permissions and vulnerable dependencies, and report the risks before a release.', ko: '비밀 정보·권한·취약한 의존 패키지를 점검하고, 배포 전에 위험을 알립니다.' },
+  { re: /research|조사|탐색/i, en: 'Look up documents, libraries and facts, and report them with their sources. Do not change code.', ko: '문서·라이브러리·사실을 찾아 출처와 함께 알립니다. 코드는 고치지 않습니다.' },
 ];
 
 function roleBrief(groupId, sid) {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.1
+
+- **Pick roles from a list.** Setting a role opens a list of the roles most projects need: Watch, Plan, Design, Develop, Test, Review, Docs, Deploy, Security and Research, each with a line about what it does. Check one or more, or type your own role and check it. The role note describes these roles too.
+
 ## 0.18.0
 
 - **Role note.** A button on each board row copies a note to paste into that session: its group and role, what the role does (for common roles), the other sessions, the shared memo and five rules for working together. A role tag alone is only a label; this is how a session learns its role, also in a brand-new project with no team rules yet.
