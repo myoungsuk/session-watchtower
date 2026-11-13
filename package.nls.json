@@ -60,5 +60,8 @@
   "command.checkMcp": "Check MCP server status",
   "config.usageStatusBar": "Show Claude Code and Codex plan usage (percent of the 5-hour and weekly limits) in the status bar. Read from files already on this computer: Claude Code's saved usage and the last Codex log.",
   "config.usageRefreshMinutes": "While you use Claude, have Claude Code re-check your Claude plan usage this often (minutes, 5 or more; 0 = never). It runs Claude Code's own local /usage command (claude -p /usage, no model call, about 3 seconds of CPU); the extension never reads your login.",
-  "command.refreshUsage": "Re-check Claude plan usage now"
+  "command.refreshUsage": "Re-check Claude plan usage now",
+  "config.phoneBoardPorts": "Ports where the extension looks for a phone board (session-board) already running on this computer. The extension never starts or stops the board.",
+  "config.phoneBoardFolder": "Folder where session-board is installed (the one with cli.js). Empty = ~/tools/session-board when it exists; otherwise the extension asks.",
+  "command.phoneBoardPair": "Phone board: make a link for my phone"
 }

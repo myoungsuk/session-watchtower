@@ -2,7 +2,7 @@
   "name": "session-watchtower",
   "displayName": "Session Watchtower for Claude Code",
   "description": "%description%",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "scripts": {
     "test": "node --test test/*.test.js",
     "shot": "bash tools/screenshot/run.sh"
@@ -207,6 +207,12 @@
         "title": "%command.planTeam%",
         "category": "Session Watchtower",
         "icon": "$(lightbulb)"
+      },
+      {
+        "command": "claudeSessionChanges.phoneBoardPair",
+        "title": "%command.phoneBoardPair%",
+        "category": "Session Watchtower",
+        "icon": "$(device-mobile)"
       },
       {
         "command": "claudeSessionChanges.refreshUsage",
@@ -469,6 +475,17 @@
           "default": true,
           "description": "%config.usageStatusBar%"
         },
+        "claudeSessionChanges.phoneBoard.ports": {
+          "type": "array",
+          "items": { "type": "number" },
+          "default": [5290, 5291],
+          "description": "%config.phoneBoardPorts%"
+        },
+        "claudeSessionChanges.phoneBoard.folder": {
+          "type": "string",
+          "default": "",
+          "description": "%config.phoneBoardFolder%"
+        },
         "claudeSessionChanges.usageRefreshMinutes": {
           "type": "number",
           "default": 15,
@@ -587,6 +604,8 @@
     "worker.js",
     "mcp.js",
     "usage.js",
+    "phoneboard.js",
+    "vendor/**",
     "media/icon.svg",
     "media/logo.png",
     "l10n/**",

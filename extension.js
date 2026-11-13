@@ -11,6 +11,7 @@ const { execFile } = require('child_process');
 const { parsePatch, LIVE_MS, codexPatchText } = require('./scanner');
 const mcp = require('./mcp');
 const usage = require('./usage');
+const phoneboard = require('./phoneboard');
 
 // 화면 글자: 영어 원문 + l10n/bundle.l10n.ko.json(한국어). 날짜·시간 형식만 언어별로 직접 만든다.
 const L = (message, ...args) => vscode.l10n.t(message, ...args);
@@ -70,6 +71,8 @@ function cfg() {
     archiveAfter: String(c.get('archiveAfter', 'claude')),
     statusBar: c.get('statusBar', true) !== false,
     usageStatusBar: c.get('usageStatusBar', true) !== false,
+    phoneBoardPorts: (Array.isArray(c.get('phoneBoard.ports')) ? c.get('phoneBoard.ports') : [5290, 5291]).map(Number).filter((n) => Number.isInteger(n) && n > 0 && n < 65536).slice(0, 8),
+    phoneBoardFolder: String(c.get('phoneBoard.folder', '') || ''),
     usageRefreshMinutes: (() => { const v = Number(c.get('usageRefreshMinutes', 15)); return !isFinite(v) || v <= 0 ? 0 : Math.max(5, Math.min(240, v)); })(),
     includeCodex: c.get('includeCodex', true) !== false,
     attentionDir: expandHome(String(c.get('attentionMarkerDir', '~/.cache/claude-attention') || '')),
@@ -2479,8 +2482,8 @@ function sessionsPayload() {
     // 변경 규모는 변경 파일 창의 "보는 기간" 안에서, 고칠 때마다 더한 합계(같은 줄을 여러 번 고치면 여러 번 셈)
     diffTip: L('Last {0}: {1} lines added, {2} removed (each edit counted)', spanLong(cfg().lookbackHours), '{1}', '{2}'),
   };
-  if (!loaded) return { message: lastError ? L('Read error') : L('Reading sessions…'), detail: lastError || '', strings };
-  if (!sessionsModel.length && !archivedModel.length) return { message: L('No sessions in the last {0}', spanShort(cfg().lookbackHours)), strings };
+  if (!loaded) return { message: lastError ? L('Read error') : L('Reading sessions…'), detail: lastError || '', strings, phone: phoneTip() };
+  if (!sessionsModel.length && !archivedModel.length) return { message: L('No sessions in the last {0}', spanShort(cfg().lookbackHours)), strings, phone: phoneTip() };
   const { mine, groups } = splitByFolder(sessionsModel);
   const tabs = openTabSids(sessionsModel.concat(archivedModel));
   tabKey = claudeTabLabels().sort().join('\n');
@@ -2517,6 +2520,7 @@ function sessionsPayload() {
         ? L('Sessions with no conversation for {0} day(s) (the Claude Code setting "Archive Inactive Sessions") and sessions you archived here.', autoArchiveDays())
         : L('Sessions with no conversation for {0} day(s) and sessions you archived here.', autoArchiveDays()),
     // 단추의 숫자는 이 폴더에서 열려 있는 세션 수(머리말의 작업·멈춤·쉼 합과 같다). 다른 폴더는 설명에만 적는다
+    phone: phoneTip(),
     openHere: mine.filter((s) => s.alive).length,
     openElsewhere: groups.reduce((n, [, items]) => n + items.filter((s) => s.alive).length, 0),
     mine: mine.filter(free).map(rowOf),
@@ -2568,6 +2572,7 @@ class SessionsWebview {
       else if (m.type === 'board' && typeof m.team === 'string') openGroupBoard(m.team);
       else if (m.type === 'renameGroup' && typeof m.team === 'string') renameGroup(m.team);
       else if (m.type === 'deleteGroup' && typeof m.team === 'string') deleteGroup(m.team);
+      else if (m.type === 'phone') phoneBoardPair();
     });
     view.onDidChangeVisibility(() => { if (view.visible) { requestScan(false); this.post(); } });
     view.onDidDispose(() => { if (this.view === view) { this.view = undefined; sessionsView = null; this.ready = false; } });
@@ -2687,6 +2692,7 @@ function sessionsHtml(webview) {
   <span class="spacer"></span>
   <button class="btn" id="btnActive" aria-pressed="false"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1 3 9h4.2L6.5 15 13 7H8.8z"/></svg><span id="lblActive"></span></button>
   <button class="btn" id="btnSearch"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/></svg></button>
+  <button class="btn" id="btnPhone" hidden><svg width="13" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><rect x="4" y="1.5" width="8" height="13" rx="1.6"/><path d="M7 12.2h2"/></svg></button>
   <button class="btn" id="btnLegend" aria-pressed="false"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="6.2"/><path d="M6.3 6.2a1.8 1.8 0 1 1 2.5 1.7c-.5.2-.8.6-.8 1.1v.5"/><circle cx="8" cy="11.6" r=".4" fill="currentColor"/></svg></button>
 </div>
 <div class="search" id="searchBox"><input id="q" type="text" autocomplete="off" spellcheck="false"></div>
@@ -2793,10 +2799,15 @@ function sessionsHtml(webview) {
     btnLegend.setAttribute('aria-label', s.legend || '');
     btnLegend.classList.toggle('on', !!saved.legendOpen);
   }
+  // 휴대폰 보드가 이 컴퓨터에서 켜져 있으면 단추가 보인다(누르면 휴대폰 연결 링크)
+  const btnPhone = document.getElementById('btnPhone');
+  btnPhone.addEventListener('click', () => vscode.postMessage({ type: 'phone' }));
   function render(p) {
     last = p;
     strings = p.strings || {};
     renderLegend();
+    btnPhone.hidden = !p.phone;
+    if (p.phone) { btnPhone.title = p.phone; btnPhone.setAttribute('aria-label', p.phone); }
     document.getElementById('lblNew').textContent = strings.newSession || '';
     btnSearch.title = strings.search || '';
     btnSearch.setAttribute('aria-label', strings.search || '');
@@ -3489,6 +3500,7 @@ function startTimer() {
     updateUsage(); // 파일 시각만 본다(바뀌었을 때만 읽음)
     if (checkMemoRequests()) writeTeamRosters(); // 대장이 보드 연결을 부탁했는지(그룹마다 파일 하나가 있는지만 본다), 결과를 명단에 적는다
     if (groupsChangedOnDisk() || boardFilesChanged()) rebuildSessions(); // 다른 VS Code 창이 그룹을 바꿨거나, 대장이 보드의 역할을 고쳤다
+    if (sessionsView && sessionsView.visible) refreshPhoneBoards(false); // 1분에 한 번까지, 세션 창이 보일 때만
     if ((treeView && treeView.visible) || (sessionsView && sessionsView.visible)) { requestScan(false); return; }
     const bg = backgroundWanted();
     if (bg && (workingHere() || bgTicks++ % BG_EVERY === 0)) requestScan(false);
@@ -3715,6 +3727,128 @@ function updateUsage() {
   tip.isTrusted = false;
   usageItem.tooltip = tip;
   usageItem.show();
+}
+
+// ---------- 휴대폰 보드(따로 설치한 session-board) ----------
+// 확장은 보드를 켜거나 끄지 않는다. 떠 있는 보드를 찾아 세션 창에 단추를 보이고, 보드 폴더의 `cli.js pair`로 휴대폰 연결 링크·코드를 받아 QR로 보여 준다.
+// 연결 링크·코드는 10분짜리 한 번 쓰는 열쇠라 저장하거나 기록하지 않는다(패널을 닫으면 사라짐).
+let phoneBoards = []; // [{ port, label }]
+const phoneTip = () => (phoneBoards.length ? L('Phone board on: {0}. Click for a link to open it on your phone.', phoneBoards.map((b) => b.label || ('127.0.0.1:' + b.port)).join(', ')) : '');
+let phoneCheckedAt = 0;
+let phoneChecking = null;
+let phonePanel = null;
+const PHONE_CHECK_MS = 60000;
+
+function refreshPhoneBoards(force) {
+  if (phoneChecking) return phoneChecking;
+  if (!force && Date.now() - phoneCheckedAt < PHONE_CHECK_MS) return Promise.resolve(phoneBoards);
+  phoneCheckedAt = Date.now();
+  // 보드가 스스로 적어 둔 실행 정보가 있으면 그 포트 하나만(원격 창에서 넘겨받은 다른 컴퓨터의 포트를 착각하지 않게), 없으면 설정한 포트들
+  const run = phoneboard.localRun();
+  const look = run ? phoneboard.findBoards([run.port]).then((l) => l.map((b) => ({ ...b, local: true }))) : phoneboard.findBoards(cfg().phoneBoardPorts);
+  phoneChecking = look.then((list) => {
+    const before = JSON.stringify(phoneBoards);
+    phoneBoards = list;
+    phoneChecking = null;
+    if (JSON.stringify(list) !== before) sessionsWebview.post();
+    return list;
+  }, () => { phoneChecking = null; return phoneBoards; });
+  return phoneChecking;
+}
+
+async function phoneBoardPair() {
+  let folder = phoneboard.boardFolder(cfg().phoneBoardFolder);
+  if (!folder) {
+    const pick = L('Choose the folder…');
+    const b = await vscode.window.showInformationMessage(L('Where is the phone board (session-board) installed? Choose its folder (the one with cli.js).'), pick);
+    if (b !== pick) return;
+    const f = await vscode.window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: L('Use this folder') });
+    if (!f || !f[0]) return;
+    folder = phoneboard.boardFolder(f[0].fsPath);
+    if (!folder) { vscode.window.showWarningMessage(L('There is no cli.js in that folder.')); return; }
+    await vscode.workspace.getConfiguration(CFG).update('phoneBoard.folder', folder, vscode.ConfigurationTarget.Global);
+  }
+  const boards = await refreshPhoneBoards(true);
+  if (!boards.length) {
+    vscode.window.showWarningMessage(L('No phone board is running on this computer (checked port {0}). Start the board first.', (phoneboard.localRun() ? [phoneboard.localRun().port] : cfg().phoneBoardPorts).join(', ')));
+    return;
+  }
+  const r = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: L('Making a link for your phone…') }, () => phoneboard.pair(folder));
+  if (!r.ok) {
+    vscode.window.showWarningMessage(r.err === 'timeout' ? L('The phone board did not answer in time. Try again.') : L('Could not make a link. Run "node cli.js pair" in {0} to see why.', folder));
+    return;
+  }
+  showPhonePanel(r, boards, folder);
+}
+
+function showPhonePanel(r, boards, folder) {
+  if (!phonePanel) {
+    phonePanel = vscode.window.createWebviewPanel('claudeSessionChanges.phone', L('Phone board'), vscode.ViewColumn.Active, { enableScripts: true, localResourceRoots: [] });
+    phonePanel.onDidDispose(() => { phonePanel = null; });
+    phonePanel.webview.onDidReceiveMessage((m) => {
+      if (!m || typeof m !== 'object' || !phonePanel) return;
+      if ((m.type === 'copyLink' || m.type === 'copyCode') && phonePanel.secret) {
+        vscode.env.clipboard.writeText(m.type === 'copyLink' ? phonePanel.secret.url : phonePanel.secret.code);
+        vscode.window.showInformationMessage(m.type === 'copyLink' ? L('Copied the link. It works once, within 10 minutes.') : L('Copied the code. It works once, within 10 minutes.'));
+      } else if (m.type === 'openBoard' && phonePanel.board) vscode.env.openExternal(vscode.Uri.parse('http://127.0.0.1:' + phonePanel.board.port + '/'));
+      else if (m.type === 'again') phoneBoardPair();
+    });
+  }
+  phonePanel.secret = { url: r.url, code: r.code };
+  phonePanel.board = boards.find((b) => b.local) || boards[0];
+  phonePanel.webview.html = phoneHtml(phonePanel.webview, r, boards, folder);
+  phonePanel.reveal();
+}
+
+function phoneHtml(webview, r, boards, folder) {
+  const n = nonce();
+  const esc = (x) => String(x == null ? '' : x).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  let svg = '';
+  try { svg = phoneboard.qrSvg(r.url); } catch { svg = ''; }
+  const many = boards.length > 1 && !boards.some((b) => b.local);
+  const names = boards.map((b) => b.label || ('127.0.0.1:' + b.port)).join(', ');
+  return `<!DOCTYPE html>
+<html lang="${isKo() ? 'ko' : 'en'}"><head><meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src data:; script-src 'nonce-${n}';">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  body { margin: 0; padding: 20px 28px; font-family: var(--vscode-font-family); font-size: 13.5px; color: var(--vscode-foreground); background: var(--vscode-editor-background); }
+  h1 { margin: 0 0 4px; font-size: 18px; }
+  .muted { color: var(--vscode-descriptionForeground); }
+  .wrap { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; margin-top: 16px; }
+  .qr { padding: 8px; background: #fff; border-radius: 6px; line-height: 0; }
+  .qr svg { width: 240px; height: 240px; }
+  .code { font-family: var(--vscode-editor-font-family); font-size: 26px; letter-spacing: 0.12em; font-weight: 600; }
+  .link { font-family: var(--vscode-editor-font-family); font-size: 12px; word-break: break-all; margin: 6px 0 10px; }
+  button { height: 26px; padding: 0 10px; margin: 0 6px 6px 0; border: 1px solid var(--vscode-button-border, transparent); border-radius: 4px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); font: inherit; cursor: pointer; }
+  button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  .warn { margin-top: 14px; padding: 8px 12px; border-left: 3px solid var(--vscode-editorWarning-foreground, #cca700); background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 9%, transparent); }
+  ol { padding-left: 20px; margin: 8px 0; } li { margin: 3px 0; }
+</style></head><body>
+<h1>${esc(L('Open the phone board on your phone'))}</h1>
+<div class="muted">${esc(L('Board: {0}', names))}</div>
+<div class="wrap">
+  <div class="qr">${svg}</div>
+  <div>
+    <ol>
+      <li>${esc(L('Scan the code with the phone camera, or open the link in Chrome or Safari on the phone.'))}</li>
+      <li>${esc(L('On an iPhone home-screen app or in another board, type only the code.'))}</li>
+    </ol>
+    <div class="muted">${esc(L('Code'))}</div>
+    <div class="code">${esc(r.code)}</div>
+    <div class="link">${esc(r.url)}</div>
+    <button data-act="copyLink">${esc(L('Copy link'))}</button><button data-act="copyCode">${esc(L('Copy code'))}</button><button data-act="again">${esc(L('Make a new link'))}</button><button data-act="openBoard">${esc(L('Open the board here'))}</button>
+    <div class="muted">${esc(r.until ? L('Works once, until {0}. A new link makes this one stop working. Do not send it to anyone else.', r.until) : L('Works once, within 10 minutes. A new link makes this one stop working. Do not send it to anyone else.'))}</div>
+  </div>
+</div>
+${r.local ? `<div class="warn">${esc(L('This link only opens on this computer, because the board found no private network address. Turn on Tailscale serve for the board (or set BOARD_PUBLIC_URL) so the phone can reach it.'))}</div>` : ''}
+${many ? `<div class="warn">${esc(L('More than one board answers here ({0}). This link is for the board installed in {1}.', names, folder))}</div>` : ''}
+<script nonce="${n}">
+(function () {
+  const vscode = acquireVsCodeApi();
+  document.body.addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (b) vscode.postMessage({ type: b.dataset.act }); });
+})();
+</script></body></html>`;
 }
 
 // ---------- 명령 ----------
@@ -4113,6 +4247,7 @@ function activate(context) {
     vscode.window.registerWebviewViewProvider(SESSIONS_VIEW, sessionsWebview),
     vscode.window.registerWebviewViewProvider(MCP_VIEW, mcpWebview),
     vscode.commands.registerCommand('claudeSessionChanges.refreshUsage', () => refreshClaudeUsage(true)),
+    vscode.commands.registerCommand('claudeSessionChanges.phoneBoardPair', () => phoneBoardPair()),
     vscode.commands.registerCommand('claudeSessionChanges.checkMcp', () => { vscode.commands.executeCommand(MCP_VIEW + '.focus'); return mcpCheck(); }),
     vscode.commands.registerCommand('claudeSessionChanges.openSessionChanges', (arg) => openSessionChanges(arg)),
     vscode.commands.registerCommand('claudeSessionChanges.archiveSession', (arg) => setArchived(arg, true)),

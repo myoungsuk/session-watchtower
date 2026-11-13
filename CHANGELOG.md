@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.28.0
+
+- **Phone board.** When a phone board (session-board, a separate program) runs on this computer, the Sessions view shows a phone button. It opens a panel with a QR code, link and code for your phone, made by the board's own `cli.js pair` (once, within 10 minutes; never saved). Watchtower only checks whether the board is running and never starts or stops it. Settings `phoneBoard.ports` and `phoneBoard.folder`.
+
 ## 0.27.0
 
 - **Codex MCP switches.** Codex servers in the MCP Servers view can now be turned off or on: the extension changes only the `enabled` line of that server's table in `~/.codex/config.toml` (for every folder, as Codex has no per-folder setting), keeps a copy of the original the first time, checks that the change stayed, and offers Undo. A server written on one line stays read-only.
