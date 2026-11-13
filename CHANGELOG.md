@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.28.4
+
+- **Codex sessions open in the Codex panel.** When the Codex extension (openai.chatgpt) is installed, clicking a Codex session opens that conversation in the Codex panel (`vscode://openai.chatgpt/local/<id>`); without it, it still continues in a terminal with `codex resume`.
+- **Old Codex chats no longer jump to the top.** The Codex extension appends a settings record (and a short review sub-thread) to old conversations when it starts, which made weeks-old chats look like they had just been working. The last activity of a Codex session is now the time of its last real record, not the file time.
+- **The phone button only shows when a phone board is installed on this computer** (its run.json or a folder with cli.js), so it no longer appears on machines that only see another computer's board through a forwarded port.
+
 ## 0.28.3
 
 - **No computer names in the phone panel.** The phone panel and the phone button's tooltip no longer show the board's name or this computer's network address (they meant nothing to someone else installing it). The panel just says this computer is ready.

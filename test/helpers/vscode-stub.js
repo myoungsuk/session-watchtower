@@ -42,6 +42,7 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
     StatusBarAlignment: { Left: 1, Right: 2 },
     ProgressLocation: { Notification: 15 },
     l10n: { t: (msg, ...args) => (bundle[msg] || msg).replace(/\{(\d+)\}/g, (m, i) => String(args[+i])) },
+    extensions: { getExtension: (id) => ((state.installedExtensions || []).includes(id) ? { id } : undefined) },
     env: { language, uriScheme: 'vscode', clipboard: { writeText: async (t) => { state.clipboard = t; } }, openExternal: async (u) => { calls.push(['openExternal', String(u)]); } },
     window: {
       createTreeView: (id, o) => {

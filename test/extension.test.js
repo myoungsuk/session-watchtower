@@ -454,6 +454,14 @@ test('Codex 세션을 누르면 그 세션 폴더에서 터미널로 이어 연�
   const call = await waitFor(() => stub.calls.find((c) => c[0] === 'terminal'), '터미널');
   assert.deepStrictEqual([call[1].opts.cwd, call[1].sent, call[1].shown], [other, ['codex resume ' + CX], true]);
   assert.ok(!stub.calls.some((c) => c[0] === 'claude-vscode.editor.open'), 'Claude 명령은 부르지 않는다');
+  // Codex 확장(openai.chatgpt)이 깔려 있으면 터미널 대신 그 패널에서 연다(vscode://openai.chatgpt/local/<ID>)
+  stub.state.installedExtensions = ['openai.chatgpt'];
+  stub.calls.length = 0;
+  web.send({ type: 'open', sid: 'codex:' + CX });
+  const viaPanel = await waitFor(() => stub.calls.find((c) => c[0] === 'openExternal'), 'Codex 패널로 열기');
+  assert.strictEqual(viaPanel[1], 'vscode://openai.chatgpt/local/' + CX);
+  assert.ok(!stub.calls.some((c) => c[0] === 'terminal'), 'Codex 확장이 있으면 터미널은 열지 않는다');
+  stub.state.installedExtensions = [];
   // 기록 파일 이름이 UUID 모양이 아니면(명령 줄에 넣기 위험한 글자가 들어갈 수 있다) 터미널을 열지 않는다
   fx.codexSession(home, 'x; touch pwned', [
     { timestamp: fx.iso(Date.now() - MIN), type: 'session_meta', payload: { cwd: other, originator: 'codex_vscode', source: 'vscode' } },

@@ -12,7 +12,8 @@ const HOME = os.homedir();
 const PROJECTS = path.join(HOME, '.claude', 'projects');
 const REGISTRY = path.join(HOME, '.claude', 'sessions');
 const CODEX_SESSIONS = path.join(HOME, '.codex', 'sessions');
-const CACHE_VERSION = 6; // 4: 마지막 대화 시각(lastMsgTs)·목록용 요약 읽기 추가 — 옛 저장 파일은 버리고 한 번 새로 읽음
+const CACHE_VERSION = 7; // 7: Codex 마지막 활동 시각을 기록 시각으로(설정 기록은 뺌)
+const CACHE_VERSION_OLD_NOTE = 6; // 4: 마지막 대화 시각(lastMsgTs)·목록용 요약 읽기 추가 — 옛 저장 파일은 버리고 한 번 새로 읽음
 const CACHE_SAVE_MS = 20000;
 const CODEX_ACTIVE_MS = 90000;
 // "지금 고치는 중"으로 보는 시간: 마지막으로 바뀐 뒤 이만큼
@@ -658,6 +659,40 @@ const CX_COMPACT = B('"type":"compacted"');
 const CX_OUT = B('"payload":{"type":"custom_tool_call_output"');
 const CX_FOUT = B('"payload":{"type":"function_call_output"');
 const CX_FAILED = B('"text":"Script failed');
+// Codex 확장이 켜질 때 옛 대화들 끝에 덧붙이는 설정 기록. 대화가 아니라서 마지막 활동 시각으로 치지 않는다
+const CX_SETTINGS = B('"thread_settings_applied"');
+// 대화를 줄여 담는 기록(compaction·compacted)도 활동으로 치지 않는다. 확장이 옛 대화를 열 때 붙는 검토용 하위 스레드에는 이것만 들어 있다
+const CX_COMPACTION = B('"type":"compaction"');
+// 뒤에서 앞으로 가며 Codex의 마지막 활동 기록 시각을 찾는다(머리 기록·설정 기록은 건너뜀)
+function findLastCodexTs(fd, endPos) {
+  const step = 256 * 1024;
+  let pos = endPos;
+  let read = 0;
+  while (pos > 0 && read < TITLE_BACK_BYTES) {
+    const from = Math.max(0, pos - step);
+    const buf = Buffer.allocUnsafe(pos - from);
+    const n = fs.readSync(fd, buf, 0, pos - from, from);
+    if (n <= 0) break;
+    read += n;
+    extraRead += n;
+    let end = n;
+    for (;;) {
+      const j = buf.lastIndexOf(K_TS, end - 1);
+      if (j < 0) break;
+      // 기록의 맨 앞({"timestamp":…)만 본다. 긴 머리 기록 안에 들어 있는 다른 "timestamp"에 속지 않게
+      const atStart = j >= 1 && buf[j - 1] === 0x7b && (j < 2 || buf[j - 2] === 0x0a);
+      const head = buf.subarray(j, Math.min(n, j + 200));
+      if (atStart && head.indexOf(CX_SETTINGS) < 0 && head.indexOf(CX_META) < 0 && head.indexOf(CX_COMPACTION) < 0 && head.indexOf(CX_COMPACT) < 0) {
+        const ts = recordTs(head.subarray(0, 64), -1);
+        if (ts) return ts;
+      }
+      end = j;
+      if (end <= 0) break;
+    }
+    pos = from;
+  }
+  return 0;
+}
 const K_CALLID = B('"call_id":"');
 
 function codexUserText(content) {
@@ -1105,6 +1140,8 @@ function scanAppended(st, sinceMs, seekMinBytes) {
     st.offset = pos - (carry ? carry.length : 0);
     st.size = stat.size;
     st.mtimeMs = stat.mtimeMs;
+    // Codex: 파일이 바뀐 시각 말고 마지막 활동 기록의 시각(확장이 옛 대화에 설정 기록만 덧붙여도 "방금"이 되지 않게)
+    if (st.agent === 'codex') st.lastMsgTs = findLastCodexTs(fd, stat.size);
     if (st.scanFrom > 0 && st.agent !== 'codex') {
       if (!st.sub && !st.customTitle && !st.aiTitle && !st.titleSearched) {
         st.titleSearched = true;
@@ -1137,7 +1174,7 @@ function scanMeta(st) {
       read += findLastTitle(st, fd, stat.size, stat.size);
       if (!st.customTitle && !st.aiTitle) Object.assign(st, headTitle);
       st.lastMsgTs = findLastMessageTs(fd, stat.size);
-    }
+    } else st.lastMsgTs = findLastCodexTs(fd, stat.size);
     st.metaOnly = true;
     st.scanFrom = stat.size;
     st.offset = stat.size;
@@ -1899,14 +1936,14 @@ function createModel() {
       const codex = main.agent === 'codex';
       // 뿌리 세션 기록은 보는 기간 밖이고 하위 스레드(검토 등)만 걸린 Codex 세션: 바꾼 파일이 없으면 보여 줄 것이 없다
       if (codex && main.sub && !changes.length) continue;
-      if (!lastActivity || codex) lastActivity = lastWrite;
+      if (!lastActivity) lastActivity = lastWrite;
       let title = main.customTitle || main.aiTitle || null;
       let titleSource = main.customTitle ? 'custom' : main.aiTitle ? 'ai' : null;
       if (!title && reg && reg.name && reg.nameSource !== 'derived') { title = reg.name; titleSource = 'registry'; }
       if (!title && main.firstPrompt) { title = main.firstPrompt; titleSource = 'prompt'; }
       if (!title) { title = codex ? 'Codex ' + sid.slice(6, 14) : sid.slice(0, 8); titleSource = 'id'; }
       // Codex는 실행 중 목록이 없어 최근 기록 시각으로만 작업 중을 짐작한다
-      const codexActive = codex && t0 - lastWrite < CODEX_ACTIVE_MS;
+      const codexActive = codex && t0 - lastActivity < CODEX_ACTIVE_MS;
       let state = {
         alive: codex ? codexActive : !!reg,
         status: codex ? (codexActive ? 'busy' : null) : reg ? reg.status : null,

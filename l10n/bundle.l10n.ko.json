@@ -137,7 +137,7 @@
   "This session is hidden by the \"open only\" filter.": "이 세션은 지금 필터(열린 세션만)에 걸려 숨겨져 있습니다.",
   "Open": "열린 세션",
   "Show only sessions that are open right now (working, waiting or idle). The number counts this folder: {0}. Other folders: {1}.": "지금 열려 있는 세션만 봅니다(작업 중·기다림·쉼 모두 포함). 숫자는 이 폴더 기준: {0}개. 다른 폴더: {1}개.",
-  "Codex session · Click: continue it in a terminal (codex resume) · Buttons on the right: changed files / review all changes": "Codex 세션 · 누르면 터미널에서 이어 엽니다(codex resume) · 오른쪽 단추: 변경 파일 / 변경 전부 보기",
+  "Codex session · Click: open it in Codex (or continue it in a terminal) · Buttons on the right: changed files / review all changes": "Codex 세션 · 누르면 Codex 패널에서 엽니다(없으면 터미널에서 이어 열기) · 오른쪽 단추: 변경 파일 / 변경 전부 보기",
   "The Codex CLI (\"codex\") was not found on this machine, so this Codex session cannot be opened from here.": "이 컴퓨터에서 Codex CLI(\"codex\")를 찾지 못해 여기서는 이 Codex 세션을 열 수 없습니다.",
   "1 file": "파일 1",
   "No recorded file changes in the last {0} of this session's work.": "이 세션이 마지막으로 일한 {0} 안에는 기록된 파일 변경이 없습니다.",

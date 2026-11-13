@@ -2436,7 +2436,7 @@ function sessionRow(s, tabs, team) {
   const codex = s.agent === 'codex';
   const canOpen = codex ? UUID_RE.test(codexId(s.sid)) : inWorkspace(s);
   const hint = codex
-    ? L('Codex session · Click: continue it in a terminal (codex resume) · Buttons on the right: changed files / review all changes')
+    ? L('Codex session · Click: open it in Codex (or continue it in a terminal) · Buttons on the right: changed files / review all changes')
     : canOpen
       ? L('Click: open the Claude conversation · Buttons on the right: changed files / review all changes')
       : L('Session from another folder ({0}): open it from a VS Code window with that folder · Buttons on the right: changed files / review all changes', s.project);
@@ -2899,8 +2899,10 @@ function inWorkspace(s) {
   return folders.some((f) => { const r = norm(f.uri.fsPath); return cwd === r || cwd.startsWith(r + path.sep); });
 }
 
-// Codex 대화 열기. Codex 확장에는 대화를 ID로 여는 공개 명령이 없어서, 터미널에서 Codex CLI로 이어 연다(codex resume <id>).
-// 터미널은 그 세션의 작업 폴더에서 열리므로 다른 폴더 세션도 이 창에서 열 수 있다.
+// Codex 대화 열기.
+// ① Codex 확장(openai.chatgpt)이 깔려 있으면 그 패널에서 바로 연다. 확장의 URI 처리기가 `<scheme>://openai.chatgpt/local/<대화 ID>`를
+//    받으면 그 대화 화면으로 이동한다(26.1111 기준 경로 /local/:conversationId, ID는 UUID 모양만 받음).
+// ② 확장이 없거나 열지 못하면 터미널에서 Codex CLI로 이어 연다(codex resume <id>). 터미널은 그 세션의 작업 폴더에서 열린다.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const codexId = (sid) => String(sid || '').replace(/^codex:/, '');
 let codexCli = null; // true로 확인된 뒤에만 기억한다(나중에 설치할 수 있으므로 "없음"은 기억하지 않음)
@@ -2913,8 +2915,14 @@ function hasCodexCli() {
 }
 async function openCodexSession(s) {
   const id = codexId(s.sid);
-  // 명령 줄에 넣는 값이라 UUID 모양일 때만 쓴다
+  // 명령 줄·주소에 넣는 값이라 UUID 모양일 때만 쓴다
   if (!UUID_RE.test(id)) return vscode.window.showInformationMessage(L('"{0}" is a Codex session. Open it from Codex.', s.title));
+  if (vscode.extensions && vscode.extensions.getExtension && vscode.extensions.getExtension('openai.chatgpt')) {
+    try {
+      const ok = await vscode.env.openExternal(vscode.Uri.parse(`${vscode.env.uriScheme || 'vscode'}://openai.chatgpt/local/${id}`));
+      if (ok !== false) return;
+    } catch { /* 아래 터미널로 */ }
+  }
   if (!(await hasCodexCli())) return vscode.window.showInformationMessage(L('The Codex CLI ("codex") was not found on this machine, so this Codex session cannot be opened from here.'));
   const cwd = s.cwd && fs.existsSync(s.cwd) ? s.cwd : undefined;
   const term = vscode.window.createTerminal({ name: 'Codex · ' + String(s.title || id).replace(/\s+/g, ' ').slice(0, 24), cwd });
@@ -3745,7 +3753,11 @@ function refreshPhoneBoards(force) {
   phoneCheckedAt = Date.now();
   // 보드가 스스로 적어 둔 실행 정보가 있으면 그 포트 하나만(원격 창에서 넘겨받은 다른 컴퓨터의 포트를 착각하지 않게), 없으면 설정한 포트들
   const run = phoneboard.localRun();
-  const look = run ? phoneboard.findBoards([run.port]).then((l) => l.map((b) => ({ ...b, local: true }))) : phoneboard.findBoards(cfg().phoneBoardPorts);
+  // 이 컴퓨터에 보드가 설치돼 있지 않으면(실행 정보도, cli.js 폴더도 없음) 포트를 보지 않는다.
+  // 원격 창이 다른 컴퓨터 보드를 같은 포트로 넘겨받은 곳이나, 보드를 모르는 사람의 컴퓨터에서 휴대폰 단추가 뜨지 않게
+  const installed = run || phoneboard.boardFolder(cfg().phoneBoardFolder);
+  const look = run ? phoneboard.findBoards([run.port]).then((l) => l.map((b) => ({ ...b, local: true })))
+    : installed ? phoneboard.findBoards(cfg().phoneBoardPorts) : Promise.resolve([]);
   phoneChecking = look.then((list) => {
     const before = JSON.stringify(phoneBoards);
     phoneBoards = list;

@@ -181,6 +181,23 @@ test('Codex 기록: apply_patch 로 고친 파일과 첫 질문', () => {
   assert.ok(!find(S.createModel().scan({ ...base(), includeCodex: false }), 'codex:' + CODEX), '설정으로 끌 수 있어야 함');
 });
 
+test('Codex: 확장이 옛 대화에 설정 기록만 덧붙이면 "방금 작업"으로 보지 않는다(마지막 활동은 기록 시각)', () => {
+  const OLD = 'c0de0000-1111-4111-8111-0000000000aa';
+  const hours = (h) => fx.iso(now - h * 3600e3);
+  fx.codexSession(home, OLD, [
+    { timestamp: hours(30), type: 'session_meta', payload: { id: OLD, cwd: project, originator: 'codex_vscode' } },
+    { timestamp: hours(30), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Old codex chat' }] } },
+    { timestamp: hours(29), type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'done' }] } },
+    // Codex 확장이 켜질 때 붙이는 기록(지금 시각) — 파일 시각도 지금으로 바뀐다
+    { timestamp: fx.iso(now - 10 * 1000), type: 'event_msg', payload: { type: 'thread_settings_applied' } },
+  ], now - 10 * 1000);
+  const r = S.createModel().scan({ ...base(), lookbackHours: 48 });
+  const c = find(r, 'codex:' + OLD);
+  assert.ok(c, '세션은 목록에 있음');
+  assert.ok(Math.abs(c.lastActivity - (now - 29 * 3600e3)) < 2000, '마지막 활동은 29시간 전 대화 시각');
+  assert.deepStrictEqual([c.alive, c.status], [false, null], '작업 중으로 보지 않음');
+});
+
 test('출력 없는 커밋(-q)도 명령 실행 시간대로 찾는다', (t) => {
   try { execFileSync('git', ['--version'], { stdio: 'ignore' }); } catch { t.skip('git 없음'); return; }
   const repo = path.join(home, 'work', 'repo');
@@ -355,8 +372,9 @@ test('Codex: 며칠 전에 시작해 지금도 쓰는 세션을 찾는다(기록
   fx.codexSession(home, LONG, [
     { timestamp: fx.iso(now - 10 * 24 * 60 * MIN), type: 'session_meta', payload: { id: LONG, session_id: LONG, cwd: project, originator: 'codex_vscode', source: 'vscode' } },
     { timestamp: fx.iso(now - 10 * 24 * 60 * MIN), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'A long running job' }] } },
-    { timestamp: fx.iso(now - 2 * MIN), type: 'response_item', payload: { type: 'custom_tool_call', call_id: 'long_1', name: 'exec', input: `text(await tools.apply_patch(${JSON.stringify(`*** Begin Patch\n*** Add File: ${f}\n+x\n*** End Patch`)}));` } },
-    { timestamp: fx.iso(now - 2 * MIN + 300), type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: 'long_1', output: [{ type: 'input_text', text: 'Script completed\nWall time 0.1 seconds\nOutput:\n' }] } },
+    // 지금도 쓰는 중: 마지막 기록이 방금(30초 전). Codex는 파일 시각이 아니라 기록 시각으로 작업 중을 본다
+    { timestamp: fx.iso(now - 30 * 1000), type: 'response_item', payload: { type: 'custom_tool_call', call_id: 'long_1', name: 'exec', input: `text(await tools.apply_patch(${JSON.stringify(`*** Begin Patch\n*** Add File: ${f}\n+x\n*** End Patch`)}));` } },
+    { timestamp: fx.iso(now - 30 * 1000 + 300), type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: 'long_1', output: [{ type: 'input_text', text: 'Script completed\nWall time 0.1 seconds\nOutput:\n' }] } },
   ], now - 10 * 24 * 60 * MIN);
   const s = find(S.createModel().scan(base()), 'codex:' + LONG);
   assert.ok(s, '열흘 전 폴더에 있어도 오늘 바뀐 기록이면 찾아야 함');
