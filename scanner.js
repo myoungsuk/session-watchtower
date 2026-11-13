@@ -1405,7 +1405,7 @@ function discover(sinceMs, registry, includeCodex, listSinceMs, projectDirs, oth
 
 // ---------- 내가 보낸 말 색인(대화 내용으로 세션 찾기) ----------
 // 대화 기록은 수 GB라 찾을 때마다 다 읽을 수 없다. 사용자가 직접 쓴 말만 따로 모아 두고(기록 파일이 자란 만큼만 더 읽음) 그 안에서 찾는다.
-const PROMPT_INDEX_VERSION = 2; // 2: 세션이 답한 마지막 말의 첫 줄(reply)도 모은다, 시스템이 끼워 넣은 말은 뺀다
+const PROMPT_INDEX_VERSION = 3; // 2: 세션 답의 첫 줄(reply), 끼워 넣은 말 빼기. 3: Codex 기록도 모은다
 const PROMPT_MAX = 2000;
 const K_ISMETA = B('"isMeta":true');
 
@@ -1430,6 +1430,50 @@ function replyHead(text) {
     if (t) return t.length > 300 ? t.slice(0, 300) + '…' : t;
   }
   return '';
+}
+
+// Codex 기록에서 내가 친 말: user 메시지의 글 조각 가운데 Codex가 끼워 넣은 것(AGENTS.md·환경 정보 등)을 뺀 나머지
+const K_CXASSIST = B('"role":"assistant"');
+const K_RESPONSE = B('"response_item"');
+function codexPromptText(content) {
+  const parts = [];
+  for (const c of Array.isArray(content) ? content : []) {
+    const t = c && typeof c.text === 'string' ? c.text.trim() : '';
+    if (!t || t.startsWith('<') || t.startsWith('#') || /AGENTS\.md|environment_context|user_instructions/.test(t.slice(0, 200))) continue;
+    parts.push(t);
+  }
+  return cleanPrompt(parts.join(' '));
+}
+
+// Codex 기록 한 줄: 하위 스레드(검토·하위 에이전트, 부모가 시킨 말)는 통째로 뺀다. 차례마다 마지막 답의 첫 줄을 남긴다
+function codexPromptLine(e, line) {
+  if (e.skip || line.length < 2 || line.length > 400000) return;
+  const meta = line.indexOf(CX_META);
+  if (meta >= 0 && meta < 80) {
+    let o; try { o = JSON.parse(line.toString('utf8')); } catch { return; }
+    const p = (o && o.payload) || {};
+    if (p.parent_thread_id || (p.source && typeof p.source === 'object' && p.source.subagent)) { e.skip = true; e.prompts = []; return; }
+    if (typeof p.cwd === 'string' && !e.cwd) e.cwd = p.cwd;
+    return;
+  }
+  if (line.indexOf(K_RESPONSE) < 0) return;
+  const user = line.indexOf(CX_USER) >= 0;
+  if (!user && !(e.open && e.prompts.length && line.indexOf(K_CXASSIST) >= 0)) return;
+  let o; try { o = JSON.parse(line.toString('utf8')); } catch { return; }
+  const p = (o && o.payload) || {};
+  if (p.type !== 'message') return;
+  const ts = Date.parse(o.timestamp) || 0;
+  if (p.role === 'user') {
+    const text = codexPromptText(p.content);
+    if (text.length < 2) return;
+    e.prompts.push({ ts, text });
+    e.open = true;
+    if (!e.title) e.title = text.slice(0, 60);
+  } else if (p.role === 'assistant' && e.open && e.prompts.length) {
+    const txt = (Array.isArray(p.content) ? p.content : []).filter((c) => c && typeof c.text === 'string').map((c) => c.text).join('\n');
+    const head = replyHead(txt);
+    if (head) { const last = e.prompts[e.prompts.length - 1]; last.reply = head; last.replyTs = ts; }
+  }
 }
 
 function createPromptIndex() {
@@ -1464,11 +1508,11 @@ function createPromptIndex() {
     let read = 0;
     try {
       const stat = fs.fstatSync(fd);
-      if (stat.size < e.offset) { e.offset = 0; e.prompts = []; }
+      if (stat.size < e.offset) { e.offset = 0; e.prompts = []; e.skip = false; e.open = false; }
       let pos = e.offset;
       let carry = null;
       const buf = Buffer.allocUnsafe(CHUNK);
-      const onLine = (line) => {
+      const onLine = e.codex ? (line) => codexPromptLine(e, line) : (line) => {
         if (line.length < 2) return;
         if (line.length < 20000 && (line.indexOf(K_CUSTOM) >= 0 || line.indexOf(K_AI) >= 0)) {
           try { const o = JSON.parse(line.toString('utf8')); if (o.type === 'custom-title' && o.customTitle) { e.title = String(o.customTitle); e.custom = true; } else if (o.type === 'ai-title' && o.aiTitle && !e.custom) e.title = String(o.aiTitle); } catch { /* 깨진 줄 */ }
@@ -1509,9 +1553,10 @@ function createPromptIndex() {
         const chunk = carry ? Buffer.concat([carry, buf.subarray(0, n)]) : buf.subarray(0, n);
         let start = 0;
         let i;
-        while ((i = chunk.indexOf(NL, start)) !== -1) { onLine(chunk.subarray(start, i)); start = i + 1; }
+        while ((i = chunk.indexOf(NL, start)) !== -1 && !e.skip) { onLine(chunk.subarray(start, i)); start = i + 1; }
         carry = start < chunk.length ? Buffer.from(chunk.subarray(start)) : null;
         pos += n;
+        if (e.skip) { pos = stat.size; carry = null; break; } // 하위 스레드: 첫 줄에서 알아봤으니 나머지는 읽지 않는다
       }
       e.offset = pos - (carry ? carry.length : 0);
       e.size = stat.size;
@@ -1532,6 +1577,25 @@ function createPromptIndex() {
       try { ents = fs.readdirSync(path.join(PROJECTS, p.name), { withFileTypes: true }); } catch { continue; }
       for (const en of ents) if (en.isFile() && en.name.endsWith('.jsonl')) found.push({ file: path.join(PROJECTS, p.name, en.name), sid: en.name.slice(0, -6) });
     }
+    // Codex 기록(~/.codex/sessions/연/월/일/rollout-…-<id>.jsonl). 세션 ID는 화면과 같은 "codex:<id>"
+    if (opts.includeCodex !== false) {
+      const ls = (d) => { try { return fs.readdirSync(d, { withFileTypes: true }); } catch { return []; } };
+      for (const y of ls(CODEX_SESSIONS)) {
+        if (!y.isDirectory()) continue;
+        for (const m of ls(path.join(CODEX_SESSIONS, y.name))) {
+          if (!m.isDirectory()) continue;
+          for (const d of ls(path.join(CODEX_SESSIONS, y.name, m.name))) {
+            if (!d.isDirectory()) continue;
+            const dir = path.join(CODEX_SESSIONS, y.name, m.name, d.name);
+            for (const f of ls(dir)) {
+              if (!f.isFile() || !f.name.startsWith('rollout-') || !f.name.endsWith('.jsonl')) continue;
+              const u = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/.exec(f.name);
+              found.push({ file: path.join(dir, f.name), sid: 'codex:' + (u ? u[1] : f.name), codex: true });
+            }
+          }
+        }
+      }
+    }
     const keep = new Set(found.map((f) => f.file));
     for (const k of [...idx.keys()]) if (!keep.has(k)) { idx.delete(k); dirty = true; }
     let done = 0;
@@ -1540,7 +1604,7 @@ function createPromptIndex() {
       let st;
       try { st = fs.statSync(f.file); } catch { done++; continue; }
       let e = idx.get(f.file);
-      if (!e) { e = { file: f.file, sid: f.sid, offset: 0, size: 0, mtimeMs: 0, cwd: null, title: null, prompts: [] }; idx.set(f.file, e); }
+      if (!e) { e = { file: f.file, sid: f.sid, offset: 0, size: 0, mtimeMs: 0, cwd: null, title: null, prompts: [], codex: !!f.codex }; idx.set(f.file, e); }
       if (st.size !== e.size || st.mtimeMs !== e.mtimeMs) { bytes += readMore(e); dirty = true; }
       done++;
       if (opts.onProgress) opts.onProgress(done, found.length);

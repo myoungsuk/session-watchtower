@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.1
+
+- **Codex in groups.** Instructions and results on the board now include what you typed to Codex sessions and the first line of Codex's final answer (review and sub-agent threads are left out). Conversation search finds Codex messages too.
+- The role note marks Codex teammates and, in a group that mixes Claude Code and Codex, tells the session to exchange work through the shared memo, because the two cannot message each other.
+- *Plan the team* asks which tool the sessions will use (Claude Code, Codex or both) when Codex is in use, adjusts the request, and can open Codex in a terminal.
+
 ## 0.19.0
 
 - **Plan the team.** Describe what you will build and how many sessions you can run, and the extension copies a request to paste into a Claude session: it lists the roles and what each does, rules of thumb for choosing the number of sessions, and asks for a table of sessions with roles and first steps, the work that must not run at the same time, and a first instruction for each session. Available on a board (it then also lists the group's sessions) and from the Sessions view menu before any group exists.

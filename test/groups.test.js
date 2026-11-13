@@ -52,6 +52,22 @@ fx.claudeSession(home, project, SID.v, [rec.user(project, now - 25 * MIN, 'Fix t
   rec.user(project, now - 8 * MIN + 20000, 'restart now')]);
 fx.claudeSession(home, other, SID.o, [rec.user(other, now - 10 * MIN, 'Check the other app'), rec.aiTitle(SID.o, 'Outside')]);
 fx.claudeSession(home, project, SID.x, [rec.user(project, now - 50 * MIN, 'Something unrelated'), rec.aiTitle(SID.x, 'Loner')]);
+// Codex 세션(이 폴더): 내 말과 마지막 답. 하위 스레드(검토 등, 부모가 시킨 말)는 내 말이 아니다
+const CXID = 'c0de0000-1111-4111-8111-111111111111';
+const cxRec = (t, payload, type = 'response_item') => ({ timestamp: new Date(t).toISOString(), type, payload });
+fx.codexSession(home, CXID, [
+  cxRec(now - 12 * MIN, { id: CXID, session_id: CXID, cwd: project, originator: 'codex_vscode', source: 'vscode' }, 'session_meta'),
+  cxRec(now - 12 * MIN, { type: 'message', role: 'user', content: [{ type: 'input_text', text: '# AGENTS.md instructions for the project' }, { type: 'input_text', text: 'Write the API client' }] }),
+  cxRec(now - 11 * MIN, { type: 'message', role: 'assistant', phase: 'commentary', content: [{ type: 'output_text', text: 'Looking at the API first.' }] }),
+  cxRec(now - 10 * MIN, { type: 'message', role: 'assistant', phase: 'final_answer', content: [{ type: 'output_text', text: '**Client written.** Tests pass.' }] }),
+], now);
+// 12분 전에 끝난 기록(방금 바뀐 Codex 기록은 "작업 중"으로 잡힌다)
+for (const f of fs.readdirSync(path.join(home, '.codex', 'sessions'), { recursive: true })) { const p = path.join(home, '.codex', 'sessions', f); if (p.endsWith(CXID + '.jsonl')) fs.utimesSync(p, new Date(now - 10 * MIN), new Date(now - 10 * MIN)); }
+fx.codexSession(home, 'c0de0000-2222-4222-8222-222222222222', [
+  cxRec(now - 9 * MIN, { id: 'c0de0000-2222-4222-8222-222222222222', session_id: CXID, parent_thread_id: CXID, cwd: project, source: { subagent: 'review' } }, 'session_meta'),
+  cxRec(now - 9 * MIN, { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Review this change for risks' }] }),
+], now);
+for (const f of fs.readdirSync(path.join(home, '.codex', 'sessions'), { recursive: true })) { const p = path.join(home, '.codex', 'sessions', f); if (p.endsWith('.jsonl')) fs.utimesSync(p, new Date(now - 9 * MIN), new Date(now - 9 * MIN)); }
 fx.registerSession(home, process.pid, SID.w, { status: 'idle', cwd: project, name: 'w', nameSource: 'derived', statusUpdatedAt: now - 5 * MIN });
 fx.registerSession(home, process.ppid, SID.d, { status: 'waiting', waitingFor: 'permission prompt', cwd: project, name: 'd', nameSource: 'derived', statusUpdatedAt: now - 2 * MIN });
 fx.registerSession(home, 1, SID.v, { status: 'busy', cwd: project, name: 'v', nameSource: 'derived', statusUpdatedAt: now - 25 * MIN });
@@ -85,10 +101,11 @@ async function pickRoles(open, labels, typed) {
 }
 
 test.before(async () => {
+  ext._test.setCodexCli(false); // 이 컴퓨터에 codex가 있어도 없는 것으로 시작(도구 묻기는 아래 시험에서 켠다)
   ext.activate(stub.context);
   web = stub.openWebview('claudeSessionChanges.sessions');
   web.send({ type: 'ready' });
-  await waitFor(() => P() && P().mine && P().mine.length === 4, '이 폴더 세션 4개');
+  await waitFor(() => P() && P().mine && P().mine.length === 5, '이 폴더 세션 5개(Codex 하나 포함)');
 });
 test.after(async () => { sleeper.kill(); for (const p of stub.state.panels || []) p.dispose(); await ext.deactivate(); });
 
@@ -239,8 +256,8 @@ test('팀 구성 추천 받기: 만들 것과 세션 수를 받아, 역할 목�
   const panel = stub.state.panels.find((p) => !p.disposed);
   assert.match(panel.webview.html, /data-act="planTeam"/, '보드에 단추가 있다');
   stub.state.input = 'Add card payments to the shop app';
-  stub.state.pick = (items) => items.find((i) => i.label === '3');
-  stub.state.answer = (m, b) => (/team plan request/.test(m) ? b.find((x) => x === 'Open a new session') : undefined);
+  stub.state.pick = (items) => items.find((i) => i.label === '3') || items.find((i) => i.id === 'claude'); // 세션 수 3, 도구 Claude Code
+  stub.state.answer = (m, b) => (/team plan request/.test(m) ? b.find((x) => x === 'Open a new Claude Code session') : undefined);
   const opened = stub.calls.filter((c) => c[0] === 'claude-vscode.editor.open' && c.length === 1).length;
   panel.send({ type: 'planTeam' });
   await waitFor(() => /^\[Team plan request\]/.test(stub.state.clipboard || ''), '요청 글 복사');
@@ -261,6 +278,21 @@ test('팀 구성 추천 받기: 만들 것과 세션 수를 받아, 역할 목�
   const text = await stub.commands.get('claudeSessionChanges.planTeam')();
   assert.match(text, /Sessions available: up to your recommendation/);
   assert.ok(!/Sessions already in the group/.test(text), '그룹이 없으면 그 줄도 없다');
+  assert.match(text, /several Claude Code sessions/);
+  assert.ok(stub.calls.some((c) => c[0] === 'pick' && /Which tool/.test((c[2] || {}).placeHolder || '')), 'Codex 세션 기록이 있으면 어느 도구로 할지 묻는다');
+
+  // Codex를 쓰는 사람: 도구를 묻고, "둘 다"면 표에 도구 칸과 메모로 주고받으라는 기준이 들어간다. Codex는 터미널에서 연다
+  ext._test.setCodexCli(true);
+  stub.state.input = 'Split the API and the web client';
+  stub.state.pick = (items) => items.find((i) => i.id === 'both') || items[0];
+  stub.state.answer = (m, b) => (/team plan request/.test(m) ? b.find((x) => x === 'Open Codex in a terminal') : undefined);
+  const both = await stub.commands.get('claudeSessionChanges.planTeam')();
+  assert.match(both, /several Claude Code and Codex sessions/);
+  assert.match(both, /session name \| tool \(Claude Code or Codex\) \| role/);
+  assert.match(both, /cannot message each other directly/);
+  const term = await waitFor(() => stub.calls.filter((c) => c[0] === 'terminal').map((c) => c[1]).find((t) => t.opts.name === 'Codex'), 'Codex 터미널');
+  assert.deepStrictEqual(term.sent, ['codex']);
+  ext._test.setCodexCli(false);
 });
 
 test('공유 메모: 파일을 연결하면 보드에 보이고, 파일이 바뀌면 다시 그린다. 그룹에서 빼면 보드와 목록에서 빠진다', async () => {
@@ -280,6 +312,21 @@ test('공유 메모: 파일을 연결하면 보드에 보이고, 파일이 바�
   panel.send({ type: 'unlinkMemo' });
   await waitFor(() => panel.lastPayload().memo.file === '', '메모 연결 끊김');
   assert.ok(fs.existsSync(memo), '연결을 끊어도 메모 파일은 지우지 않는다');
+});
+
+test('Codex 세션도 그룹에: 지시와 결과에 Codex에 한 말·답이 나오고, 역할 안내는 Codex 동료와 섞인 그룹의 규칙을 알려 준다', async () => {
+  const panel = stub.state.panels.find((p) => !p.disposed);
+  stub.state.pick = (items) => items.filter((i) => i.label === 'Write the API client');
+  panel.send({ type: 'add' });
+  await waitFor(() => panel.lastPayload().members.some((m) => m.sid === 'codex:' + CXID), 'Codex 세션이 들어감');
+  const said = await waitFor(() => { const x = panel.lastPayload().said || []; return x.some((r) => r.text === 'Write the API client') ? x : null; }, 'Codex에 한 말', 15000);
+  const row = said.find((r) => r.text === 'Write the API client');
+  assert.strictEqual(row.replies[0].reply, 'Client written. Tests pass.', 'Codex의 마지막 답(최종 답) 첫 줄');
+  assert.ok(!said.some((r) => /AGENTS\.md|Review this change/.test(r.text)), 'Codex가 끼워 넣은 글과 하위 스레드의 말은 뺀다');
+  panel.send({ type: 'brief', sid: SID.d });
+  await waitFor(() => /\(Codex\)/.test(stub.state.clipboard || ''), '역할 안내');
+  assert.match(stub.state.clipboard, /- "Write the API client" \(Codex\)/);
+  assert.match(stub.state.clipboard, /mixes Claude Code and Codex sessions, which cannot message each other directly\. Ask the user to pass things on\./);
 });
 
 test('세션은 그룹 하나에만: 다른 그룹에 넣으면 앞 그룹에서 빠지고 역할은 따라간다. 다른 창이 바꾼 그룹도 반영한다', async () => {
