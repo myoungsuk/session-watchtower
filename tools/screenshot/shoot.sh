@@ -35,7 +35,7 @@ if [ "$SCENE" = groups ] || [ "$SCENE" = roles ]; then
     const fs = require("fs"); const [demoFile, out, memo] = process.argv.slice(1); const d = JSON.parse(fs.readFileSync(demoFile, "utf8"));
     const m = (t, role) => [d.sids[t], { role, at: Date.now() }];
     const members = Object.fromEntries([m("Refactor auth middleware", "develop"), m("Add payment webhooks", "deploy"), m("Fix flaky e2e tests", "test"), m("Offline sync for drafts", "mobile")]);
-    fs.writeFileSync(out, JSON.stringify({ groups: [{ id: "gdemo", name: "Release crew", memo, members, at: Date.now() }] }));
+    fs.writeFileSync(out, JSON.stringify({ groups: [{ id: "gdemo", name: "Release crew", memo, lead: d.sids["Refactor auth middleware"], members, at: Date.now() }] }));
   ' "$RUN/home/demo.json" "$GS/session-groups.json" "$RUN/home/board.md"
   node -e '
     const fs = require("fs"); const d = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const now = Date.now(); const M = 60000;

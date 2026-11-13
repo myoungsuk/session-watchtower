@@ -290,5 +290,8 @@
   "More than one session has the deploy role: {0}. Only one session should deploy.": "배포 역할을 가진 세션이 둘 이상입니다: {0}. 배포는 한 세션만 맡아야 합니다.",
   "More than one session has the lead role: {0}. A team should have one lead.": "대장 역할을 가진 세션이 둘 이상입니다: {0}. 대장은 한 세션이어야 합니다.",
   "Role from the team board (the lead changes it there)": "협업 보드에서 읽은 역할(대장이 보드에서 바꿉니다)",
-  "the team board says \"{0}\" and wins over this": "협업 보드에 \"{0}\"(으)로 적혀 있어 보드가 앞섭니다"
+  "the team board says \"{0}\" and wins over this": "협업 보드에 \"{0}\"(으)로 적혀 있어 보드가 앞섭니다",
+  "Lead of this group: takes the reports and gives the instructions": "이 그룹의 대장: 보고받고 지시하는 세션",
+  "The lead takes the reports of the other sessions and gives the instructions. Talk to the lead; the other sessions do not need you to watch them.": "대장은 다른 세션의 보고를 받고 지시를 내립니다. 대장하고만 이야기하면 되고, 다른 세션은 지켜보지 않아도 됩니다.",
+  "No lead yet. Pick \"Lead\" as the role of the session that should coordinate the group.": "아직 대장이 없습니다. 그룹을 지휘할 세션의 역할에서 \"대장\"을 고르세요."
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.22.0
+
+- **The lead stands out.** A group's lead gets a crown badge, sits at the top of the group in the Sessions view and on the board, and the board opens with a lead card (state and *Open conversation*). There is one lead per group: picking *Lead* for another session moves it, and unchecking it leaves the group without a lead.
+- The team board no longer hides the lead: the lead is a fixed position, so a different role in the board table shows next to the lead badge instead of replacing it. A custom role such as "QA lead" does not make a session the lead.
+- The role note for the lead says so, and the other sessions' roles in a role note now follow the team board too.
+
 ## 0.21.1
 
 - Fixed: with a group board open, a role change in the team board file could leave the old role tag in the Sessions view, because the board read the file first and the Sessions view then saw nothing new.

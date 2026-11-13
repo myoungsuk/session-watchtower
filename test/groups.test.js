@@ -138,6 +138,7 @@ test('역할 고르기: 여러 개, 직접 친 역할, 체크 없이 친 글자,
   let qp = await pickRoles(() => web.send({ type: 'role', sid: SID.w }), ['Watch', 'Docs', 'QA lead'], 'QA lead');
   assert.ok(qp.items.some((i) => i.label === 'QA lead' && i.alwaysShow), '친 글자가 목록에 없으면 "직접 넣기" 줄이 뜬다');
   await waitFor(() => team('Chatbot ops').rows[0].role === 'Watch, Docs, QA lead', '여러 역할');
+  assert.ok(!team('Chatbot ops').rows.some((r) => r.lead), '"QA lead"처럼 직접 만든 역할은 대장이 아니다');
   // 다시 열면 지금 역할이 체크되어 있고, 직접 넣은 역할도 목록에 남아 있다
   stub.state.quickPick = null;
   web.send({ type: 'role', sid: SID.w });
@@ -394,6 +395,41 @@ test('유동 역할: 보드의 "세션과 역할" 표가 역할을 정하고(손
 
   panel.send({ type: 'unlinkMemo' });
   await waitFor(() => team('Chatbot ops').rows.find((r) => r.sid === SID.w).role === 'Watch', '보드를 끊으면 손으로 정한 역할로', 15000);
+});
+
+test('대장: 그룹에 하나뿐인 고정 지위라 왕관 배지로 맨 위에 보이고, 보드 표에 덮이지 않으며, 옮기면 앞 대장은 풀린다', async () => {
+  const panel = stub.state.panels.find((p) => !p.disposed);
+  const rows = () => team('Chatbot ops').rows;
+  // 감시(Watcher)를 대장으로: 세션 창과 보드에서 맨 위, 대장 칸
+  await pickRoles(() => web.send({ type: 'role', sid: SID.w }), ['Lead', 'Watch']);
+  await waitFor(() => rows()[0].sid === SID.w && rows()[0].lead, '세션 창 맨 위에 대장');
+  assert.strictEqual(rows()[0].role, 'Watch', '대장이 함께 맡은 일은 배지 옆에');
+  assert.ok(rows().slice(1).every((r) => !r.lead), '대장은 하나');
+  const p1 = await waitFor(() => { const x = panel.lastPayload(); return x && x.lead && x.lead.sid === SID.w ? x : null; }, '보드 대장 칸');
+  assert.strictEqual(p1.members[0].sid, SID.w, '보드 표에서도 맨 위');
+  assert.match(panel.webview.html, /class="leadcard"/);
+
+  // 보드 표가 감시를 다른 역할로 적어도 대장 표시는 그대로(대장은 보드에 덮이지 않는 고정 지위)
+  const memo = path.join(home, 'lead-board.md');
+  fs.writeFileSync(memo, ['## 1. Sessions and roles', '| Role | Session name |', '|---|---|', '| Test | **Watcher** |', ''].join('\n'));
+  stub.state.openDialog = memo;
+  panel.send({ type: 'linkMemo' });
+  await waitFor(() => rows()[0].sid === SID.w && rows()[0].lead && rows()[0].role === 'Test' && rows()[0].roleFromBoard, '대장 + 보드의 역할');
+  panel.send({ type: 'brief', sid: SID.w });
+  await waitFor(() => /This session is the lead of the group "Chatbot ops" \(also: Test\)/.test(stub.state.clipboard || ''), '대장 역할 안내');
+  assert.match(stub.state.clipboard, /Set up the team and keep the team board/, '대장이 하는 일');
+  panel.send({ type: 'unlinkMemo' });
+  await waitFor(() => panel.lastPayload().memo.file === '', '보드 연결 끊음');
+
+  // 다른 세션을 대장으로 고르면 대장이 옮겨 가고 앞 대장의 "대장"은 지워진다
+  await pickRoles(() => web.send({ type: 'role', sid: SID.d }), ['Lead']);
+  await waitFor(() => rows()[0].sid === SID.d && rows()[0].lead, '대장이 옮겨 감');
+  assert.strictEqual(rows().find((r) => r.sid === SID.w).role, 'Watch', '앞 대장은 대장만 빠지고 맡은 일은 남는다');
+  assert.ok(!rows().find((r) => r.sid === SID.w).lead);
+  // 대장을 빼면 대장 자리가 빈다
+  await pickRoles(() => web.send({ type: 'role', sid: SID.d }), ['Deploy']);
+  await waitFor(() => rows().every((r) => !r.lead), '대장 없음');
+  await waitFor(() => panel.lastPayload().lead === null, '보드 대장 칸 없음');
 });
 
 test('세션은 그룹 하나에만: 다른 그룹에 넣으면 앞 그룹에서 빠지고 역할은 따라간다. 다른 창이 바꾼 그룹도 반영한다', async () => {

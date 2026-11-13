@@ -722,7 +722,7 @@ function normalizeGroups(data) {
       seen.add(sid);
       members[sid] = { role: v && typeof v.role === 'string' ? v.role.slice(0, ROLE_MAX) : '', at: v && Number(v.at) > 0 ? Number(v.at) : 0 };
     }
-    groups.push({ id: g.id, name: g.name.slice(0, 60), memo: typeof g.memo === 'string' ? g.memo : '', members, at: Number(g.at) > 0 ? Number(g.at) : 0 });
+    groups.push({ id: g.id, name: g.name.slice(0, 60), memo: typeof g.memo === 'string' ? g.memo : '', lead: typeof g.lead === 'string' && (members[g.lead] || g.lead === '__none__') ? g.lead : '', members, at: Number(g.at) > 0 ? Number(g.at) : 0 });
   }
   return { groups };
 }
@@ -894,18 +894,34 @@ function boardFilesChanged() {
   return false;
 }
 
-// 그룹 세션별 실제 역할: 보드 표에 그 세션 이름이 있으면 보드의 역할, 없으면 손으로 정한 역할
+// 대장은 그룹에 하나뿐인 고정 지위라 보드 표에 덮이지 않는다. 정해 두지 않았으면 손으로 "대장"을 붙인 세션을 대장으로 본다
+// 역할 하나하나가 정확히 대장 이름일 때만 대장으로 본다("QA lead" 같은 직접 만든 역할은 대장이 아니다)
+const LEAD_RE = /^(lead|leader|대장|총괄|리더)$/i;
+function leadOf(g) {
+  if (g.lead === '__none__') return '';
+  if (g.lead && g.members[g.lead]) return g.lead;
+  return Object.keys(g.members).find((sid) => splitRoles(g.members[sid].role).some((r) => LEAD_RE.test(r))) || '';
+}
+const withoutLead = (role) => splitRoles(String(role || '').replace(/·/g, ',')).filter((r) => !LEAD_RE.test(r)).join('·');
+
+// 그룹 세션별 실제 역할: 보드 표에 그 세션 이름이 있으면 보드의 역할, 없으면 손으로 정한 역할.
+// 대장은 따로 표시한다(lead: true). extra는 대장이 함께 맡은 다른 일(보드나 손으로 정한 역할에서 대장을 뺀 것)
 function effectiveRoles(g) {
   const out = new Map();
   const rows = boardRowsOf(g.memo);
+  const lead = leadOf(g);
   const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim();
   for (const sid of Object.keys(g.members)) {
     const s = sessionBySid(sid);
     const t = norm(s && s.title);
     let row = null;
     if (t.length >= 2) row = rows.find((r) => r.bold.includes(t)) || rows.find((r) => r.cell === t) || rows.find((r) => r.cell.includes(t));
-    if (row) out.set(sid, { role: row.role, source: 'board' });
-    else out.set(sid, { role: g.members[sid].role || '', source: 'manual' });
+    const base = row ? { role: row.role, source: 'board' } : { role: g.members[sid].role || '', source: 'manual' };
+    if (sid === lead) {
+      const extra = withoutLead(base.role);
+      const leadName = isKo() ? '대장' : 'Lead';
+      out.set(sid, { role: extra ? `${leadName}, ${extra}` : leadName, source: base.source, lead: true, extra, extraSource: base.source });
+    } else out.set(sid, { ...base, lead: false, extra: base.role, extraSource: base.source });
   }
   return out;
 }
@@ -914,8 +930,9 @@ function effectiveRoles(g) {
 function roleWarnings(g, eff) {
   const name = (sid) => { const s = sessionBySid(sid); return s ? s.title : sid.slice(0, 8); };
   const out = [];
-  for (const [key, re] of [['deploy', /deploy|release|배포|승격|릴리스/i], ['lead', /\blead(er)?\b|대장|총괄|리더/i]]) {
-    const who = [...eff.entries()].filter(([, v]) => re.test(v.role)).map(([sid]) => name(sid));
+  const items = (role) => splitRoles(String(role || '').replace(/·/g, ','));
+  for (const [key, test] of [['deploy', (role) => /deploy|release|배포|승격|릴리스/i.test(role)], ['lead', (role) => items(role).some((r) => LEAD_RE.test(r))]]) {
+    const who = [...eff.entries()].filter(([, v]) => test(v.role)).map(([sid]) => name(sid));
     if (who.length > 1) out.push(key === 'deploy' ? L('More than one session has the deploy role: {0}. Only one session should deploy.', who.join(', ')) : L('More than one session has the lead role: {0}. A team should have one lead.', who.join(', ')));
   }
   return out;
@@ -979,6 +996,11 @@ function setSessionRole(arg) {
         const x = d.groups.find((y) => y.members[sid]);
         if (!x) return false;
         x.members[sid].role = role;
+        // 대장은 하나: 고르면 그 세션이 대장이 되고 다른 세션의 손으로 적은 "대장"은 지운다. 빼면 대장 자리를 비운다
+        if (splitRoles(role).some((r) => LEAD_RE.test(r))) { // 항목 하나가 정확히 대장일 때
+          x.lead = sid;
+          for (const o of Object.keys(x.members)) if (o !== sid) x.members[o].role = splitRoles(x.members[o].role).filter((r) => !LEAD_RE.test(r)).join(', ');
+        } else if (leadOf(x) === sid) x.lead = '__none__';
       });
       resolve(role);
     });
@@ -1035,16 +1057,18 @@ function roleBrief(groupId, sid) {
   if (!g || !g.members[sid]) return '';
   const ko = isKo();
   const name = (x) => { const s = sessionBySid(x); return s ? s.title : x.slice(0, 8); };
-  const role = effectiveRoles(g).get(sid).role;
+  const effAll = effectiveRoles(g);
+  const role = effAll.get(sid).role;
+  const isLead = effAll.get(sid).lead;
   const duties = role ? ROLE_DUTIES.filter((d) => d.re.test(role)).map((d) => (ko ? d.ko : d.en)) : [];
   const isCx = (x) => { const s = sessionBySid(x); return !!(s && s.agent === 'codex') || String(x).startsWith('codex:'); };
-  const mates = Object.keys(g.members).filter((x) => x !== sid).map((x) => `- "${name(x)}"${isCx(x) ? ' (Codex)' : ''}${g.members[x].role ? (ko ? ` — ${g.members[x].role} 담당` : ` — ${g.members[x].role}`) : ''}`);
+  const mates = Object.keys(g.members).filter((x) => x !== sid).map((x) => { const r = effAll.get(x).role; return `- "${name(x)}"${isCx(x) ? ' (Codex)' : ''}${r ? (ko ? ` — ${r} 담당` : ` — ${r}`) : ''}`; });
   const memo = g.memo || '';
   // Claude Code 세션과 Codex 세션은 서로 메시지를 직접 보낼 수 없다
   const mixed = Object.keys(g.members).some(isCx) && Object.keys(g.members).some((x) => !isCx(x));
   const L1 = [];
   if (ko) {
-    L1.push(`[팀 안내] 이 세션은 "${g.name}" 그룹${role ? `의 ${role} 담당` : '의 한 사람'}입니다.`);
+    L1.push(isLead ? `[팀 안내] 이 세션은 "${g.name}" 그룹의 대장입니다${effAll.get(sid).extra ? ` (함께 맡은 일: ${effAll.get(sid).extra})` : ''}. 사용자는 대장하고만 이야기하고, 다른 세션은 대장이 지시하고 보고받습니다.` : `[팀 안내] 이 세션은 "${g.name}" 그룹${role ? `의 ${role} 담당` : '의 한 사람'}입니다.`);
     if (duties.length) L1.push('', '하는 일:', ...duties.map((d) => '- ' + d));
     L1.push('', '같은 그룹 세션:', ...(mates.length ? mates : ['- (아직 없음)']));
     if (memo) L1.push('', `공유 메모: ${memo}`, '그룹 세션들이 함께 읽고 쓰는 파일입니다.');
@@ -1061,7 +1085,7 @@ function roleBrief(groupId, sid) {
     r.forEach((x, i) => L1.push(`${i + 1}. ${x}`));
     L1.push('', '이 안내를 읽었으면 내 역할을 한 줄로 확인해 주세요.');
   } else {
-    L1.push(`[Team note] This session is ${role ? `the ${role} member` : 'a member'} of the group "${g.name}".`);
+    L1.push(isLead ? `[Team note] This session is the lead of the group "${g.name}"${effAll.get(sid).extra ? ` (also: ${effAll.get(sid).extra})` : ''}. The user talks only to the lead; the other sessions get their instructions from the lead and report to it.` : `[Team note] This session is ${role ? `the ${role} member` : 'a member'} of the group "${g.name}".`);
     if (duties.length) L1.push('', 'Your job:', ...duties.map((d) => '- ' + d));
     L1.push('', 'Other sessions in the group:', ...(mates.length ? mates : ['- (none yet)']));
     if (memo) L1.push('', `Shared memo: ${memo}`, 'All sessions of the group read and write this file.');
@@ -1378,10 +1402,12 @@ async function boardPayload(id) {
   const unknown = [...dirty].filter((p) => !known.has(p) && changedSince(p)).sort();
   const b = boards.get(id);
   const memo = await memoView(g.memo);
-  const setup = { members: members.length, roles: members.filter((r) => r.role).length, memo: !!g.memo };
+  const setup = { members: members.length, roles: members.filter((r) => r.role || eff.get(r.sid).lead).length, memo: !!g.memo };
   // 세션마다 고유 색(그룹에 넣은 순서대로 8색을 돌려 쓴다): 세션 표와 지시와 결과에서 같은 세션을 한눈에 찾게
   const colorOf = new Map(sids.map((sid, i) => [sid, i % 8]));
-  for (const r of members) { r.color = colorOf.get(r.sid); r.roleFromBoard = eff.get(r.sid).source === 'board'; }
+  for (const r of members) { const e = eff.get(r.sid); r.color = colorOf.get(r.sid); r.lead = !!e.lead; r.role = e.extra; r.roleFromBoard = e.extraSource === 'board'; }
+  members.sort((a, b) => Number(b.lead) - Number(a.lead)); // 대장을 맨 위에
+  const leadRow = members.find((r) => r.lead) || null;
   const warnings = roleWarnings(g, eff);
   // 지시와 결과는 쪽으로 나눠 보낸다(한 쪽에 몇 개는 설정)
   const all = b ? b.said : [];
@@ -1391,7 +1417,7 @@ async function boardPayload(id) {
   const page = b ? b.saidPage : 0;
   const said = all.slice(page * size, page * size + size).map((x) => ({ ...x, colors: x.sids.map((sid) => (colorOf.has(sid) ? colorOf.get(sid) : -1)) }));
   return {
-    setup, warnings,
+    setup, warnings, lead: leadRow ? { sid: leadRow.sid, title: leadRow.title, state: leadRow.state, stateLabel: leadRow.stateLabel, canOpen: leadRow.canOpen, color: leadRow.color } : null,
     strings: boardStrings(), id, name: g.name, waiting, members, unknown: unknown.slice(0, 200), unknownMore: Math.max(0, unknown.length - 200),
     said, saidAll: all, saidTotal: all.length, saidPage: page, saidPages: pages, saidSize: size, saidBusy: !!(b && b.saidBusy), memo, span: spanShort(cfg().lookbackHours),
     roots: (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath),
@@ -1440,6 +1466,9 @@ function boardStrings() {
     plan: L('Start a team with a lead…'), planTip: L('Copy a request that makes a session the lead: it recommends how many sessions and which roles, creates the team board, writes the first instruction for each session, and then takes reports and gives instructions.'),
     setupPlan: L('Starting from scratch? Press "Start a team with a lead…" and paste the request into a new session; that session becomes the lead and sets up the rest.'),
     roleFromBoard: L('Role from the team board (the lead changes it there)'),
+    leadName: isKo() ? '대장' : 'Lead', leadTip: L('Lead of this group: takes the reports and gives the instructions'),
+    leadCard: L('The lead takes the reports of the other sessions and gives the instructions. Talk to the lead; the other sessions do not need you to watch them.'),
+    noLead: L('No lead yet. Pick "Lead" as the role of the session that should coordinate the group.'),
     roleNote: L('Role note'), roleNoteTip: L('Copy a note for this session: its group, role and job, the other sessions, the shared memo and how the group works together. Paste it into the session so it knows its role.'),
     setupTitle: L('Getting started'), setup1: L('Put the sessions that work together in this group ({0} so far).', '{0}'), setup2: L('Give each session a role: click the role cell ({0} of {1} set).', '{0}', '{1}'),
     setup3: L('Link or create a shared memo file the sessions read and write.'), setup4: L('Press "Role note" on each row and paste it into that session. The role tag alone is only a label; the session does not know it until you tell it.'),
@@ -1696,6 +1725,11 @@ function boardHtml(webview) {
   .said .wl:hover { text-decoration: underline; color: var(--vscode-textLink-foreground); }
   .pager { display: flex; align-items: center; gap: 6px; margin: 8px 0; }
   .pager .muted { margin: 0 6px; }
+  .leadcard { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 4px; padding: 10px 14px; border-radius: 6px; border: 1px solid var(--vscode-charts-yellow, #cca700); background: color-mix(in srgb, var(--vscode-charts-yellow, #cca700) 10%, transparent); }
+  .leadcard .crown { color: var(--vscode-charts-yellow, #cca700); }
+  .leadcard .ltitle { font-weight: 600; font-size: 14px; }
+  .leadcard .lsub { flex-basis: 100%; font-size: 12px; }
+  .leadtag { display: inline-flex; align-items: center; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 3px; font-weight: 600; color: var(--vscode-editor-background); background: var(--vscode-charts-yellow, #cca700); white-space: nowrap; }
   .setup { margin: 10px 0 4px; padding: 8px 14px; border-radius: 4px; border: 1px dashed var(--vscode-widget-border, rgba(128,128,128,.5)); }
   .setup ol { margin: 6px 0 2px; padding-left: 20px; }
   .setup li { margin: 2px 0; }
@@ -1714,6 +1748,7 @@ function boardHtml(webview) {
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   let S = {};
   let roots = [];
+  const crown = '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M1.5 4.5 5 8l3-5 3 5 3.5-3.5L13 12.5H3z"/><rect x="3" y="13.2" width="10" height="1.6" rx=".5"/></svg>';
   // 작업 폴더 안 파일은 그 폴더 기준 경로로 짧게 보여 준다(전체 경로는 마우스 설명)
   const rel = (f) => { for (const r of roots) if (f.startsWith(r + '/') || f.startsWith(r + '\\\\')) return f.slice(r.length + 1); return f; };
   function render(p) {
@@ -1722,6 +1757,12 @@ function boardHtml(webview) {
     if (p.gone) { root.innerHTML = '<p class="muted">' + esc(S.gone) + '</p>'; return; }
     let h = '<h1>' + esc(p.name) + '</h1>'
       + '<div class="bar"><button data-act="add">' + esc(S.addSessions) + '</button><button data-act="planTeam" title="' + esc(S.planTip) + '">' + esc(S.plan) + '</button><button data-act="copyBoard">' + esc(S.copyBoard) + '</button><button data-act="refresh">' + esc(S.refresh) + '</button></div>';
+    // 대장 칸: 사용자는 대장하고만 이야기하면 된다
+    if (p.lead) {
+      h += '<div class="leadcard"><span class="crown">' + crown + '</span><b>' + esc(S.leadName) + '</b><span class="sw c' + (p.lead.color >= 0 ? p.lead.color : '') + '"></span>'
+        + '<span class="ltitle">' + esc(p.lead.title) + '</span><span class="dot ' + esc(p.lead.state) + '"></span><span class="muted">' + esc(p.lead.stateLabel) + '</span>'
+        + (p.lead.canOpen ? '<button data-act="open" data-sid="' + esc(p.lead.sid) + '">' + esc(S.open) + '</button>' : '') + '<div class="muted lsub">' + esc(S.leadCard) + '</div></div>';
+    } else if (p.members.length) h += '<div class="muted" style="margin:8px 0">' + esc(S.noLead) + '</div>';
     // 0. 시작하기: 세션·역할·메모가 갖춰질 때까지 순서를 보여 준다
     const su = p.setup || {};
     if (!su.members || su.roles < su.members || !su.memo) {
@@ -1749,7 +1790,8 @@ function boardHtml(webview) {
       for (const r of p.members) {
         const tip = r.folder ? String(S.otherFolder || '').replace('{0}', r.folder) : S.open;
         h += '<tr class="sess">'
-          + '<td><span class="role' + (r.role ? '' : ' none') + (r.roleFromBoard ? ' board' : '') + '" data-act="role" data-sid="' + esc(r.sid) + '" title="' + esc(r.roleFromBoard ? S.roleFromBoard : S.setRole) + '">' + esc(r.role || '+') + '</span></td>'
+          + '<td>' + (r.lead ? '<span class="leadtag" title="' + esc(S.leadTip) + '">' + crown + esc(S.leadName) + '</span> ' : '')
+          + (r.lead && !r.role ? '' : '<span class="role' + (r.role ? '' : ' none') + (r.roleFromBoard ? ' board' : '') + '" data-act="role" data-sid="' + esc(r.sid) + '" title="' + esc(r.roleFromBoard ? S.roleFromBoard : S.setRole) + '">' + esc(r.role || '+') + '</span>') + '</td>'
           + '<td><span class="sw c' + (r.color >= 0 ? r.color : '') + '"></span><span class="title' + (r.canOpen ? '' : ' other') + '"' + (r.canOpen ? ' data-act="open" data-sid="' + esc(r.sid) + '"' : '') + ' title="' + esc(tip) + '">' + esc(r.title) + '</span>' + (r.folder ? ' <span class="muted">· ' + esc(r.folder) + '</span>' : '') + '</td>'
           + '<td><span class="dot ' + esc(r.state) + '"></span>' + esc(r.stateLabel) + '</td>'
           + '<td class="now ' + esc(r.state) + '">' + esc(r.now || '') + '</td>'
@@ -2094,10 +2136,11 @@ function sessionRow(s, tabs, team) {
   const del = m ? m.files.reduce((a, f) => a + (f.del || 0), 0) : 0;
   const tab = !!(tabs && tabs.has(s.sid));
   const eff = team && team.members[s.sid] ? (teamRolesCache.get(team.id) || effectiveRoles(team)).get(s.sid) : null;
-  const role = eff ? eff.role : '';
-  const roleFromBoard = !!(eff && eff.source === 'board');
+  const lead = !!(eff && eff.lead);
+  const role = eff ? eff.extra : '';
+  const roleFromBoard = !!(eff && eff.extraSource === 'board');
   return {
-    team: team ? team.id : '', role, roleFromBoard,
+    team: team ? team.id : '', role, roleFromBoard, lead,
     sid: s.sid, title: s.title, state: st.key, meta, tip: (tab ? L('Shown in a tab right now') + '\n' : '') + sessionTooltip(s, st) + '\n' + hint, canOpen, alive: !!s.alive, codex, tab,
     files: m ? m.files.length : 0, add, del, now: [subText(s, st), nowText(s, st)].filter(Boolean).join(' · '), folder: inWorkspace(s) ? '' : s.project || '', worktree: s.worktree || '',
     overlap: m ? m.files.filter((f) => f.overlap).length : 0,
@@ -2121,7 +2164,7 @@ function sessionsPayload() {
     lgBusy: L('Working'), lgWaiting: L('Waiting for you (approval or answer)'), lgDone: L('Just finished (less than 10 minutes ago)'), lgIdle: L('Idle'), lgOff: L('Off (no Claude process)'),
     lgA: L('Created in this session'), lgM: L('Modified in this session'), lgD: L('Not on disk anymore (deleted)'), lgQ: L('Guessed from shell commands (not certain)'),
     lgTab: L('Shown in a tab right now'),
-    thisFolder: L('This folder'), roleFromBoard: L('Role from the team board (the lead changes it there)'), addToGroup: L('Put in a group'), removeFromGroup: L('Remove from group'), setRole: L('Set role'),
+    thisFolder: L('This folder'), leadName: isKo() ? '대장' : 'Lead', leadTip: L('Lead of this group: takes the reports and gives the instructions'), roleFromBoard: L('Role from the team board (the lead changes it there)'), addToGroup: L('Put in a group'), removeFromGroup: L('Remove from group'), setRole: L('Set role'),
     openBoard: L('Open the group board'), renameGroup: L('Rename group'), deleteGroup: L('Delete group'),
     teamEmpty: L('No sessions yet: use the group button on a session row'), teamTip: L('Group: {0} session(s). The board shows them all in one place.', '{0}'),
     lgNow: L('What it is doing now'), lgDiff: L('Lines added / removed within the time range of the Changed files view'),
@@ -2151,7 +2194,7 @@ function sessionsPayload() {
     const items = all.filter((s) => teamOf.get(s.sid) === g);
     return {
       id: g.id, name: g.name, desc: groupDescription(items, false), waiting: items.some((s) => s.alive && s.status === 'waiting'),
-      total: Object.keys(g.members).length, rows: items.map((s) => sessionRow(s, tabs, g)),
+      total: Object.keys(g.members).length, rows: items.map((s) => sessionRow(s, tabs, g)).sort((a, b) => Number(b.lead) - Number(a.lead)), // 대장을 맨 위에
     };
   });
   const folderGroups = groups.map(([key, items]) => [key, items.filter(free)]).filter(([, items]) => items.length);
@@ -2300,6 +2343,8 @@ function sessionsHtml(webview) {
   .l1 .title { min-width: 5.5em; } /* 꼬리표가 많아도 제목이 몇 글자는 보이게 */
   .row .tag.role { min-width: 2.6em; }
   .tag.role.board { border-style: dashed; } /* 보드에서 읽은 역할 */
+  /* 대장: 그룹에 하나뿐인 고정 지위라 채운 배지로 눈에 띄게 */
+  .tag.lead { flex-shrink: 0; display: inline-flex; align-items: center; font-weight: 600; color: var(--vscode-editor-background); background: var(--vscode-charts-yellow, #cca700); }
   .l1 .meta { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* 자리가 모자라면 오른쪽 글자부터 줄인다 */
   details.arch { margin-top: 8px; padding-top: 4px; border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.25))); }
   .gicon { flex-shrink: 0; display: inline-flex; color: var(--vscode-descriptionForeground); }
@@ -2384,6 +2429,7 @@ function sessionsHtml(webview) {
   const restoreIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M3 8.5v4h10v-4"/><path d="M8 10V2.5"/><path d="M5.5 5 8 2.5 10.5 5"/></svg>';
   const folderIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M1.5 4.5v8h13v-6.5h-6l-1.5-1.5z"/></svg>';
   const pencilIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M11 2.5 13.5 5 5.5 13H3v-2.5z"/><path d="M9.5 4 12 6.5"/></svg>';
+  const crownIcon = '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="margin-right:3px;vertical-align:-1px"><path d="M1.5 4.5 5 8l3-5 3 5 3.5-3.5L13 12.5H3z"/><rect x="3" y="13.2" width="10" height="1.6" rx=".5"/></svg>';
   const teamIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><circle cx="5.5" cy="6" r="2.2"/><circle cx="11" cy="6.5" r="1.8"/><path d="M1.8 13c.4-2.3 1.9-3.6 3.7-3.6s3.3 1.3 3.7 3.6"/><path d="M9.6 10.3c.5-.4 1-.6 1.6-.6 1.4 0 2.5 1 2.9 3"/></svg>';
   const groupAddIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="6" cy="6" r="2.3"/><path d="M2 13c.4-2.3 2-3.6 4-3.6 1 0 1.9.3 2.6.9"/><path d="M12 9v5M9.5 11.5h5"/></svg>';
   const groupOutIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="6" cy="6" r="2.3"/><path d="M2 13c.4-2.3 2-3.6 4-3.6 1 0 1.9.3 2.6.9"/><path d="M9.5 11.5h5"/></svg>';
@@ -2403,7 +2449,9 @@ function sessionsHtml(webview) {
     const sub = !(last && last.compact) && (r.now || ds) ? '<div class="sub"><span class="now ' + esc(r.state) + '">' + esc(r.now) + '</span>' + ds + '</div>' : '';
     return '<div class="row' + (r.canOpen ? '' : ' other') + (r.tab ? ' tab' : '') + '" role="listitem" tabindex="0" data-sid="' + esc(r.sid) + '" data-open="' + (r.canOpen ? '1' : '') + '" title="' + esc(r.tip) + '">'
       + '<div class="l1"><span class="dot ' + esc(r.state) + '"></span><span class="title">' + esc(r.title) + '</span>'
-      + (r.role ? '<span class="tag role' + (r.roleFromBoard ? ' board' : '') + '" title="' + esc(r.roleFromBoard ? strings.roleFromBoard : strings.setRole) + '">' + esc(r.role) + '</span>' : '')
+      + (r.lead ? '<span class="tag lead" title="' + esc(strings.leadTip + (r.role ? ' · ' + r.role : '')) + '">' + crownIcon + esc(strings.leadName) + '</span>' : '')
+      // 좁은 옆 창에서는 대장 줄의 다른 역할을 배지 설명으로만(제목 자리를 남긴다). 보드에는 둘 다 나온다
+      + (r.role && !r.lead ? '<span class="tag role' + (r.roleFromBoard ? ' board' : '') + '" title="' + esc(r.roleFromBoard ? strings.roleFromBoard : strings.setRole) + '">' + esc(r.role) + '</span>' : '')
       + (r.codex ? '<span class="tag">Codex</span>' : '')
       + (r.overlap ? '<span class="tag warn" title="' + esc(String(strings.overlapTip || '').replace('{0}', r.overlap)) + '">⚠ ' + r.overlap + '</span>' : '')
       + (inArchive && r.folder ? '<span class="tag">' + esc(r.folder) + '</span>' : '')
