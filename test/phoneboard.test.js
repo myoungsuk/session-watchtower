@@ -84,7 +84,8 @@ test('확장: 보드가 켜져 있으면 세션 창에 단추, 누르면 QR·코
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const until = Date.now() + 9000;
   while (Date.now() < until && !(web.lastPayload() && web.lastPayload().phone)) await sleep(50);
-  assert.match(web.lastPayload().phone, /Phone board on: 95번 서버, 85번 PC/);
+  assert.match(web.lastPayload().phone, /^Phone board is running\./);
+  assert.ok(!/95번 서버|85번 PC/.test(web.lastPayload().phone), '단추 설명에 컴퓨터 이름을 넣지 않는다');
   assert.match(web.view.webview.html, /id="btnPhone" hidden/);
   web.send({ type: 'phone' });
   const until2 = Date.now() + 9000;
@@ -100,7 +101,8 @@ test('확장: 보드가 켜져 있으면 세션 창에 단추, 누르면 QR·코
   assert.strictEqual((html.match(/<svg /g) || []).length, 2, 'Tailscale 앱 QR + 보드 연결 QR');
   for (const u of ['https://play.google.com/store/apps/details?id=com.tailscale.ipn', 'https://apps.apple.com/app/tailscale/id1470499037', 'https://tailscale.com/download/windows', 'https://tailscale.com/download/mac', 'https://tailscale.com/download/linux']) assert.ok(html.includes('data-link="' + u + '"'), u);
   assert.match(html, /Set it up once/);
-  assert.match(html, /<details class="pc"><summary>This computer is ready ✓ \(board\.example\.ts\.net\)<\/summary>/);
+  assert.match(html, /<details class="pc"><summary>This computer is ready ✓<\/summary>/);
+  assert.ok(!html.includes('board.example.ts.net)') && !/· board: /.test(html), '패널에 보드 이름·주소를 따로 적지 않는다(링크 칸 빼고)');
   assert.match(html, /tailscale serve --bg \d+/);
   stub.calls.length = 0;
   panel.send({ type: 'link', url: 'https://tailscale.com/download/windows' });
@@ -126,7 +128,8 @@ test('확장: 보드가 켜져 있으면 세션 창에 단추, 누르면 QR·코
   stub.state.clipboard = '';
   assert.match(html, /AB12CD34/);
   assert.match(html, /until 4:50:12/);
-  assert.match(html, /More than one board answers here \(95번 서버, 85번 PC\)\. This link is for the board installed in /, '보드가 둘이면 어느 보드 링크인지 밝힌다');
+  assert.match(html, /More than one board answers on this computer\. This link is for the board in the phone board folder/, '보드가 둘이면 어느 보드 링크인지 밝힌다(컴퓨터 이름 없이)');
+  assert.ok(!/95번 서버|85번 PC/.test(html), '패널에 컴퓨터 이름을 넣지 않는다');
   assert.match(html, /default-src 'none'/);
   assert.notStrictEqual(stub.state.clipboard, 'AB12CD34', '누르기 전에는 복사하지 않는다');
   panel.send({ type: 'copyCode' });

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.28.3
+
+- **No computer names in the phone panel.** The phone panel and the phone button's tooltip no longer show the board's name or this computer's network address (they meant nothing to someone else installing it). The panel just says this computer is ready.
+
 ## 0.28.2
 
 - **Phone board setup, step by step.** The phone panel now starts with an example of the board on a phone and walks through the setup from scratch: install Tailscale on the phone (QR code or store links), sign in with the same account, prepare this computer (install links for Windows, Mac and Linux and the `tailscale serve` command, folded away as done when the board already has a private address), scan the board code, and turn on notifications. Only the listed Tailscale pages can be opened from the panel.

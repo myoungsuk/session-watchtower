@@ -3733,7 +3733,7 @@ function updateUsage() {
 // 확장은 보드를 켜거나 끄지 않는다. 떠 있는 보드를 찾아 세션 창에 단추를 보이고, 보드 폴더의 `cli.js pair`로 휴대폰 연결 링크·코드를 받아 QR로 보여 준다.
 // 연결 링크·코드는 10분짜리 한 번 쓰는 열쇠라 저장하거나 기록하지 않는다(패널을 닫으면 사라짐).
 let phoneBoards = []; // [{ port, label }]
-const phoneTip = () => (phoneBoards.length ? L('Phone board on: {0}. Click for a link to open it on your phone.', phoneBoards.map((b) => b.label || ('127.0.0.1:' + b.port)).join(', ')) : '');
+const phoneTip = () => (phoneBoards.length ? L('Phone board is running. Click for a link to open it on your phone.') : '');
 let phoneCheckedAt = 0;
 let phoneChecking = null;
 let phonePanel = null;
@@ -3826,9 +3826,6 @@ function phoneHtml(webview, r, boards, folder, media) {
   const board = boards.find((b) => b.local) || boards[0] || {};
   const port = board.port || 5290;
   const many = boards.length > 1 && !boards.some((b) => b.local);
-  const names = boards.map((b) => b.label || ('127.0.0.1:' + b.port)).join(', ');
-  let host = '';
-  try { host = new URL(r.url).host; } catch { host = ''; }
   const link = (key, label) => `<a href="${esc(TS_LINKS[key])}" data-link="${esc(TS_LINKS[key])}">${esc(label)}</a>`;
   const cmd = (text) => `<code>${esc(text)}</code> <button class="mini" data-cmd="${esc(text)}">${esc(L('Copy'))}</button>`;
   const ready = !r.local;
@@ -3887,13 +3884,13 @@ function phoneHtml(webview, r, boards, folder, media) {
           <div>${esc(L('Scan with the phone camera; the page offers the right store.'))}<br>${link('android', L('Android (Google Play)'))} · ${link('iphone', L('iPhone (App Store)'))}<br><span class="muted">${esc(L('Tailscale is a private network: only your own devices can reach the board, nothing is opened to the internet.'))}</span></div></div></li>
       <li><b>${esc(L('Sign in on the phone and turn the connection on'))}</b>${esc(L('Use the same account as this computer. When the phone asks to allow a VPN, allow it.'))}</li>
       <li><b>${esc(L('Prepare this computer'))}</b>
-        ${ready ? `<details class="pc"><summary>${esc(L('This computer is ready ✓ ({0})', host))}</summary>${pcSteps}</details>` : `<div class="warn">${esc(L('Not ready yet: the link below only opens on this computer.'))}</div>${pcSteps}`}</li>
+        ${ready ? `<details class="pc"><summary>${esc(L('This computer is ready ✓'))}</summary>${pcSteps}</details>` : `<div class="warn">${esc(L('Not ready yet: the link below only opens on this computer.'))}</div>${pcSteps}`}</li>
       <li><b>${esc(L('Scan the board code below with the phone camera'))}</b>${esc(L('It opens in Chrome or Safari. Add it to the home screen to open it like an app. On an iPhone home-screen app, type only the code.'))}</li>
       <li><b>${esc(L('(Optional) Get a buzz when a session waits for you'))}</b>${esc(L('At the bottom of the board on the phone: Notifications → Get them on this device.'))}</li>
     </ol>
   </div>
 </div>
-<h2>${esc(L('Board code for your phone'))} <span class="muted" style="font-weight:normal">· ${esc(L('board: {0}', names))}</span></h2>
+<h2>${esc(L('Board code for your phone'))}</h2>
 <div class="pair">
   <div class="qr big">${qr(r.url, 6)}</div>
   <div>
@@ -3904,7 +3901,7 @@ function phoneHtml(webview, r, boards, folder, media) {
     <div class="muted">${esc(r.until ? L('Works once, until {0}. A new link makes this one stop working. Do not send it to anyone else.', r.until) : L('Works once, within 10 minutes. A new link makes this one stop working. Do not send it to anyone else.'))}</div>
   </div>
 </div>
-${many ? `<div class="warn">${esc(L('More than one board answers here ({0}). This link is for the board installed in {1}.', names, folder))}</div>` : ''}
+${many ? `<div class="warn">${esc(L('More than one board answers on this computer. This link is for the board in the phone board folder (setting phoneBoard.folder).'))}</div>` : ''}
 <script nonce="${n}">
 (function () {
   const vscode = acquireVsCodeApi();

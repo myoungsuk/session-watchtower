@@ -375,7 +375,7 @@
   "The change to {0} did not stay: another program rewrote ~/.codex/config.toml. Try again.": "{0} 변경이 남지 않았습니다. 다른 프로그램이 ~/.codex/config.toml을 다시 썼습니다. 다시 해 보세요.",
   "{0} is off for Codex in every folder. New Codex sessions start without it.": "Codex에서 {0}을(를) 모든 폴더에서 껐습니다. 새로 여는 Codex 세션부터 빠집니다.",
   "{0} is on again for Codex. New Codex sessions will start it.": "Codex에서 {0}을(를) 다시 켰습니다. 새로 여는 Codex 세션부터 들어갑니다.",
-  "Phone board on: {0}. Click for a link to open it on your phone.": "휴대폰 보드 켜짐: {0}. 누르면 휴대폰으로 여는 링크를 만듭니다.",
+  "Phone board is running. Click for a link to open it on your phone.": "휴대폰 보드가 켜져 있습니다. 누르면 휴대폰으로 여는 링크를 만듭니다.",
   "Choose the folder…": "폴더 고르기…",
   "Where is the phone board (session-board) installed? Choose its folder (the one with cli.js).": "휴대폰 보드(session-board)가 어디에 설치돼 있나요? 그 폴더(cli.js가 있는 곳)를 골라 주세요.",
   "Use this folder": "이 폴더 쓰기",
@@ -394,7 +394,7 @@
   "Open the board here": "여기서 보드 열기",
   "Works once, until {0}. A new link makes this one stop working. Do not send it to anyone else.": "{0}까지 한 번만 쓸 수 있습니다. 새로 만들면 이 링크는 못 씁니다. 다른 사람에게 보내지 마세요.",
   "Works once, within 10 minutes. A new link makes this one stop working. Do not send it to anyone else.": "10분 안에 한 번만 쓸 수 있습니다. 새로 만들면 이 링크는 못 씁니다. 다른 사람에게 보내지 마세요.",
-  "More than one board answers here ({0}). This link is for the board installed in {1}.": "여기서 보드가 둘 이상 답합니다({0}). 이 링크는 {1}에 설치된 보드의 것입니다.",
+  "More than one board answers on this computer. This link is for the board in the phone board folder (setting phoneBoard.folder).": "이 컴퓨터에서 보드가 둘 이상 답합니다. 이 링크는 휴대폰 보드 폴더(설정 phoneBoard.folder)에 있는 보드의 것입니다.",
   "How it works": "설명 보기",
   "The phone board is a separate program (session-board) that shows these sessions, their changed files and conversations in your phone's browser; this extension only finds it and makes the link.": "휴대폰 보드는 이 세션들의 상태·바뀐 파일·대화를 휴대폰 브라우저로 보여 주는 별도 프로그램(session-board)입니다. 이 확장은 보드를 찾아 연결 링크만 만듭니다.",
   "Copy": "복사",
@@ -417,12 +417,11 @@
   "Sign in on the phone and turn the connection on": "휴대폰 앱에서 로그인하고 연결 켜기",
   "Use the same account as this computer. When the phone asks to allow a VPN, allow it.": "이 컴퓨터와 같은 계정으로 로그인합니다. VPN을 허용할지 물으면 허용을 누릅니다.",
   "Prepare this computer": "이 컴퓨터 준비",
-  "This computer is ready ✓ ({0})": "이 컴퓨터는 준비됨 ✓ ({0})",
+  "This computer is ready ✓": "이 컴퓨터는 준비됨 ✓",
   "Not ready yet: the link below only opens on this computer.": "아직 준비 안 됨: 아래 링크는 이 컴퓨터에서만 열립니다.",
   "Scan the board code below with the phone camera": "아래 보드 QR을 휴대폰 카메라로 찍기",
   "It opens in Chrome or Safari. Add it to the home screen to open it like an app. On an iPhone home-screen app, type only the code.": "Chrome이나 Safari로 열립니다. \"홈 화면에 추가\"를 하면 앱처럼 열 수 있습니다. 아이폰 홈 화면 앱에서는 코드만 넣습니다.",
   "(Optional) Get a buzz when a session waits for you": "(선택) 세션이 나를 기다리면 휴대폰 알림 받기",
   "At the bottom of the board on the phone: Notifications → Get them on this device.": "휴대폰 보드 맨 아래: 알림 → 이 기기로 받기.",
-  "Board code for your phone": "휴대폰으로 찍을 보드 QR",
-  "board: {0}": "보드: {0}"
+  "Board code for your phone": "휴대폰으로 찍을 보드 QR"
 }
