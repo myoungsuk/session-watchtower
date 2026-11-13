@@ -1143,12 +1143,13 @@ function roleBrief(groupId, sid) {
       const k = [
         '명단의 세션마다 지금 할 일에 맞는 역할을 정합니다. 대장과 배포는 고정이고(바꾸려면 사용자 승인), 나머지는 할 일이 바뀔 때마다 바꿉니다.',
         memo ? '정한 역할은 공유 메모의 "세션과 역할" 표에 적습니다: 역할 칸에는 짧은 이름(개발·시험·검토·문서·배포 등), 자세한 내용은 맡은 범위 칸. 세션 이름은 명단의 굵은 이름 그대로 씁니다(Session Watchtower가 이 표를 읽어 꼬리표를 바꿉니다).'
-          : '공유 메모가 아직 없습니다. 보드 파일을 만들어 "세션과 역할" 표에 역할을 적고, 사용자에게 Session Watchtower 그룹 보드에서 그 파일을 연결해 달라고 부탁합니다.',
+          : `공유 메모가 아직 연결되지 않았습니다. 쓰고 있는 보드 파일이 있으면 그 파일을, 없으면 새로 만든 보드 파일의 전체 경로를 ${memoRequestPath(groupId)} 파일에 한 줄로 씁니다. Session Watchtower가 몇 초 안에 이 그룹의 공유 메모로 연결합니다(결과는 팀 명단에 적힘). 역할은 그 보드의 "세션과 역할" 표(칸: 역할 · 세션 이름, 이름은 **굵게**)에 적습니다.`,
         '명단에 새 세션이 보이면 표에 줄을 넣고 역할과 첫 지시를 줍니다. 빠진 세션은 줄을 지우고, 하던 일을 남은 세션에 나눕니다. 세션이 너무 적거나 많으면 사용자에게 늘리거나 줄이자고 제안합니다.',
         '역할이나 할 일이 바뀐 세션에는 바로 알립니다: 명단에 메시지 주소가 있으면 그 이름으로 메시지를 보내고, 없으면(Codex·꺼진 세션) 공유 메모에 적고 사용자에게 붙여 넣을 글을 줍니다.',
         '자기 변경을 자기가 검토·시험하지 않게, 같은 파일을 두 세션이 동시에 고치지 않게 나눕니다.',
       ];
       k.forEach((x, i) => L1.push(`${i + 1}. ${x}`));
+      L1.push('', '지금 바로: 팀 명단을 읽고, 공유 메모가 없으면 연결하고, 세션마다 역할을 정해 표에 적은 뒤 각 세션에 알려 주세요. 끝나면 사용자에게 세션별 역할을 표로 짧게 보고합니다.');
     }
     L1.push('', '이 안내를 읽었으면 내 역할을 한 줄로 확인해 주세요.');
   } else {
@@ -1173,12 +1174,13 @@ function roleBrief(groupId, sid) {
       const k = [
         'Give every session in the roster a role that fits the current work. The lead and the deployer are fixed (changing them needs the user\'s approval); change the others whenever the work changes.',
         memo ? 'Write the roles in the "Sessions and roles" table of the shared memo: a short name in the role column (develop, test, review, docs, deploy and so on), details in the scope column, and each session\'s name exactly as the bold name in the roster (Session Watchtower reads this table for its role tags).'
-          : 'There is no shared memo yet. Create a board file with a "Sessions and roles" table, write the roles there, and ask the user to link the file on the Session Watchtower group board.',
+          : `No shared memo is linked yet. Write the full path of the board file you use (or a new one you create) on one line in ${memoRequestPath(groupId)}; Session Watchtower links it as this group's shared memo within seconds (the result appears in the team roster). Write the roles in that board's "Sessions and roles" table (columns Role and Session name, names in **bold**).`,
         'When a new session appears in the roster, add a row and give it a role and a first instruction. When a session leaves, remove its row and share out its work. If there are too few or too many sessions for the work, suggest adding or removing some to the user.',
         'Tell a session right away when its role or work changes: if the roster shows a message address, message it by that name; otherwise (Codex, or a session that is off) write it in the shared memo and give the user a note to paste.',
         'Never let a session review or test its own change, and never have two sessions change the same files at once.',
       ];
       k.forEach((x, i) => L1.push(`${i + 1}. ${x}`));
+      L1.push('', 'Right now: read the team roster, link a shared memo if none is linked, give every session a role in the table and tell each session. Then report the roles to the user in a short table.');
     }
     L1.push('', 'When you have read this, confirm your role in one line.');
   }
@@ -1204,6 +1206,30 @@ const ROSTER_EVENTS_MAX = 20;
 const rosterWritten = new Map(); // 그룹 ID → 마지막으로 쓴 내용(시각 줄 뺀 것)
 function rosterDir() { return ctx && ctx.globalStorageUri ? path.join(ctx.globalStorageUri.fsPath, 'teams') : null; }
 function rosterPath(id) { const d = rosterDir(); return d ? path.join(d, String(id).replace(/[^\w-]/g, '_') + '.md') : null; }
+// 대장이 보드 파일을 직접 연결하는 길: 이 파일에 보드 파일의 전체 경로를 한 줄로 쓰면 확장이 그 그룹의 공유 메모로 연결하고 지운다
+function memoRequestPath(id) { const f = rosterPath(id); return f ? f.replace(/\.md$/, '.memo') : null; }
+const memoNotes = new Map(); // 그룹 ID → 마지막 연결 요청 결과(명단에 적는다)
+function checkMemoRequests() {
+  let any = false;
+  for (const g of loadGroups().groups || []) {
+    const req = memoRequestPath(g.id);
+    if (!req || !fs.existsSync(req)) continue;
+    any = true;
+    let line = '';
+    try { line = fs.readFileSync(req, 'utf8').split(/\r?\n/).map((x) => x.trim()).find(Boolean) || ''; } catch { line = ''; }
+    try { fs.unlinkSync(req); } catch { /* 이미 없음 */ }
+    const file = expandHome(line.replace(/^["'`]+|["'`]+$/g, '').trim());
+    let ok = false;
+    try { ok = path.isAbsolute(file) && /\.(md|markdown|txt)$/i.test(file) && fs.statSync(file).isFile(); } catch { ok = false; }
+    const ko = isKo();
+    if (!ok) { memoNotes.set(g.id, (ko ? '연결 못 함(전체 경로의 .md 파일이 아님): ' : 'Not linked (not a full path to an existing .md file): ') + cell(line).slice(0, 200)); continue; }
+    updateGroups((d) => { const t = d.groups.find((x) => x.id === g.id); if (!t) return false; t.memo = file; });
+    memoNotes.set(g.id, (ko ? '공유 메모 연결함: ' : 'Shared memo linked: ') + file);
+    vscode.window.showInformationMessage(L('"{0}": the lead linked {1} as the shared memo.', g.name, path.basename(file)));
+    refreshBoard(g.id);
+  }
+  return any;
+}
 const cell = (v) => String(v == null ? '' : v).replace(/\|/g, '/').replace(/\s+/g, ' ').trim();
 function stampKst(ms) {
   const d = new Date(ms);
@@ -1233,7 +1259,10 @@ function rosterBody(g, events) {
       '대장은 보고를 받을 때와 일을 나눌 때마다 이 파일을 다시 읽고, 새로 들어온 세션에는 역할과 첫 지시를 주고, 빠진 세션이 하던 일은 남은 세션에 나눕니다.',
       '"메시지 주소"가 있는 세션은 그 이름으로 직접 메시지를 보낼 수 있습니다(Claude Code의 세션 간 메시지). 없으면 공유 메모에 적고 사용자에게 붙여 넣을 글을 줍니다.', '',
       '| 세션 이름 | 도구 | 상태 | 메시지 주소 | 역할 | 세션 ID |', '|---|---|---|---|---|---|', ...(rows.length ? rows : ['| (아직 없음) | | | | | |']));
-    if (g.memo) out.push('', `공유 메모(보드): ${g.memo}`);
+    out.push('', g.memo ? `공유 메모(보드): ${g.memo}` : '공유 메모(보드): 아직 연결 안 됨',
+      `공유 메모 연결·바꾸기: 보드 파일의 전체 경로를 ${memoRequestPath(g.id)} 파일에 한 줄로 쓰면 Session Watchtower가 몇 초 안에 이 그룹에 연결하고 그 파일을 지웁니다.`,
+      '보드의 역할 표 형식: 제목에 "세션과 역할"(또는 "세션과 맡은 범위"), 칸 이름에 "역할"과 "세션 이름", 세션 이름은 이 명단의 굵은 이름 그대로 **굵게**. 이 표를 고치면 Watchtower의 역할 꼬리표가 따라 바뀝니다.');
+    if (memoNotes.get(g.id)) out.push(`마지막 연결 요청: ${memoNotes.get(g.id)}`);
     out.push('', '## 최근 바뀐 것 (최근 것이 위)', ...(events.length ? events.map((x) => `- ${stampKst(x.t)} "${cell(x.title)}" ${x.kind === 'join' ? '들어옴' : '빠짐'}`) : ['- (없음)']));
   } else {
     out.push(`# Team roster: ${cell(g.name)}`, '',
@@ -1241,7 +1270,10 @@ function rosterBody(g, events) {
       'The lead re-reads it whenever a report comes in and before handing out work: give each new session a role and a first instruction, and share out the work of a session that left.',
       'A session with a "message address" can be messaged directly by that name (Claude Code\'s messages between sessions). Without one, write it in the shared memo and give the user a note to paste.', '',
       '| Session name | Tool | State | Message address | Role | Session ID |', '|---|---|---|---|---|---|', ...(rows.length ? rows : ['| (none yet) | | | | | |']));
-    if (g.memo) out.push('', `Shared memo (board): ${g.memo}`);
+    out.push('', g.memo ? `Shared memo (board): ${g.memo}` : 'Shared memo (board): not linked yet',
+      `To link or change the shared memo, write the board file's full path on one line in ${memoRequestPath(g.id)}; Session Watchtower links it to this group within seconds and deletes that file.`,
+      'Roles table format on the board: a heading with "Sessions and roles", columns named "Role" and "Session name", and each session name in **bold** exactly as in this roster. Editing that table changes the role tags in Watchtower.');
+    if (memoNotes.get(g.id)) out.push(`Last link request: ${memoNotes.get(g.id)}`);
     out.push('', '## Recent changes (newest first)', ...(events.length ? events.map((x) => `- ${stampKst(x.t)} "${cell(x.title)}" ${x.kind === 'join' ? 'joined' : 'left'}`) : ['- (none)']));
   }
   return out.join('\n') + '\n';
@@ -1251,6 +1283,7 @@ function rosterBody(g, events) {
 function writeTeamRosters() {
   const dir = rosterDir();
   if (!dir) return;
+  checkMemoRequests();
   const groups = loadGroups().groups || [];
   try {
     fs.mkdirSync(dir, { recursive: true });
@@ -3440,6 +3473,7 @@ function startTimer() {
   if (timer) clearInterval(timer);
   timer = setInterval(() => {
     updateUsage(); // 파일 시각만 본다(바뀌었을 때만 읽음)
+    if (checkMemoRequests()) writeTeamRosters(); // 대장이 보드 연결을 부탁했는지(그룹마다 파일 하나가 있는지만 본다), 결과를 명단에 적는다
     if (groupsChangedOnDisk() || boardFilesChanged()) rebuildSessions(); // 다른 VS Code 창이 그룹을 바꿨거나, 대장이 보드의 역할을 고쳤다
     if ((treeView && treeView.visible) || (sessionsView && sessionsView.visible)) { requestScan(false); return; }
     const bg = backgroundWanted();

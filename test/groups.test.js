@@ -484,7 +484,21 @@ test('팀 명단 파일: 대장이 읽도록 그룹마다 명단(대장 먼저·
   assert.ok(brief.includes('Team roster: ' + file), '명단 경로');
   assert.match(brief, /When a new session appears in the roster, add a row and give it a role and a first instruction/);
   assert.match(brief, /if the roster shows a message address, message it by that name/);
-  assert.match(brief, /There is no shared memo yet/, '메모가 없으면 보드를 만들라고');
+  assert.ok(brief.includes('No shared memo is linked yet. Write the full path of the board file you use (or a new one you create) on one line in ' + file.replace(/\.md$/, '.memo')), '메모가 없으면 연결 요청 파일로 직접 연결하라고');
+  assert.match(brief, /Right now: read the team roster, link a shared memo if none is linked/);
+  // 대장이 연결 요청 파일에 보드 경로를 쓰면 확장이 공유 메모로 연결하고 요청 파일을 지운다. 잘못된 경로는 연결하지 않고 명단에 적는다
+  const req = file.replace(/\.md$/, '.memo');
+  fs.writeFileSync(req, '/no/such/board.md\n');
+  await waitFor(() => !fs.existsSync(req) && /Last link request: Not linked/.test(read()), '잘못된 경로는 연결 안 함', 15000);
+  const leadBoard = path.join(home, 'lead-made-board.md');
+  fs.writeFileSync(leadBoard, ['## 1. Sessions and roles', '| Role | Session name |', '|---|---|', '| Lead | **Watcher** |', '| Review | **Deployer** |', ''].join('\n'));
+  fs.writeFileSync(req, '"' + leadBoard + '"\n');
+  await waitFor(() => !fs.existsSync(req) && panel.lastPayload().memo.file === leadBoard, '대장이 보드를 연결', 15000);
+  assert.ok(stub.calls.some((c) => c[0] === 'info' && /the lead linked lead-made-board\.md as the shared memo/.test(c[1])), '사용자에게 알림');
+  await waitFor(() => /Shared memo \(board\): .*lead-made-board\.md/.test(read()) && /Last link request: Shared memo linked/.test(read()), '명단에도');
+  await waitFor(() => team('Chatbot ops').rows.some((r) => r.sid === SID.d && r.role === 'Review' && r.roleFromBoard), '연결한 보드의 표로 역할이 붙는다');
+  panel.send({ type: 'unlinkMemo' });
+  await waitFor(() => panel.lastPayload().memo.file === '', '연결 끊음');
   panel.send({ type: 'brief', sid: SID.d });
   await waitFor(() => /This session is .*member of the group/.test(stub.state.clipboard || ''), '작업 세션 역할 안내');
   assert.ok(!/Handing out roles/.test(stub.state.clipboard), '역할 나누기는 대장 안내에만');

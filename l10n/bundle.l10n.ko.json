@@ -365,5 +365,6 @@
   "{0} can use up to {1}% of the weekly limit; it has used {2}% so far.": "{0}은(는) 주간 한도의 {1}%까지 쓸 수 있고, 지금까지 {2}%를 썼습니다.",
   "This week by product: {0}": "이번 주 사용 비율: {0}",
   "While you use Claude, Session Watchtower has Claude Code re-check this every {0} minutes. Click to re-check now.": "Claude를 쓰는 동안 Session Watchtower가 {0}분마다 Claude Code에게 다시 확인하게 합니다. 누르면 지금 확인합니다.",
-  "Claude Code itself does the re-check (claude -p /usage); the extension never reads your login.": "다시 확인은 Claude Code 자신이 합니다(claude -p /usage). 확장은 로그인 정보를 읽지 않습니다."
+  "Claude Code itself does the re-check (claude -p /usage); the extension never reads your login.": "다시 확인은 Claude Code 자신이 합니다(claude -p /usage). 확장은 로그인 정보를 읽지 않습니다.",
+  "\"{0}\": the lead linked {1} as the shared memo.": "\"{0}\": 대장이 {1}을(를) 공유 메모로 연결했습니다."
 }

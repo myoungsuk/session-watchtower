@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.26.1
+
+- **The lead can link the board itself.** When a group has no shared memo, the lead writes the board file's full path into a request file next to the team roster; the extension links it within seconds, deletes the request and notes the result in the roster. The lead's role note now says how, describes the roles table format, and ends with what to do right away (read the roster, link the board, give every session a role, tell them, report to the user).
+
 ## 0.26.0
 
 - **Usage stays fresh.** While you use Claude, the extension has Claude Code re-check your plan usage every 15 minutes by running Claude Code's own local `claude -p /usage` (no model call, no saved conversation, no MCP servers; about 3 seconds of CPU). A click on the usage item re-checks now. The extension still never reads your login. Setting `usageRefreshMinutes` (0 = never).
