@@ -53,5 +53,6 @@
   "command.deleteGroup": "그룹 지우기",
   "command.addToGroup": "그룹에 넣기",
   "command.removeFromGroup": "그룹에서 빼기",
-  "command.setSessionRole": "그룹 안 역할 정하기"
+  "command.setSessionRole": "그룹 안 역할 정하기",
+  "command.planTeam": "팀 구성 추천 받기: 세션 수·역할 분배를 물어볼 글 복사"
 }

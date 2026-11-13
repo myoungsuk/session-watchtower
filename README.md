@@ -135,6 +135,8 @@ The **board** button on a group opens its board, a page for the whole group:
 
 *Copy board as Markdown* puts a snapshot of the board on the clipboard, for example to paste into the shared memo.
 
+**Plan the team.** Not sure how many sessions the work needs or how to split the roles? *Plan the team…* (on a board, or in the `…` menu of the Sessions view even before you have a group) asks what you will build and how many sessions you can run, then copies a request to paste into any Claude session. The request lists the roles with what each does, rules of thumb (more sessions cost more; usually 1 for a small change and 2 to 3 for a feature; no two sessions on the same files; one session deploys) and asks for the number of sessions, a table of roles and first steps, what must not run at the same time, and a first instruction for each session. Opened from a board, it also lists the group's sessions and roles. The extension itself never calls an AI.
+
 **Role note.** Each row of the board has a *Role note* button. It copies a note to paste into that session, so the session knows its place in the team even in a brand-new project without any team rules yet:
 
 - the group and the session's role, with a line about the job for common roles (watch, develop, deploy, docs, test, review),
@@ -302,6 +304,7 @@ Available from the Command Palette under **Session Watchtower**, and from the me
 
 | Command | What it does |
 |---|---|
+| Plan a team | Copy a request that asks a Claude session how many sessions the work needs and how to divide the roles. |
 | New group / Open a group board / Rename a group / Delete a group | Work with groups (deleting a group leaves its sessions as they are). |
 | Search conversations | Find a session by what you wrote in it. |
 | Which sessions changed this file? | List the sessions that changed the current or selected file. |
@@ -331,7 +334,7 @@ Claude Code 세션을 여러 개 돌릴 때 **어느 세션이 일하는 중이�
 - **파일 탐색기에도**: 세션이 지금 고치는 파일은 VS Code 파일 탐색기와 편집기 탭에서 도는 배지와 초록 이름으로 보입니다. 그 파일이 든 폴더에는 초록 점이 붙습니다.
 - **알림**: 세션이 승인이나 답을 기다릴 때, 두 세션이 같은 파일을 고쳤을 때, 작업 중인 세션이 10분 넘게 조용할 때 알려 줍니다.
 - **찾기**: 내가 세션에 쓴 말로 세션을 찾고, 파일을 우클릭해 그 파일을 고친 세션을 봅니다.
-- **그룹과 보드**: 함께 일하는 세션(감시·개발·배포 등)을 그룹으로 묶고 역할을 붙입니다. 역할 꼬리표는 이름표라서, 보드의 "역할 안내"를 그 세션에 붙여 넣어야 세션이 자기 역할과 함께 일하는 규칙을 압니다(처음 쓰는 프로젝트도 그대로 쓸 수 있음). 그룹 보드 한 화면에서 기다리는 세션, 세션별 현황(커밋 안 한 파일 포함), 세션 기록으로 설명되지 않는 변경, 내가 한 말(시각과 함께 복사), 공유 메모 파일을 봅니다.
+- **그룹과 보드**: 함께 일하는 세션(감시·개발·배포 등)을 그룹으로 묶고 역할을 붙입니다. 세션 수와 역할 분배가 고민되면 "팀 구성 추천 받기"로 Claude 세션에 물어볼 글을 복사합니다. 역할 꼬리표는 이름표라서, 보드의 "역할 안내"를 그 세션에 붙여 넣어야 세션이 자기 역할과 함께 일하는 규칙을 압니다(처음 쓰는 프로젝트도 그대로 쓸 수 있음). 그룹 보드 한 화면에서 기다리는 세션, 세션별 현황(커밋 안 한 파일 포함), 세션 기록으로 설명되지 않는 변경, 내가 한 말(시각과 함께 복사), 공유 메모 파일을 봅니다.
 - **정리**: 보관함, 세션 이름 바꾸기, 변경 요약을 마크다운으로 복사.
 - **바깥에서 열기**: 데스크톱 알림 같은 다른 프로그램이 `vscode://kms-labs.session-watchtower/open?title=…` 주소로 그 세션의 대화를 열 수 있습니다.
 - **Codex** 세션도 함께 나옵니다.

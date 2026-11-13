@@ -269,5 +269,16 @@
   "Memo file linked: {0}. The role notes now point the sessions to it.": "메모 파일을 연결했습니다: {0}. 이제 역할 안내가 세션들에게 이 파일을 알려 줍니다.",
   "Custom role": "직접 넣은 역할",
   "Check roles, or type your own (none checked = no role)": "역할을 체크하거나 직접 쳐 넣으세요(체크 없음 = 역할 없음)",
-  "Your own role: check it to use it": "직접 넣는 역할: 체크하면 씁니다"
+  "Your own role: check it to use it": "직접 넣는 역할: 체크하면 씁니다",
+  "What will you build or change? One or two sentences are enough.": "무엇을 만들거나 고칠 건가요? 한두 문장이면 됩니다.",
+  "For example: add card payments and an order history page to the shop app": "예: 쇼핑 앱에 카드 결제와 주문 내역 화면 추가",
+  "Describe the work in a sentence": "할 일을 한 문장으로 적어 주세요",
+  "Let the recommendation decide": "추천에 맡기기",
+  "5 or more": "5개 이상",
+  "How many sessions can you run at most?": "세션을 최대 몇 개까지 쓸 수 있나요?",
+  "Open a new session": "새 세션 열기",
+  "Copied a team plan request. Paste it into a Claude session; the answer suggests how many sessions to run and their roles.": "팀 구성 추천 요청 글을 복사했습니다. Claude 세션에 붙여 넣으면 세션 수와 역할 분배를 추천받습니다.",
+  "Plan the team…": "팀 구성 추천 받기…",
+  "Copy a request that asks a Claude session how many sessions this work needs and how to divide the roles.": "이 일에 세션이 몇 개 필요하고 역할을 어떻게 나눌지 Claude 세션에 물어볼 글을 복사합니다.",
+  "Not sure how many sessions or which roles? Press \"Plan the team…\" and paste the request into a session.": "세션을 몇 개 쓰고 역할을 어떻게 나눌지 모르겠으면 \"팀 구성 추천 받기…\"를 눌러 요청 글을 세션에 붙여 넣으세요."
 }

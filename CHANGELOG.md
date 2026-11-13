@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.19.0
+
+- **Plan the team.** Describe what you will build and how many sessions you can run, and the extension copies a request to paste into a Claude session: it lists the roles and what each does, rules of thumb for choosing the number of sessions, and asks for a table of sessions with roles and first steps, the work that must not run at the same time, and a first instruction for each session. Available on a board (it then also lists the group's sessions) and from the Sessions view menu before any group exists.
+
 ## 0.18.1
 
 - **Pick roles from a list.** Setting a role opens a list of the roles most projects need: Watch, Plan, Design, Develop, Test, Review, Docs, Deploy, Security and Research, each with a line about what it does. Check one or more, or type your own role and check it. The role note describes these roles too.

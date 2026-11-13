@@ -235,6 +235,34 @@ test('역할 안내: 처음 쓰는 사람도 붙여 넣기만 하면 되게 역�
   fs.unlinkSync(board);
 });
 
+test('팀 구성 추천 받기: 만들 것과 세션 수를 받아, 역할 목록·판단 기준·답 형식이 든 요청 글을 복사한다', async () => {
+  const panel = stub.state.panels.find((p) => !p.disposed);
+  assert.match(panel.webview.html, /data-act="planTeam"/, '보드에 단추가 있다');
+  stub.state.input = 'Add card payments to the shop app';
+  stub.state.pick = (items) => items.find((i) => i.label === '3');
+  stub.state.answer = (m, b) => (/team plan request/.test(m) ? b.find((x) => x === 'Open a new session') : undefined);
+  const opened = stub.calls.filter((c) => c[0] === 'claude-vscode.editor.open' && c.length === 1).length;
+  panel.send({ type: 'planTeam' });
+  await waitFor(() => /^\[Team plan request\]/.test(stub.state.clipboard || ''), '요청 글 복사');
+  const t = stub.state.clipboard;
+  assert.match(t, /What I will build: Add card payments to the shop app/);
+  assert.match(t, /Sessions available: 3/);
+  assert.match(t, /Sessions already in the group "Chatbot ops"[^\n]*:\n- "Watcher" — Watch\n/, '보드에서 열면 그 그룹의 세션과 역할을 넣는다');
+  for (const r of ['Watch', 'Plan', 'Design', 'Develop', 'Test', 'Review', 'Docs', 'Deploy', 'Security', 'Research']) assert.match(t, new RegExp('\\n- ' + r + ': \\S'), '역할 목록과 하는 일: ' + r);
+  assert.match(t, /Only one session deploys/);
+  assert.match(t, /A table: session name \| role \| what it does \| first step/);
+  assert.match(t, /Do not change code or files in this conversation/);
+  await waitFor(() => stub.calls.filter((c) => c[0] === 'claude-vscode.editor.open' && c.length === 1).length > opened, '새 세션 열기');
+
+  // 그룹 없이(세션 창 메뉴에서)도 된다
+  stub.state.input = 'Fix the login bug';
+  stub.state.pick = (items) => items[0];
+  stub.state.answer = undefined;
+  const text = await stub.commands.get('claudeSessionChanges.planTeam')();
+  assert.match(text, /Sessions available: up to your recommendation/);
+  assert.ok(!/Sessions already in the group/.test(text), '그룹이 없으면 그 줄도 없다');
+});
+
 test('공유 메모: 파일을 연결하면 보드에 보이고, 파일이 바뀌면 다시 그린다. 그룹에서 빼면 보드와 목록에서 빠진다', async () => {
   const panel = stub.state.panels.find((p) => !p.disposed);
   const memo = path.join(home, 'board.md');

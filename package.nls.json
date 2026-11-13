@@ -53,5 +53,6 @@
   "command.deleteGroup": "Delete a group",
   "command.addToGroup": "Put in a group",
   "command.removeFromGroup": "Remove from group",
-  "command.setSessionRole": "Set role in group"
+  "command.setSessionRole": "Set role in group",
+  "command.planTeam": "Plan a team: copy a request for how many sessions and which roles"
 }

@@ -995,6 +995,70 @@ async function copyRoleBrief(groupId, sid) {
   if (pick === open) openClaudeSession(sid);
 }
 
+// ---------- 팀 구성 추천 요청 ----------
+// "이런 걸 만들 건데 역할을 어떻게 나누고 세션은 몇 개가 적당할까"를 Claude 세션에 물어볼 글을 만든다.
+// 확장은 AI를 부르지 않는다: 글을 복사해 주고, 사용자가 아무 세션(또는 새 세션)에 붙여 넣는다.
+// 그룹이 없는 처음 사용자도 쓸 수 있게 세션 창 메뉴에서도 열고, 보드에서 열면 그 그룹의 세션·역할도 넣는다.
+async function planTeam(groupId) {
+  const ko = isKo();
+  const what = await vscode.window.showInputBox({
+    prompt: L('What will you build or change? One or two sentences are enough.'),
+    placeHolder: L('For example: add card payments and an order history page to the shop app'),
+    validateInput: (v) => (String(v || '').trim() ? undefined : L('Describe the work in a sentence')),
+  });
+  if (!what || !what.trim()) return undefined;
+  const counts = [{ label: L('Let the recommendation decide'), n: 0 }, ...[1, 2, 3, 4, 5].map((n) => ({ label: n === 5 ? L('5 or more') : String(n), n }))];
+  const cnt = await vscode.window.showQuickPick(counts, { placeHolder: L('How many sessions can you run at most?') });
+  if (!cnt) return undefined;
+  const g = groupId ? groupById(groupId) : null;
+  const ws = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
+  const roles = ROLE_PRESETS.map((p) => `- ${ko ? p.ko : p.en}: ${roleDuty(ko ? p.ko : p.en)}`);
+  const have = g ? Object.keys(g.members).map((sid) => { const x = sessionBySid(sid); return `- "${x ? x.title : sid.slice(0, 8)}"${g.members[sid].role ? ' — ' + g.members[sid].role : ''}`; }) : [];
+  const n = cnt.n ? (cnt.n >= 5 ? (ko ? '5개 이상' : '5 or more') : String(cnt.n)) : (ko ? '추천에 맡김' : 'up to your recommendation');
+  const out = [];
+  if (ko) {
+    out.push('[팀 구성 추천 요청]', '아래 일을 Claude Code 세션 여러 개로 나눠서 하려고 합니다. 세션을 몇 개 쓰고 역할을 어떻게 나눌지 추천해 주세요.', '',
+      `만들 것: ${what.trim()}`, `작업 폴더: ${ws ? ws.uri.fsPath : '(없음)'}`, `쓸 수 있는 세션 수: ${n}`);
+    if (have.length) out.push('', `지금 "${g.name}" 그룹에 있는 세션(되도록 이 세션들을 쓰는 쪽으로):`, ...have);
+    out.push('', '고를 수 있는 역할(직접 만든 역할도 됩니다):', ...roles, '',
+      '판단 기준:',
+      '- 세션이 많을수록 비용이 늘고 조율할 일이 많아집니다. 꼭 필요한 만큼만 추천해 주세요.',
+      '- 작은 수정은 세션 1개, 보통 기능은 2 ~ 3개(개발 + 시험·검토, 오래 걸리면 감시)가 흔합니다. 서로 독립된 부분이 있을 때만 4개 이상을 씁니다.',
+      '- 같은 파일을 두 세션이 동시에 고치지 않게 나눠 주세요. 동시에 개발하는 세션은 따로 작업 폴더(git worktree)를 쓰는 것이 안전합니다.',
+      '- 배포(서버에 올리기)는 한 세션만 맡습니다.', '',
+      '답 형식:',
+      '1. 추천 세션 수와 그 이유',
+      '2. 표: 세션 이름 | 역할 | 맡을 일 | 먼저 할 일',
+      '3. 동시에 하면 안 되는 일과 순서(먼저 끝나야 하는 일)',
+      '4. 세션마다 붙여 넣을 첫 지시(한 단락씩)',
+      '5. 세션을 더 적게 써도 되는 경우',
+      '', '작업 폴더를 읽어 보고 판단해도 됩니다. 이 대화에서는 코드나 파일을 고치지 마세요.');
+  } else {
+    out.push('[Team plan request]', 'I want to split the work below across several Claude Code sessions. Recommend how many sessions to use and how to divide the roles.', '',
+      `What I will build: ${what.trim()}`, `Project folder: ${ws ? ws.uri.fsPath : '(none)'}`, `Sessions available: ${n}`);
+    if (have.length) out.push('', `Sessions already in the group "${g.name}" (prefer using these):`, ...have);
+    out.push('', 'Roles to choose from (custom roles are fine too):', ...roles, '',
+      'How to decide:',
+      '- More sessions cost more and need more coordination. Recommend only as many as the work needs.',
+      '- A small change usually needs 1 session, a normal feature 2 to 3 (develop + test or review, plus watch for long work). Use 4 or more only for parts that are truly independent.',
+      '- Split the work so that no two sessions change the same files at the same time. Sessions that develop in parallel are safer in separate git worktrees.',
+      '- Only one session deploys (puts things on servers).', '',
+      'Answer with:',
+      '1. The recommended number of sessions and why',
+      '2. A table: session name | role | what it does | first step',
+      '3. Work that must not run at the same time, and the order (what must finish first)',
+      '4. A first instruction to paste into each session (one paragraph each)',
+      '5. When fewer sessions would do',
+      '', 'You may read the project folder to decide. Do not change code or files in this conversation.');
+  }
+  const text = out.join('\n') + '\n';
+  await vscode.env.clipboard.writeText(text);
+  const fresh = L('Open a new session');
+  const pick = await vscode.window.showInformationMessage(L('Copied a team plan request. Paste it into a Claude session; the answer suggests how many sessions to run and their roles.'), fresh);
+  if (pick === fresh) newClaudeSession();
+  return text;
+}
+
 // 그룹에 세션 여러 개를 한꺼번에 넣기(보드의 "세션 넣기")
 async function addSessionsToGroup(id) {
   const g = groupById(id);
@@ -1170,6 +1234,8 @@ function boardStrings() {
     linkMemo: L('Link a file…'), newMemo: L('Create a memo file'), openMemo: L('Open in editor'), unlinkMemo: L('Unlink'),
     addSessions: L('Add sessions…'), copyBoard: L('Copy board as Markdown'), refresh: L('Refresh'), empty: L('No sessions in this group yet. Use "Add sessions…" or the group button on a session row.'),
     gone: L('This group was deleted.'),
+    plan: L('Plan the team…'), planTip: L('Copy a request that asks a Claude session how many sessions this work needs and how to divide the roles.'),
+    setupPlan: L('Not sure how many sessions or which roles? Press "Plan the team…" and paste the request into a session.'),
     roleNote: L('Role note'), roleNoteTip: L('Copy a note for this session: its group, role and job, the other sessions, the shared memo and how the group works together. Paste it into the session so it knows its role.'),
     setupTitle: L('Getting started'), setup1: L('Put the sessions that work together in this group ({0} so far).', '{0}'), setup2: L('Give each session a role: click the role cell ({0} of {1} set).', '{0}', '{1}'),
     setup3: L('Link or create a shared memo file the sessions read and write.'), setup4: L('Press "Role note" on each row and paste it into that session. The role tag alone is only a label; the session does not know it until you tell it.'),
@@ -1336,6 +1402,7 @@ async function openGroupBoard(id) {
     else if (m.type === 'role' && sid) setSessionRole(sid);
     else if (m.type === 'remove' && sid) removeFromGroup(sid);
     else if (m.type === 'brief' && sid) copyRoleBrief(g.id, sid);
+    else if (m.type === 'planTeam') planTeam(g.id);
     else if (m.type === 'add') addSessionsToGroup(g.id);
     else if (m.type === 'linkMemo') linkMemo(g.id);
     else if (m.type === 'newMemo') newMemo(g.id);
@@ -1434,7 +1501,7 @@ function boardHtml(webview) {
     roots = p.roots || [];
     if (p.gone) { root.innerHTML = '<p class="muted">' + esc(S.gone) + '</p>'; return; }
     let h = '<h1>' + esc(p.name) + '</h1>'
-      + '<div class="bar"><button data-act="add">' + esc(S.addSessions) + '</button><button data-act="copyBoard">' + esc(S.copyBoard) + '</button><button data-act="refresh">' + esc(S.refresh) + '</button></div>';
+      + '<div class="bar"><button data-act="add">' + esc(S.addSessions) + '</button><button data-act="planTeam" title="' + esc(S.planTip) + '">' + esc(S.plan) + '</button><button data-act="copyBoard">' + esc(S.copyBoard) + '</button><button data-act="refresh">' + esc(S.refresh) + '</button></div>';
     // 0. 시작하기: 세션·역할·메모가 갖춰질 때까지 순서를 보여 준다
     const su = p.setup || {};
     if (!su.members || su.roles < su.members || !su.memo) {
@@ -1442,7 +1509,7 @@ function boardHtml(webview) {
       h += '<div class="setup"><b>' + esc(S.setupTitle) + '</b><ol>'
         + step(su.members > 0, String(S.setup1 || '').replace('{0}', su.members || 0))
         + step(su.members > 0 && su.roles >= su.members, String(S.setup2 || '').replace('{0}', su.roles || 0).replace('{1}', su.members || 0))
-        + step(!!su.memo, S.setup3) + step(false, S.setup4) + '</ol></div>';
+        + step(!!su.memo, S.setup3) + step(false, S.setup4) + '</ol><div class="muted">' + esc(S.setupPlan) + '</div></div>';
     }
     // 1. 기다리는 것
     h += '<h2>' + esc(S.waiting) + (p.waiting.length ? '<span class="count">' + p.waiting.length + '</span>' : '') + '</h2>';
@@ -2974,6 +3041,7 @@ function activate(context) {
     vscode.commands.registerCommand('claudeSessionChanges.searchConversations', (q) => searchConversations(typeof q === 'string' ? q : '')),
     vscode.commands.registerCommand('claudeSessionChanges.renameSession', (arg) => renameSession(arg)),
     vscode.commands.registerCommand('claudeSessionChanges.createGroup', () => createGroup()),
+    vscode.commands.registerCommand('claudeSessionChanges.planTeam', (id) => planTeam(typeof id === 'string' ? id : undefined)),
     vscode.commands.registerCommand('claudeSessionChanges.addToGroup', (arg, id) => addToGroup(arg, typeof id === 'string' ? id : undefined)),
     vscode.commands.registerCommand('claudeSessionChanges.removeFromGroup', (arg) => removeFromGroup(arg)),
     vscode.commands.registerCommand('claudeSessionChanges.setSessionRole', (arg) => setSessionRole(arg)),

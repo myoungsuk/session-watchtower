@@ -2,7 +2,7 @@
   "name": "session-watchtower",
   "displayName": "Session Watchtower for Claude Code",
   "description": "%description%",
-  "version": "0.18.1",
+  "version": "0.19.0",
   "scripts": {
     "test": "node --test test/*.test.js",
     "shot": "bash tools/screenshot/run.sh"
@@ -193,6 +193,12 @@
       {
         "command": "claudeSessionChanges.setSessionRole",
         "title": "%command.setSessionRole%"
+      },
+      {
+        "command": "claudeSessionChanges.planTeam",
+        "title": "%command.planTeam%",
+        "category": "Session Watchtower",
+        "icon": "$(lightbulb)"
       }
     ],
     "menus": {
@@ -309,6 +315,11 @@
           "command": "claudeSessionChanges.openGroupBoard",
           "when": "view == claudeSessionChanges.sessions",
           "group": "0_groups@2"
+        },
+        {
+          "command": "claudeSessionChanges.planTeam",
+          "when": "view == claudeSessionChanges.sessions",
+          "group": "0_groups@0"
         }
       ],
       "view/item/context": [
