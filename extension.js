@@ -4055,10 +4055,12 @@ function activate(context) {
   vscode.commands.executeCommand('setContext', CTX_ALIVE, aliveOnly);
 
   treeView = vscode.window.createTreeView(VIEW, { treeDataProvider: provider, showCollapseAll: true });
-  statusItem = vscode.window.createStatusBarItem('claudeSessionChanges.status', vscode.StatusBarAlignment.Right, 101); // 오른쪽, 사용량 바로 왼쪽(사용자 요청)
+  // 세션 숫자와 사용량은 오른쪽에 나란히(사용자 요청). 다른 확장 항목이 사이에 끼지 않게 흔치 않은, 바로 붙은 우선순위를 쓴다
+  const STATUS_PRIORITY = 9876.5432;
+  statusItem = vscode.window.createStatusBarItem('claudeSessionChanges.status', vscode.StatusBarAlignment.Right, STATUS_PRIORITY + 0.0001);
   statusItem.name = 'Session Watchtower';
   statusItem.command = SESSIONS_VIEW + '.focus';
-  usageItem = vscode.window.createStatusBarItem('claudeSessionChanges.usage', vscode.StatusBarAlignment.Right, 100); // 오른쪽(사용자 요청)
+  usageItem = vscode.window.createStatusBarItem('claudeSessionChanges.usage', vscode.StatusBarAlignment.Right, STATUS_PRIORITY);
   usageItem.name = L('Plan usage');
   usageItem.command = 'claudeSessionChanges.refreshUsage';
   context.subscriptions.push(

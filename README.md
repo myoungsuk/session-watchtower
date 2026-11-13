@@ -139,7 +139,11 @@ The **board** button on a group opens its board, a page for the whole group:
 | Instructions and results | What you typed to the group's sessions, newest first, with the first line of each session's last answer to it (people who ask their sessions to lead with the conclusion get a one-line result). Messages from other sessions and system notes are left out, and the same message sent to several sessions is shown once. Each session has its own color, also in the Sessions table; click a session name to open it. Long rows show three lines; click a row to read all of it. Rows are split into pages (`boardPageSize`, 20 by default) |
 | Shared memo | A Markdown file the sessions also read and write, such as a coordination board with decisions and handoff notes. Link an existing file, or create a new one with sections for decisions waiting, the decision log and handoff: in the project folder (sessions read it without asking; you pick the place) or in the extension's storage (the project stays untouched, but a session may ask before reading a file outside the project). It is shown as rendered Markdown and refreshes when the file changes |
 
+<img src="media/readme/team-roster.png" width="620" alt="The team roster file in a Markdown preview: each session's name, tool, state, message address, role and ID">
+
 **The lead hands out roles on its own.** For every group the extension keeps a team roster file in its private storage: each session's name, tool, state, message address (the name Claude Code sessions use to message each other) and role, plus who joined or left and when. It is rewritten whenever the group changes. The lead's role note points to this file and tells the lead to re-read it with every report, give each new session a role and a first instruction, share out the work of a session that left, write the roles in the board table, and tell sessions about changes directly when they have a message address. If no shared memo is linked, the lead links one itself: it writes the board file's full path into a request file next to the roster, and the extension links it within seconds. The extension itself still never types into a session.
+
+<img src="media/readme/board-fold.png" width="620" alt="A group board with Sessions and Instructions and results folded, so the shared memo comes right after the waiting sessions">
 
 Click a heading (Waiting for you, Sessions, Instructions and results, Shared memo) to fold that part away, and again to open it (Enter or Space work too). The board remembers what you folded for each group.
 
@@ -271,6 +275,8 @@ The **MCP Servers** view (collapsed at the bottom of the side bar) lists the MCP
 
 ## Plan usage
 
+<img src="media/readme/usage.png" width="285" alt="The right side of the status bar: session counts, then Claude 67% · Fable 18%">
+
 The right side of the status bar shows how much of your plan limits you have used, for example `Claude 83% · Fable 21% · Codex 23%`: Claude's overall limit, then a model's own weekly limit when your plan has one (such as Fable, which may use only part of the weekly limit), then Codex. Hover it for each limit, when it resets, how much of the weekly limit a model may use, which products the week's usage came from, and how old the value is. It turns yellow at 90% or when Claude Code itself marks a limit as a warning, and red at 100%.
 
 | | Where the number comes from | How fresh |
@@ -380,7 +386,7 @@ Available from the Command Palette under **Session Watchtower**, and from the me
 
 No build step and no dependencies. Run the tests with `npm test` (Node 20 or newer). They use a fake home folder with made-up session logs and a stub of the VS Code API, so they never read your real `~/.claude`.
 
-`npm run shot` (Linux) takes the real screenshots used in this page: it starts desktop VS Code on a virtual display (Xvfb) with the extension and made-up demo sessions, and writes pictures to `.shots/`. Scenes: `side`, `toasts`, `search`, `file`, `review`, `summary`, `explorer`, `tabs`, `groups`, `roles`, `mcp` and `gif`, for example `npm run shot -- side light`. It needs desktop VS Code, `xvfb-run`, ImageMagick and Python 3 with Pillow.
+`npm run shot` (Linux) takes the real screenshots used in this page: it starts desktop VS Code on a virtual display (Xvfb) with the extension and made-up demo sessions, and writes pictures to `.shots/`. Scenes: `side`, `toasts`, `search`, `file`, `review`, `summary`, `explorer`, `tabs`, `groups`, `roles`, `fold`, `roster`, `mcp` and `gif`, for example `npm run shot -- side light`. It needs desktop VS Code, `xvfb-run`, ImageMagick and Python 3 with Pillow.
 
 ## Feedback and contact
 

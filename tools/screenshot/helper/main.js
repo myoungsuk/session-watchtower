@@ -38,6 +38,19 @@ exports.activate = async () => {
     run('claudeSessionChanges.setSessionRole', demo.sids['Fix flaky e2e tests']);
     return;
   }
+  if (scene === 'fold') {
+    // the board with Sessions and Instructions and results folded (see shoot.sh)
+    await sleep(9000);
+    await run('claudeSessionChanges.openGroupBoard', 'gdemo');
+    return;
+  }
+  if (scene === 'roster') {
+    // the team roster the extension writes for the lead, opened as a Markdown preview
+    await sleep(11000);
+    const f = require('path').join(process.env.HOME, '..', 'ud', 'User', 'globalStorage', 'kms-labs.session-watchtower', 'teams', 'gdemo.md');
+    await run('markdown.showPreview', vscode.Uri.file(f));
+    return;
+  }
   if (scene === 'groups') {
     // the board of the demo group (the group file is written before VS Code starts, see shoot.sh)
     await sleep(9000);
