@@ -296,7 +296,9 @@ The session counts sit right next to the usage, on the right side of the status 
 
 ## Phone board
 
-If you run session-board — a separate program that shows your sessions on a phone — on this computer, the Sessions view gets a **phone button** while the board is running. Click it (or run *Phone board: make a link for my phone*) to get a QR code, a link and a short code for your phone.
+The phone board shows the sessions of this computer in your phone's browser: which one is working or waiting for you, what each changed, and the conversation. It is read-only; to answer a session you still use Claude Code (or its Remote Control). It is a separate program, **session-board**, that runs next to Claude Code; the phone reaches it over your private network (for example Tailscale serve), never over the public internet. session-board is not published yet, so for most people nothing of this feature shows up.
+
+If session-board runs on this computer, the Sessions view gets a **phone button** while the board is running. Click it (or run *Phone board: make a link for my phone*) to get a QR code, a link and a short code for your phone. Without a running board, the command explains what is missing.
 
 - **Watchtower never starts or stops the board.** It only asks `127.0.0.1` on the ports in `phoneBoard.ports` (5290 and 5291 by default) for the board's health check, at most once a minute while the Sessions view is open, and accepts only an answer that identifies itself as a board. When the board writes its own `run.json`, only that port is checked.
 - **The link** comes from the board itself: Watchtower runs `cli.js pair` in the board's folder (`phoneBoard.folder`, or `~/tools/session-board` when it exists; otherwise it asks). The link and code work once, within 10 minutes, and a new link cancels the previous one. They are shown in the panel only, never saved or logged.

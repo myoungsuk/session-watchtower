@@ -33,7 +33,8 @@ fs.writeFileSync(path.join(folder, 'cli.js'), [
 ].join('\n'));
 
 let servers = [];
-test.after(() => { for (const s of servers) s.close(); });
+let extRef = null;
+test.after(() => { for (const s of servers) s.close(); if (extRef) { try { extRef.deactivate(); } catch { /* 이미 꺼짐 */ } } });
 
 test('보드 알아보기: X-Session-Board 머리가 있어야 보드, 이름은 디코딩, 다른 서버·닫힌 포트는 아님', async () => {
   const a = await serve(board('95번 서버'));
@@ -76,6 +77,7 @@ test('확장: 보드가 켜져 있으면 세션 창에 단추, 누르면 QR·코
     config: { attentionMarkerDir: markers, pollSeconds: 2, notifyStuckMinutes: 0, notifyWaiting: false, 'phoneBoard.ports': [a.address().port, b.address().port] },
   });
   const ext = require('../extension.js');
+  extRef = ext;
   ext.activate(stub.context);
   const web = stub.openWebview('claudeSessionChanges.sessions');
   web.send({ type: 'ready' });
@@ -91,6 +93,8 @@ test('확장: 보드가 켜져 있으면 세션 창에 단추, 누르면 QR·코
   assert.ok(panel, '패널');
   const html = panel.webview.html;
   assert.match(html, /<svg /);
+  assert.match(html, /The phone board shows the sessions on this computer in your phone&#39;s browser/, '무엇인지 설명');
+  assert.match(html, /nothing is published to the internet/);
   assert.match(html, /AB12CD34/);
   assert.match(html, /until 4:50:12/);
   assert.match(html, /More than one board answers here \(95번 서버, 85번 PC\)\. This link is for the board installed in /, '보드가 둘이면 어느 보드 링크인지 밝힌다');
@@ -111,6 +115,8 @@ test('확장: 보드가 켜져 있으면 세션 창에 단추, 누르면 QR·코
   const until3 = Date.now() + 9000;
   while (Date.now() < until3 && !stub.calls.some((c) => c[0] === 'warn')) await sleep(50);
   assert.match(stub.calls.find((c) => c[0] === 'warn')[1], /No phone board is running on this computer/);
+  assert.match(stub.calls.find((c) => c[0] === 'warn')[1], /a separate program \(session-board\)/, '보드가 없을 때 무엇인지 알려 준다');
+  assert.deepStrictEqual(stub.calls.find((c) => c[0] === 'warn')[2], ['How it works']);
   assert.strictEqual(web.lastPayload().phone, '');
   ext.deactivate();
 });

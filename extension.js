@@ -3770,7 +3770,11 @@ async function phoneBoardPair() {
   }
   const boards = await refreshPhoneBoards(true);
   if (!boards.length) {
-    vscode.window.showWarningMessage(L('No phone board is running on this computer (checked port {0}). Start the board first.', (phoneboard.localRun() ? [phoneboard.localRun().port] : cfg().phoneBoardPorts).join(', ')));
+    // 처음 쓰는 사람도 알 수 있게: 무엇인지, 무엇이 필요한지, 더 읽을 곳
+    const more = L('How it works');
+    const b = await vscode.window.showWarningMessage(L('No phone board is running on this computer (checked port {0}). Start the board first.', (phoneboard.localRun() ? [phoneboard.localRun().port] : cfg().phoneBoardPorts).join(', '))
+      + ' ' + L('The phone board is a separate program (session-board) that shows these sessions, their changed files and conversations in your phone\'s browser; this extension only finds it and makes the link.'), more);
+    if (b === more) vscode.commands.executeCommand('extension.open', ctx.extension.id);
     return;
   }
   const r = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: L('Making a link for your phone…') }, () => phoneboard.pair(folder));
@@ -3826,7 +3830,8 @@ function phoneHtml(webview, r, boards, folder) {
   ol { padding-left: 20px; margin: 8px 0; } li { margin: 3px 0; }
 </style></head><body>
 <h1>${esc(L('Open the phone board on your phone'))}</h1>
-<div class="muted">${esc(L('Board: {0}', names))}</div>
+<p>${esc(L('The phone board shows the sessions on this computer in your phone\'s browser: which one is working or waiting for you, what each changed, and the conversation. It is read-only; to answer a session, use Claude Code itself (or its Remote Control).'))}</p>
+<div class="muted">${esc(L('Board: {0}', names))} · ${esc(L('Reachable from the phone over your private network (Tailscale); nothing is published to the internet.'))}</div>
 <div class="wrap">
   <div class="qr">${svg}</div>
   <div>

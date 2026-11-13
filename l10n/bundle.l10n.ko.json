@@ -399,5 +399,9 @@
   "Works once, until {0}. A new link makes this one stop working. Do not send it to anyone else.": "{0}까지 한 번만 쓸 수 있습니다. 새로 만들면 이 링크는 못 씁니다. 다른 사람에게 보내지 마세요.",
   "Works once, within 10 minutes. A new link makes this one stop working. Do not send it to anyone else.": "10분 안에 한 번만 쓸 수 있습니다. 새로 만들면 이 링크는 못 씁니다. 다른 사람에게 보내지 마세요.",
   "This link only opens on this computer, because the board found no private network address. Turn on Tailscale serve for the board (or set BOARD_PUBLIC_URL) so the phone can reach it.": "보드가 사설망 주소를 찾지 못해 이 링크는 이 컴퓨터에서만 열립니다. 휴대폰에서 열려면 보드에 Tailscale serve를 켜세요(또는 BOARD_PUBLIC_URL을 정하세요).",
-  "More than one board answers here ({0}). This link is for the board installed in {1}.": "여기서 보드가 둘 이상 답합니다({0}). 이 링크는 {1}에 설치된 보드의 것입니다."
+  "More than one board answers here ({0}). This link is for the board installed in {1}.": "여기서 보드가 둘 이상 답합니다({0}). 이 링크는 {1}에 설치된 보드의 것입니다.",
+  "How it works": "설명 보기",
+  "The phone board is a separate program (session-board) that shows these sessions, their changed files and conversations in your phone's browser; this extension only finds it and makes the link.": "휴대폰 보드는 이 세션들의 상태·바뀐 파일·대화를 휴대폰 브라우저로 보여 주는 별도 프로그램(session-board)입니다. 이 확장은 보드를 찾아 연결 링크만 만듭니다.",
+  "The phone board shows the sessions on this computer in your phone's browser: which one is working or waiting for you, what each changed, and the conversation. It is read-only; to answer a session, use Claude Code itself (or its Remote Control).": "휴대폰 보드는 이 컴퓨터의 세션을 휴대폰 브라우저로 보여 줍니다. 어느 세션이 일하는지·나를 기다리는지, 무엇을 바꿨는지, 대화 내용을 봅니다. 보기만 하는 화면이라, 세션에 답할 때는 Claude Code(또는 Remote Control)를 씁니다.",
+  "Reachable from the phone over your private network (Tailscale); nothing is published to the internet.": "휴대폰은 사설망(Tailscale)으로 접속합니다. 인터넷에 공개되지 않습니다."
 }

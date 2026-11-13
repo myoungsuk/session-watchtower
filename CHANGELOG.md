@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.28.1
+
+- **The phone board explains itself.** The phone panel now says what the phone board shows (sessions, changes and conversations, read-only) and that the phone reaches it over the private network only. When no board runs, the command says what the phone board is and offers *How it works*. The README states that session-board is a separate program that is not published yet.
+
 ## 0.28.0
 
 - **Phone board.** When a phone board (session-board, a separate program) runs on this computer, the Sessions view shows a phone button. It opens a panel with a QR code, link and code for your phone, made by the board's own `cli.js pair` (once, within 10 minutes; never saved). Watchtower only checks whether the board is running and never starts or stops it. Settings `phoneBoard.ports` and `phoneBoard.folder`.
