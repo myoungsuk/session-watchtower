@@ -54,5 +54,6 @@
   "command.addToGroup": "Put in a group",
   "command.removeFromGroup": "Remove from group",
   "command.setSessionRole": "Set role in group",
-  "command.planTeam": "Plan a team: copy a request for how many sessions and which roles"
+  "command.planTeam": "Start a team with a lead session (copy the request)",
+  "config.boardPageSize": "How many rows of Instructions and results a group board shows per page."
 }

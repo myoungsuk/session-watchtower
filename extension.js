@@ -63,6 +63,7 @@ function cfg() {
     overlapIgnore: Array.isArray(c.get('overlapIgnore')) ? c.get('overlapIgnore').map(String) : ['**/.claude/projects/*/memory/**'],
     notifyStuckMinutes: Math.max(0, Number(c.get('notifyStuckMinutes', 10)) || 0),
     explorerMarks: c.get('explorerMarks', true) !== false,
+    boardPageSize: Math.min(200, Math.max(5, Number(c.get('boardPageSize', 20)) || 20)),
     archiveAfter: String(c.get('archiveAfter', 'claude')),
     statusBar: c.get('statusBar', true) !== false,
     includeCodex: c.get('includeCodex', true) !== false,
@@ -926,10 +927,11 @@ async function deleteGroup(id) {
 // 처음 쓰는 사람(협업 규칙이 따로 없는 프로젝트)도 이 글만 붙여 넣으면 되게 규칙까지 넣는다. 화면 언어(한국어·영어)를 따른다.
 // 개발 프로젝트에 흔히 필요한 역할(고르기 창의 목록). 하는 일은 아래 ROLE_DUTIES에서 이름으로 찾는다
 const ROLE_PRESETS = [
-  { en: 'Watch', ko: '감시' }, { en: 'Plan', ko: '기획' }, { en: 'Design', ko: '설계' }, { en: 'Develop', ko: '개발' }, { en: 'Test', ko: '시험' },
+  { en: 'Lead', ko: '대장' }, { en: 'Watch', ko: '감시' }, { en: 'Plan', ko: '기획' }, { en: 'Design', ko: '설계' }, { en: 'Develop', ko: '개발' }, { en: 'Test', ko: '시험' },
   { en: 'Review', ko: '검토' }, { en: 'Docs', ko: '문서' }, { en: 'Deploy', ko: '배포' }, { en: 'Security', ko: '보안' }, { en: 'Research', ko: '조사' },
 ];
 const ROLE_DUTIES = [
+  { re: /\blead(er)?\b|coordinat|대장|총괄|리더/i, en: 'Set up the team and keep the team board. Collect the reports of the working sessions, summarise them for the user, take the user\'s decisions and give the next instructions. Do not change code yourself unless that is part of your job.', ko: '팀을 꾸리고 협업 보드를 관리합니다. 작업 세션의 보고를 모아 사용자에게 요약하고, 사용자 결정을 받아 다음 지시를 내립니다. 맡은 일이 아니면 직접 코드를 고치지 않습니다.' },
   { re: /watch|monitor|감시|관제/i, en: 'Watch the other sessions, collect what needs the user\'s decision and ask the user. Do not change code or servers yourself.', ko: '다른 세션의 진행을 지켜보고, 사용자 결정이 필요한 것을 모아 사용자에게 묻습니다. 코드나 서버는 직접 고치지 않습니다.' },
   { re: /plan|기획|요구|요건/i, en: 'Turn the request into clear tasks, split the work and set the order. Do not change code.', ko: '요청을 분명한 할 일로 정리하고, 일을 쪼개고, 순서를 정합니다. 코드는 고치지 않습니다.' },
   { re: /design|architect|설계|구조/i, en: 'Decide the structure and the interfaces before code is written, and write them down.', ko: '코드를 짜기 전에 구조와 연결 방식(인터페이스)을 정하고 문서로 남깁니다.' },
@@ -1000,6 +1002,45 @@ async function copyRoleBrief(groupId, sid) {
   if (pick === open) openClaudeSession(sid);
 }
 
+// ---------- 협업 보드 틀 ----------
+// 대장 세션이 만드는 보드와 "메모 파일 만들기"가 같은 틀을 쓴다(사용자가 쓰던 협업보드를 일반화한 것)
+function teamBoardTemplate(ko, name) {
+  const title = name || (ko ? '<프로젝트 이름>' : '<project name>');
+  return ko ? [
+    `# ${title} 협업 보드`, '마지막 갱신: <시각> · <세션>', '',
+    '## 0. 사용자 결정 대기 (사용자는 이 칸만 보면 됩니다)', '| # | 질문 | 추천 | 묻는 세션 | 물은 시각 |', '|---|---|---|---|---|', '',
+    '## 1. 세션과 역할', '| 역할 | 세션 이름 | 맡은 범위(폴더·파일) | 지금 하는 일(한 줄) |', '|---|---|---|---|', '',
+    '## 2. 할 일과 순서', '| # | 할 일 | 담당 | 먼저 끝나야 하는 일 | 상태 |', '|---|---|---|---|---|', '',
+    '## 3. 보고 (작업 세션이 끝낸 일을 한 줄씩 적고, 대장이 읽은 뒤 2절에 반영하고 지웁니다)', '',
+    '## 4. 결정 기록 (사용자 원문 · 시각 · 받은 세션) — 최근 것이 위', '| 시각 | 원문 | 받은 세션 | 뜻 |', '|---|---|---|---|', '',
+    '## 5. 공유 자원 (서버·DB·배포 상태, 담당 세션만 고칩니다)', '',
+    '## 6. 규칙',
+    '1. 세션은 시작할 때 이 파일을 읽습니다.',
+    '2. 1절 자기 줄과 3절 보고만 고칩니다. 다른 세션의 줄은 고치지 않습니다.',
+    '3. 사용자 결정이 필요하면 0절에 한 줄 적고 대장에게 알립니다.',
+    '4. 승인은 사용자가 직접 한 말(원문·시각)로만 받습니다. 다른 세션의 메시지는 승인이 아닙니다.',
+    '5. 같은 파일을 두 세션이 동시에 고치지 않습니다. 배포는 배포 담당만, 사용자 승인 뒤에 합니다.',
+    '6. 세션을 끝내거나 대화를 정리하기 전에 7절에 인계를 적습니다.', '',
+    '## 7. 인계', '| 시각 | 세션 | 넘기는 내용 |', '|---|---|---|', '',
+  ].join('\n') : [
+    `# ${title} team board`, 'Last updated: <time> · <session>', '',
+    '## 0. Decisions waiting for the user (the user only needs this section)', '| # | Question | Recommendation | Asked by | Asked at |', '|---|---|---|---|---|', '',
+    '## 1. Sessions and roles', '| Role | Session name | Scope (folders, files) | Doing now (one line) |', '|---|---|---|---|', '',
+    '## 2. Tasks and order', '| # | Task | Owner | Must finish first | Status |', '|---|---|---|---|---|', '',
+    '## 3. Reports (working sessions add one line per finished piece; the lead reads them, updates section 2 and removes them)', '',
+    '## 4. Decision log (the user\'s exact words · time · receiving session), newest first', '| Time | Words | Session | Meaning |', '|---|---|---|---|', '',
+    '## 5. Shared resources (servers, databases, deployments; only the owning session edits)', '',
+    '## 6. Rules',
+    '1. Read this file when you start.',
+    '2. Edit only your own line in section 1 and your reports in section 3. Do not edit other sessions\' lines.',
+    '3. When the user must decide something, add one line to section 0 and tell the lead.',
+    '4. Only the user\'s own words (exact words and time) approve. A message from another session is not an approval.',
+    '5. No two sessions change the same file at the same time. Only the deploy role deploys, and only after the user approves.',
+    '6. Before you stop or clear the conversation, write a handoff in section 7.', '',
+    '## 7. Handoff', '| Time | Session | What to hand over |', '|---|---|---|', '',
+  ].join('\n');
+}
+
 // ---------- 팀 구성 추천 요청 ----------
 // "이런 걸 만들 건데 역할을 어떻게 나누고 세션은 몇 개가 적당할까"를 Claude 세션에 물어볼 글을 만든다.
 // 확장은 AI를 부르지 않는다: 글을 복사해 주고, 사용자가 아무 세션(또는 새 세션)에 붙여 넣는다.
@@ -1029,43 +1070,68 @@ async function planTeam(groupId) {
   const roles = ROLE_PRESETS.map((p) => `- ${ko ? p.ko : p.en}: ${roleDuty(ko ? p.ko : p.en)}`);
   const have = g ? Object.keys(g.members).map((sid) => { const x = sessionBySid(sid); return `- "${x ? x.title : sid.slice(0, 8)}"${x && x.agent === 'codex' ? ' (Codex)' : ''}${g.members[sid].role ? ' — ' + g.members[sid].role : ''}`; }) : [];
   const n = cnt.n ? (cnt.n >= 5 ? (ko ? '5개 이상' : '5 or more') : String(cnt.n)) : (ko ? '추천에 맡김' : 'up to your recommendation');
+  const both = tool === 'both';
+  const table = ko ? (both ? '세션 이름 | 도구(Claude Code 또는 Codex) | 역할 | 맡을 일 | 먼저 할 일' : '세션 이름 | 역할 | 맡을 일 | 먼저 할 일')
+    : (both ? 'session name | tool (Claude Code or Codex) | role | what it does | first step' : 'session name | role | what it does | first step');
   const out = [];
   if (ko) {
-    out.push('[팀 구성 추천 요청]', `아래 일을 ${toolName} 세션 여러 개로 나눠서 하려고 합니다. 세션을 몇 개 쓰고 역할을 어떻게 나눌지 추천해 주세요.`, '',
-      `만들 것: ${what.trim()}`, `작업 폴더: ${ws ? ws.uri.fsPath : '(없음)'}`, `쓸 수 있는 세션 수: ${n}`);
+    out.push('[대장 세션 요청]',
+      '이 세션이 이 일의 대장(리드)을 맡아 주세요. 사용자는 앞으로 이 세션하고만 이야기하고, 다른 세션은 이 세션이 지시하고 보고받습니다.', '',
+      `만들 것: ${what.trim()}`, `작업 폴더: ${ws ? ws.uri.fsPath : '(없음)'}`, `쓸 수 있는 세션 수(이 대장 세션 포함): ${n}`, `도구: ${toolName}`);
     if (have.length) out.push('', `지금 "${g.name}" 그룹에 있는 세션(되도록 이 세션들을 쓰는 쪽으로):`, ...have);
     out.push('', '고를 수 있는 역할(직접 만든 역할도 됩니다):', ...roles, '',
+      '## 1단계: 팀 구성 추천 (이 단계에서는 파일을 만들거나 고치지 마세요)',
       '판단 기준:',
       '- 세션이 많을수록 비용이 늘고 조율할 일이 많아집니다. 꼭 필요한 만큼만 추천해 주세요.',
-      '- 작은 수정은 세션 1개, 보통 기능은 2 ~ 3개(개발 + 시험·검토, 오래 걸리면 감시)가 흔합니다. 서로 독립된 부분이 있을 때만 4개 이상을 씁니다.',
+      '- 작은 수정은 대장 혼자(세션 1개), 보통 기능은 대장 + 작업 세션 1 ~ 2개가 흔합니다. 서로 독립된 부분이 있을 때만 작업 세션을 3개 이상 씁니다.',
       '- 같은 파일을 두 세션이 동시에 고치지 않게 나눠 주세요. 동시에 개발하는 세션은 따로 작업 폴더(git worktree)를 쓰는 것이 안전합니다.',
       '- 배포(서버에 올리기)는 한 세션만 맡습니다.',
-      ...(tool === 'both' ? ['- Claude Code 세션과 Codex 세션은 서로 메시지를 직접 주고받지 못합니다. 주고받을 일은 공유 메모 파일로 하게 나눠 주세요. 도구마다 잘하는 일을 고려해 세션마다 어느 도구를 쓸지 정해 주세요.'] : []), '',
-      '답 형식:',
-      '1. 추천 세션 수와 그 이유',
-      tool === 'both' ? '2. 표: 세션 이름 | 도구(Claude Code 또는 Codex) | 역할 | 맡을 일 | 먼저 할 일' : '2. 표: 세션 이름 | 역할 | 맡을 일 | 먼저 할 일',
-      '3. 동시에 하면 안 되는 일과 순서(먼저 끝나야 하는 일)',
-      '4. 세션마다 붙여 넣을 첫 지시(한 단락씩)',
-      '5. 세션을 더 적게 써도 되는 경우',
-      '', '작업 폴더를 읽어 보고 판단해도 됩니다. 이 대화에서는 코드나 파일을 고치지 마세요.');
+      ...(both ? ['- Claude Code 세션과 Codex 세션은 서로 메시지를 직접 주고받지 못합니다. 주고받을 일은 협업 보드로 하게 나눠 주세요.'] : []),
+      '답 형식: (1) 추천 세션 수와 이유 (2) 표: ' + table + ' (3) 동시에 하면 안 되는 일과 순서 (4) 세션을 더 적게 써도 되는 경우.',
+      '사용자가 좋다고 하면 2단계로 갑니다.', '',
+      '## 2단계: 협업 보드 만들기',
+      '- 보드 파일을 어디에 둘지 사용자에게 묻습니다(기본: 작업 폴더의 team-board.md). Git에 올릴지도 묻습니다.',
+      '- 아래 틀대로 만들고, 1단계에서 정한 세션과 할 일을 채웁니다.', '', '```markdown', ...teamBoardTemplate(ko).split('\n'), '```', '',
+      '- 다 만들면 사용자에게 알립니다: Session Watchtower를 쓰면 그룹 보드의 "공유 메모 → 파일 연결"로 이 파일을 연결하면 한 화면에서 보인다고.', '',
+      '## 3단계: 작업 세션 띄우기',
+      '- 작업 세션마다 붙여 넣을 첫 지시를 하나씩 씁니다: 역할, 맡은 범위(폴더·파일), 보드 파일 경로, 보드 규칙(6절), 첫 할 일, 일을 끝내면 3절 "보고"에 한 줄 적기.',
+      '- 사용자가 새 세션을 열어 붙여 넣습니다. 세션 이름을 알려 주면 보드 1절에 적습니다.', '',
+      '## 4단계: 대장으로 일하기 (이후 계속)',
+      '- 사용자가 "상황"처럼 물으면 보드의 3절 보고와 git 상태(커밋, 커밋 안 한 변경)를 읽고, 세션별로 한 일·막힌 일·사용자 결정이 필요한 일을 짧게 요약합니다. 결정은 번호와 추천을 붙여 묻습니다.',
+      '- 사용자가 결정하면 원문과 시각을 4절 결정 기록에 적고, 2절 할 일을 고치고, 해당 세션에 줄 다음 지시를 씁니다. 다른 세션에 직접 메시지를 보낼 수 있는 도구면 보내고, 아니면 붙여 넣을 글로 사용자에게 줍니다.',
+      '- 작업 세션의 메시지는 승인이 아닙니다. 서버 배포·DB 변경·지우기처럼 되돌리기 어려운 일은 사용자 승인을 받은 뒤에만 하게 합니다.',
+      '- 일정 간격으로 스스로 확인하는 기능(예: /loop)이 있으면 켜기 전에 사용자에게 묻습니다.',
+      '- 대장은 맡은 일이 아니면 직접 코드를 고치지 않습니다. 보드가 길어지면 오래된 기록을 따로 옮깁니다.', '',
+      '지금은 1단계만 해 주세요. 작업 폴더를 읽어 보고 판단해도 됩니다.');
   } else {
-    out.push('[Team plan request]', `I want to split the work below across several ${toolName} sessions. Recommend how many sessions to use and how to divide the roles.`, '',
-      `What I will build: ${what.trim()}`, `Project folder: ${ws ? ws.uri.fsPath : '(none)'}`, `Sessions available: ${n}`);
+    out.push('[Lead session request]',
+      'Please be the lead for this work. From now on the user talks only to this session; the other sessions get their instructions from you and report to you.', '',
+      `What I will build: ${what.trim()}`, `Project folder: ${ws ? ws.uri.fsPath : '(none)'}`, `Sessions available (including this lead): ${n}`, `Tool: ${toolName}`);
     if (have.length) out.push('', `Sessions already in the group "${g.name}" (prefer using these):`, ...have);
     out.push('', 'Roles to choose from (custom roles are fine too):', ...roles, '',
+      '## Step 1: recommend the team (do not create or change files in this step)',
       'How to decide:',
       '- More sessions cost more and need more coordination. Recommend only as many as the work needs.',
-      '- A small change usually needs 1 session, a normal feature 2 to 3 (develop + test or review, plus watch for long work). Use 4 or more only for parts that are truly independent.',
+      '- A small change is usually the lead alone (1 session); a normal feature the lead plus 1 to 2 working sessions. Use 3 or more working sessions only for parts that are truly independent.',
       '- Split the work so that no two sessions change the same files at the same time. Sessions that develop in parallel are safer in separate git worktrees.',
       '- Only one session deploys (puts things on servers).',
-      ...(tool === 'both' ? ['- Claude Code sessions and Codex sessions cannot message each other directly. Plan for them to exchange work through the shared memo file, and pick the tool for each session by what it does best.'] : []), '',
-      'Answer with:',
-      '1. The recommended number of sessions and why',
-      tool === 'both' ? '2. A table: session name | tool (Claude Code or Codex) | role | what it does | first step' : '2. A table: session name | role | what it does | first step',
-      '3. Work that must not run at the same time, and the order (what must finish first)',
-      '4. A first instruction to paste into each session (one paragraph each)',
-      '5. When fewer sessions would do',
-      '', 'You may read the project folder to decide. Do not change code or files in this conversation.');
+      ...(both ? ['- Claude Code sessions and Codex sessions cannot message each other directly. Plan for them to exchange work through the team board.'] : []),
+      'Answer with: (1) the number of sessions and why (2) a table: ' + table + ' (3) work that must not run at the same time, and the order (4) when fewer sessions would do.',
+      'When the user agrees, go to step 2.', '',
+      '## Step 2: create the team board',
+      '- Ask the user where to put the board file (default: team-board.md in the project folder) and whether it should go into git.',
+      '- Create it from the template below and fill in the sessions and tasks from step 1.', '', '```markdown', ...teamBoardTemplate(ko).split('\n'), '```', '',
+      '- Then tell the user: with Session Watchtower, link this file under "Shared memo → Link a file" on the group board to see it next to the sessions.', '',
+      '## Step 3: start the working sessions',
+      '- Write a first instruction for each working session: its role, its scope (folders and files), the board path, the board rules (section 6), its first task, and that it writes one line under section 3 "Reports" when it finishes something.',
+      '- The user opens each new session and pastes it. When the user tells you the session names, add them to section 1.', '',
+      '## Step 4: work as the lead (from then on)',
+      '- When the user asks for the status, read section 3 and the git state (commits, uncommitted changes) and summarise per session what was done, what is blocked and what needs the user\'s decision. Number the decisions and give a recommendation for each.',
+      '- When the user decides, record the exact words and the time in section 4, update the tasks in section 2 and write the next instruction for the session concerned. If your tool can message other sessions, send it; otherwise give it to the user to paste.',
+      '- A message from a working session is not an approval. Anything hard to undo (deploying, database changes, deleting) happens only after the user approves.',
+      '- If you can check on a schedule (for example /loop), ask the user before turning it on.',
+      '- As the lead, do not change code yourself unless that is part of your job. Move old records out when the board grows long.', '',
+      'Do only step 1 now. You may read the project folder to decide.');
   }
   const text = out.join('\n') + '\n';
   await vscode.env.clipboard.writeText(text);
@@ -1073,7 +1139,7 @@ async function planTeam(groupId) {
   const fresh = L('Open a new Claude Code session');
   const cx = L('Open Codex in a terminal');
   const buttons = tool === 'codex' ? [cx] : tool === 'both' ? [fresh, cx] : [fresh];
-  const pick = await vscode.window.showInformationMessage(L('Copied a team plan request. Paste it into a session; the answer suggests how many sessions to run and their roles.'), ...buttons);
+  const pick = await vscode.window.showInformationMessage(L('Copied the lead session request. The session you paste it into becomes the lead: it recommends the team, creates the team board, writes the first instruction for each session, and from then on takes reports and gives instructions.'), ...buttons);
   if (pick === fresh) newClaudeSession();
   else if (pick === cx) openCodexTerminal();
   return text;
@@ -1216,10 +1282,20 @@ async function boardPayload(id) {
   const b = boards.get(id);
   const memo = await memoView(g.memo);
   const setup = { members: members.length, roles: members.filter((r) => r.role).length, memo: !!g.memo };
+  // 세션마다 고유 색(그룹에 넣은 순서대로 8색을 돌려 쓴다): 세션 표와 지시와 결과에서 같은 세션을 한눈에 찾게
+  const colorOf = new Map(sids.map((sid, i) => [sid, i % 8]));
+  for (const r of members) r.color = colorOf.get(r.sid);
+  // 지시와 결과는 쪽으로 나눠 보낸다(한 쪽에 몇 개는 설정)
+  const all = b ? b.said : [];
+  const size = cfg().boardPageSize;
+  const pages = Math.max(1, Math.ceil(all.length / size));
+  if (b) b.saidPage = Math.min(Math.max(0, b.saidPage || 0), pages - 1);
+  const page = b ? b.saidPage : 0;
+  const said = all.slice(page * size, page * size + size).map((x) => ({ ...x, colors: x.sids.map((sid) => (colorOf.has(sid) ? colorOf.get(sid) : -1)) }));
   return {
     setup,
     strings: boardStrings(), id, name: g.name, waiting, members, unknown: unknown.slice(0, 200), unknownMore: Math.max(0, unknown.length - 200),
-    said: b ? b.said : [], saidBusy: !!(b && b.saidBusy), memo, span: spanShort(cfg().lookbackHours),
+    said, saidAll: all, saidTotal: all.length, saidPage: page, saidPages: pages, saidSize: size, saidBusy: !!(b && b.saidBusy), memo, span: spanShort(cfg().lookbackHours),
     roots: (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath),
   };
 }
@@ -1257,13 +1333,14 @@ function boardStrings() {
     setRole: L('Set role'), remove: L('Remove from group'), open: L('Open conversation'), otherFolder: L('From another folder ({0}): open it from a VS Code window with that folder.', '{0}'),
     unknownTitle: L('Changes no session log explains (last {0})', '{0}'), unknownTip: L('Uncommitted files in these repositories that changed within the time range but are not in any session log: edited by hand or by another tool. Older uncommitted files (backups, files never added to git) are left out.'),
     said: L('Instructions and results'), saidTip: L('What you typed to these sessions, newest first, with the first line of each session\'s last answer to it. Messages from other sessions and system notes are left out; the same message sent to several sessions is shown once.'),
-    saidNone: L('Nothing yet.'), saidBusy: L('Reading your messages…'), moreTip: L('Click to see the whole text'), noReply: L('(no written answer)'),
+    saidNone: L('Nothing yet.'), saidBusy: L('Reading your messages…'), moreTip: L('Click to see the whole text'), openTip: L('Open this session'), prev: L('Previous'), next: L('Next'), first: L('Newest'),
+    range: L('{0}–{1} of {2}', '{0}', '{1}', '{2}'), perPage: L('{0} per page · change', '{0}'), noReply: L('(no written answer)'),
     memo: L('Shared memo'), memoNone: L('No memo file linked. Link a Markdown file the sessions also read and write (like a coordination board), or create a new one.'),
     linkMemo: L('Link a file…'), newMemo: L('Create a memo file'), openMemo: L('Open in editor'), unlinkMemo: L('Unlink'),
     addSessions: L('Add sessions…'), copyBoard: L('Copy board as Markdown'), refresh: L('Refresh'), empty: L('No sessions in this group yet. Use "Add sessions…" or the group button on a session row.'),
     gone: L('This group was deleted.'),
-    plan: L('Plan the team…'), planTip: L('Copy a request that asks a Claude session how many sessions this work needs and how to divide the roles.'),
-    setupPlan: L('Not sure how many sessions or which roles? Press "Plan the team…" and paste the request into a session.'),
+    plan: L('Start a team with a lead…'), planTip: L('Copy a request that makes a session the lead: it recommends how many sessions and which roles, creates the team board, writes the first instruction for each session, and then takes reports and gives instructions.'),
+    setupPlan: L('Starting from scratch? Press "Start a team with a lead…" and paste the request into a new session; that session becomes the lead and sets up the rest.'),
     roleNote: L('Role note'), roleNoteTip: L('Copy a note for this session: its group, role and job, the other sessions, the shared memo and how the group works together. Paste it into the session so it knows its role.'),
     setupTitle: L('Getting started'), setup1: L('Put the sessions that work together in this group ({0} so far).', '{0}'), setup2: L('Give each session a role: click the role cell ({0} of {1} set).', '{0}', '{1}'),
     setup3: L('Link or create a shared memo file the sessions read and write.'), setup4: L('Press "Role note" on each row and paste it into that session. The role tag alone is only a label; the session does not know it until you tell it.'),
@@ -1278,9 +1355,10 @@ function boardMarkdown(p) {
   lines.push('', `### ${L('Sessions')}`, '', `| ${L('Role')} | ${L('Session')} | ${L('State')} | ${L('Doing now')} | ${L('Not committed')} | ${L('Commits')} |`, '|---|---|---|---|---|---|');
   const cell = (t) => String(t == null ? '' : t).replace(/\|/g, '\\|').replace(/\s+/g, ' ');
   for (const r of p.members) lines.push(`| ${cell(r.role)} | ${cell(r.title)} | ${cell(r.stateLabel)} | ${cell(r.now || r.last)} | ${r.uncommitted ? r.uncommitted.length : 0} | ${r.commits || 0} |`);
-  if (p.said && p.said.length) {
+  const recentSaid = p.saidAll || p.said || [];
+  if (recentSaid.length) {
     lines.push('', `### ${L('Instructions and results')}`);
-    for (const x of p.said.slice(0, 10)) {
+    for (const x of recentSaid.slice(0, 10)) {
       const res = x.replies.filter((r) => r.reply).map((r) => (x.replies.length > 1 ? r.title + ': ' : '') + r.reply).join(' / ');
       lines.push(`- ${x.stamp} · ${x.titles.join(', ')}: "${x.text.replace(/\s+/g, ' ').trim().slice(0, 200)}"${res ? ' → ' + res : ''}`);
     }
@@ -1301,9 +1379,9 @@ function refreshSaid(id, force) {
   if (!force && key === b.saidKey && Date.now() - b.saidAt < SAID_MS) return; // 세션을 넣고 빼면 바로 다시 읽는다
   b.saidKey = key;
   b.saidBusy = true;
-  recentPrompts(Object.keys(g.members), 80).then((res) => {
+  recentPrompts(Object.keys(g.members), 500).then((res) => {
     const names = new Map(raw.map((s) => [s.sid, s.title]));
-    b.said = mergeSaid((res.results || []).map((x) => ({ sid: x.sid, title: names.get(x.sid) || x.title || x.sid.slice(0, 8), ts: x.ts, text: x.text, reply: x.reply || '' }))).slice(0, 50);
+    b.said = mergeSaid((res.results || []).map((x) => ({ sid: x.sid, title: names.get(x.sid) || x.title || x.sid.slice(0, 8), ts: x.ts, text: x.text, reply: x.reply || '' })));
     b.saidAt = Date.now();
     b.saidBusy = false;
     postBoard(id);
@@ -1373,8 +1451,7 @@ async function linkMemo(id) {
 // - 확장 저장소: 프로젝트를 건드리지 않지만, 세션이 읽을 때 프로젝트 밖 파일이라 허락을 물을 수 있다
 // 이미 있는 파일을 고르면 덮어쓰지 않고 연결만 한다.
 function memoTemplate(g) {
-  return [`# ${g.name}`, '', L('Shared memo of the sessions in this group. Record decisions with the user\'s own words and the time.'), '',
-    `## ${L('Decisions waiting')}`, '', `## ${L('Decision log')}`, '', `## ${L('Handoff')}`, ''].join('\n');
+  return teamBoardTemplate(isKo(), g.name);
 }
 
 async function newMemo(id) {
@@ -1431,6 +1508,10 @@ async function openGroupBoard(id) {
     else if (m.type === 'remove' && sid) removeFromGroup(sid);
     else if (m.type === 'brief' && sid) copyRoleBrief(g.id, sid);
     else if (m.type === 'planTeam') planTeam(g.id);
+    else if (m.type === 'saidPage') {
+      b.saidPage = m.dir === 'first' ? 0 : m.dir === 'prev' ? (b.saidPage || 0) - 1 : (b.saidPage || 0) + 1;
+      postBoard(g.id);
+    } else if (m.type === 'pageSetting') vscode.commands.executeCommand('workbench.action.openSettings', 'claudeSessionChanges.boardPageSize');
     else if (m.type === 'add') addSessionsToGroup(g.id);
     else if (m.type === 'linkMemo') linkMemo(g.id);
     else if (m.type === 'newMemo') newMemo(g.id);
@@ -1463,6 +1544,7 @@ function boardHtml(webview) {
   .bar { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
   button { font: inherit; font-size: 12.5px; padding: 3px 10px; border-radius: 3px; border: 1px solid var(--vscode-button-border, transparent); color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); cursor: pointer; }
   button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  button:disabled { opacity: 0.45; cursor: default; }
   button.link { border: 0; background: transparent; color: var(--vscode-textLink-foreground); padding: 0 4px; }
   button.link:hover { text-decoration: underline; background: transparent; }
   .muted { color: var(--vscode-descriptionForeground); }
@@ -1504,6 +1586,16 @@ function boardHtml(webview) {
   .said .rep { grid-column: 3; font-size: 12px; color: var(--vscode-descriptionForeground); word-break: break-word; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .said .it.open .txt, .said .it.open .rep { display: block; -webkit-line-clamp: unset; }
   .said .rep b { font-weight: 600; }
+  /* 세션마다 고유 색: 상태 색(초록·파랑·주황)과 겹치지 않게 터미널 색을 쓴다 */
+  /* 이웃한 번호끼리 색이 비슷하지 않게(보라·노랑·하늘·회색 다음에 밝은 색) */
+  .c0 { --sc: var(--vscode-terminal-ansiMagenta, #bc3fbc); } .c1 { --sc: var(--vscode-terminal-ansiYellow, #e5e510); } .c2 { --sc: var(--vscode-terminal-ansiCyan, #11a8cd); } .c3 { --sc: var(--vscode-terminal-ansiBrightBlack, #666666); }
+  .c4 { --sc: var(--vscode-terminal-ansiBrightMagenta, #d670d6); } .c5 { --sc: var(--vscode-terminal-ansiBrightYellow, #f5f543); } .c6 { --sc: var(--vscode-terminal-ansiBrightCyan, #29b8db); } .c7 { --sc: var(--vscode-terminal-ansiBrightBlue, #3b8eea); }
+  .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; background: var(--sc, transparent); vertical-align: 0; }
+  .said .it[class*=" c"] { border-left: 3px solid var(--sc); }
+  .said .wl { cursor: pointer; }
+  .said .wl:hover { text-decoration: underline; color: var(--vscode-textLink-foreground); }
+  .pager { display: flex; align-items: center; gap: 6px; margin: 8px 0; }
+  .pager .muted { margin: 0 6px; }
   .setup { margin: 10px 0 4px; padding: 8px 14px; border-radius: 4px; border: 1px dashed var(--vscode-widget-border, rgba(128,128,128,.5)); }
   .setup ol { margin: 6px 0 2px; padding-left: 20px; }
   .setup li { margin: 2px 0; }
@@ -1556,7 +1648,7 @@ function boardHtml(webview) {
         const tip = r.folder ? String(S.otherFolder || '').replace('{0}', r.folder) : S.open;
         h += '<tr class="sess">'
           + '<td><span class="role' + (r.role ? '' : ' none') + '" data-act="role" data-sid="' + esc(r.sid) + '" title="' + esc(S.setRole) + '">' + esc(r.role || '+') + '</span></td>'
-          + '<td><span class="title' + (r.canOpen ? '' : ' other') + '"' + (r.canOpen ? ' data-act="open" data-sid="' + esc(r.sid) + '"' : '') + ' title="' + esc(tip) + '">' + esc(r.title) + '</span>' + (r.folder ? ' <span class="muted">· ' + esc(r.folder) + '</span>' : '') + '</td>'
+          + '<td><span class="sw c' + (r.color >= 0 ? r.color : '') + '"></span><span class="title' + (r.canOpen ? '' : ' other') + '"' + (r.canOpen ? ' data-act="open" data-sid="' + esc(r.sid) + '"' : '') + ' title="' + esc(tip) + '">' + esc(r.title) + '</span>' + (r.folder ? ' <span class="muted">· ' + esc(r.folder) + '</span>' : '') + '</td>'
           + '<td><span class="dot ' + esc(r.state) + '"></span>' + esc(r.stateLabel) + '</td>'
           + '<td class="now ' + esc(r.state) + '">' + esc(r.now || '') + '</td>'
           + '<td class="num">' + (r.files ? r.files + ' <span class="a">+' + r.add + '</span> <span class="r">−' + r.del + '</span>' : '') + '</td>'
@@ -1574,7 +1666,7 @@ function boardHtml(webview) {
         + '<ul class="paths">' + p.unknown.map((f) => '<li><code title="' + esc(f) + '">' + esc(rel(f)) + '</code></li>').join('') + '</ul></div>';
     }
     // 4. 내가 한 말
-    h += '<h2 title="' + esc(S.saidTip) + '">' + esc(S.said) + '</h2>';
+    h += '<h2 title="' + esc(S.saidTip) + '">' + esc(S.said) + (p.saidTotal ? '<span class="count">' + p.saidTotal + '</span>' : '') + '</h2>';
     if (p.saidBusy && !p.said.length) h += '<div class="muted">' + esc(S.saidBusy) + '</div>';
     else if (!p.said.length) h += '<div class="muted">' + esc(S.saidNone) + '</div>';
     else {
@@ -1583,11 +1675,21 @@ function boardHtml(webview) {
         const who = x.titles.join(', ');
         const many = x.replies.length > 1;
         const rep = x.replies.map((r) => (many ? '<b>' + esc(r.title) + ':</b> ' : '') + (r.reply ? esc(r.reply) : esc(S.noReply))).join('<br>');
-        h += '<div class="it' + (opened.has(x.ts + '|' + x.text) ? ' open' : '') + '" data-key="' + esc(x.ts + '|' + x.text) + '" title="' + esc(S.moreTip) + '"><span class="ts">' + esc(x.stamp) + '</span><span class="who" title="' + esc(who) + '">' + esc(who) + '</span>'
+        // 세션 이름을 누르면 그 세션을 연다(줄의 다른 곳을 누르면 펼치기). 여러 세션에 보낸 말은 이름마다 따로
+        const names = x.titles.map((t, k) => '<span class="wl" data-act="open" data-sid="' + esc(x.sids[k]) + '" title="' + esc(S.openTip) + '"><span class="sw c' + (x.colors && x.colors[k] >= 0 ? x.colors[k] : '') + '"></span>' + esc(t) + '</span>').join(', ');
+        const c0 = x.colors && x.colors[0] >= 0 ? ' c' + x.colors[0] : '';
+        h += '<div class="it' + c0 + (opened.has(x.ts + '|' + x.text) ? ' open' : '') + '" data-key="' + esc(x.ts + '|' + x.text) + '" title="' + esc(S.moreTip) + '"><span class="ts">' + esc(x.stamp) + '</span><span class="who" title="' + esc(who) + '">' + names + '</span>'
           + '<span class="txt">' + esc(x.text) + '</span>'
           + '<span class="rep">→ ' + rep + '</span></div>';
       });
       h += '</div>';
+      const from = p.saidPage * p.saidSize + 1;
+      const to = Math.min(p.saidTotal, from + p.said.length - 1);
+      h += '<div class="pager">'
+        + (p.saidPages > 1 ? '<button data-act="saidPage" data-dir="first"' + (p.saidPage ? '' : ' disabled') + '>' + esc(S.first) + '</button><button data-act="saidPage" data-dir="prev"' + (p.saidPage ? '' : ' disabled') + '>‹ ' + esc(S.prev) + '</button>' : '')
+        + '<span class="muted">' + esc(String(S.range || '').replace('{0}', from).replace('{1}', to).replace('{2}', p.saidTotal)) + '</span>'
+        + (p.saidPages > 1 ? '<button data-act="saidPage" data-dir="next"' + (p.saidPage < p.saidPages - 1 ? '' : ' disabled') + '>' + esc(S.next) + ' ›</button>' : '')
+        + '<button class="link" data-act="pageSetting">' + esc(String(S.perPage || '').replace('{0}', p.saidSize)) + '</button></div>';
     }
     // 5. 공유 메모
     h += '<h2>' + esc(S.memo) + (p.memo.name ? ' · <span style="text-transform:none;letter-spacing:0">' + esc(p.memo.name) + '</span>' : '') + '</h2>';
@@ -1610,7 +1712,7 @@ function boardHtml(webview) {
     const el = e.target.closest('[data-act]');
     if (!el) return;
     e.preventDefault();
-    vscode.postMessage({ type: el.dataset.act, sid: el.dataset.sid, i: el.dataset.i === undefined ? undefined : Number(el.dataset.i) });
+    vscode.postMessage({ type: el.dataset.act, sid: el.dataset.sid, dir: el.dataset.dir, i: el.dataset.i === undefined ? undefined : Number(el.dataset.i) });
   });
   window.addEventListener('message', (e) => { if (e.data && e.data.type === 'render') render(e.data.payload); });
   vscode.postMessage({ type: 'ready' });

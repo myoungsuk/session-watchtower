@@ -54,5 +54,6 @@
   "command.addToGroup": "그룹에 넣기",
   "command.removeFromGroup": "그룹에서 빼기",
   "command.setSessionRole": "그룹 안 역할 정하기",
-  "command.planTeam": "팀 구성 추천 받기: 세션 수·역할 분배를 물어볼 글 복사"
+  "command.planTeam": "대장 세션으로 팀 꾸리기(요청 글 복사)",
+  "config.boardPageSize": "그룹 보드의 지시와 결과를 한 쪽에 몇 줄씩 보여 줄지."
 }

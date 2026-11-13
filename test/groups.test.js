@@ -128,7 +128,7 @@ test('그룹을 만들고 세션을 넣으면 세션 창 맨 위에 묶여 보�
   // 역할: 개발에 흔히 필요한 역할 목록에서 고른다(하는 일이 함께 보임)
   const qp = await pickRoles(() => web.send({ type: 'role', sid: SID.w }), ['Watch']);
   assert.ok(qp.canSelectMany, '여러 개를 고를 수 있다');
-  assert.deepStrictEqual(qp.items.slice(0, 10).map((i) => i.label), ['Watch', 'Plan', 'Design', 'Develop', 'Test', 'Review', 'Docs', 'Deploy', 'Security', 'Research']);
+  assert.deepStrictEqual(qp.items.slice(0, 11).map((i) => i.label), ['Lead', 'Watch', 'Plan', 'Design', 'Develop', 'Test', 'Review', 'Docs', 'Deploy', 'Security', 'Research']);
   assert.ok(qp.items.every((i) => i.detail), '역할마다 하는 일이 한 줄 보인다');
   await waitFor(() => team('Chatbot ops').rows[0].role === 'Watch', '역할 꼬리표');
 });
@@ -203,6 +203,26 @@ test('그룹 보드: 기다리는 세션, 세션 현황(커밋 안 한 파일), 
   assert.match(panel.webview.html, /\.said \.it\.open \.txt/, '누르면 글 전체를 펼친다');
 
   // 보드 전체를 마크다운으로
+  // 세션마다 고유 색, 지시와 결과의 세션 이름은 누르면 그 세션이 열린다
+  const pp = panel.lastPayload();
+  assert.deepStrictEqual(pp.members.map((m) => m.color), [0, 1, 2, 3], '그룹에 넣은 순서대로 색');
+  assert.deepStrictEqual(pp.said.find((x) => x.text === 'restart now').colors.length, 2, '여러 세션에 보낸 말은 세션마다 색');
+  assert.match(panel.webview.html, /class="wl" data-act="open" data-sid="/);
+  // 한 쪽에 몇 개: 설정을 5로 줄이면 6줄이 두 쪽으로 나뉘고, 다음 쪽으로 넘길 수 있다
+  stub.changeConfig('boardPageSize', 5);
+  await waitFor(() => panel.lastPayload().saidSize === 5, '쪽 크기 5');
+  assert.deepStrictEqual([panel.lastPayload().said.length, panel.lastPayload().saidPages, panel.lastPayload().saidTotal], [5, 2, 6]);
+  panel.send({ type: 'saidPage', dir: 'next' });
+  await waitFor(() => panel.lastPayload().saidPage === 1, '다음 쪽');
+  assert.strictEqual(panel.lastPayload().said.length, 1);
+  panel.send({ type: 'saidPage', dir: 'next' });
+  await sleep(200);
+  assert.strictEqual(panel.lastPayload().saidPage, 1, '마지막 쪽에서 더 넘기지 않는다');
+  panel.send({ type: 'saidPage', dir: 'first' });
+  await waitFor(() => panel.lastPayload().saidPage === 0, '처음 쪽');
+  stub.changeConfig('boardPageSize', 20);
+  await waitFor(() => panel.lastPayload().saidSize === 20, '쪽 크기 20');
+
   panel.send({ type: 'copyBoard' });
   await waitFor(() => /### Waiting for you\n- Deployer: needs approval — `/.test(stub.state.clipboard || ''), '마크다운 복사');
   assert.match(stub.state.clipboard, /\| Watch \| Watcher \| Just finished \| \d+m ago \| 0 \| 0 \|/);
@@ -237,7 +257,7 @@ test('역할 안내: 처음 쓰는 사람도 붙여 넣기만 하면 되게 역�
   stub.state.saveDialog = board;
   panel.send({ type: 'newMemo' });
   await waitFor(() => panel.lastPayload().memo.file === board, '프로젝트 안 메모');
-  assert.match(fs.readFileSync(board, 'utf8'), /^# Chatbot ops\n[\s\S]*## Decisions waiting[\s\S]*## Decision log[\s\S]*## Handoff/);
+  assert.match(fs.readFileSync(board, 'utf8'), /^# Chatbot ops team board\n[\s\S]*## 0\. Decisions waiting for the user[\s\S]*## 3\. Reports[\s\S]*## 4\. Decision log[\s\S]*## 6\. Rules[\s\S]*## 7\. Handoff/, '대장 세션이 만드는 보드와 같은 틀');
   assert.strictEqual(panel.lastPayload().memo.shown, 'team-board.md', '프로젝트 안이면 짧은 경로로');
   panel.send({ type: 'brief', sid: SID.d });
   await waitFor(() => (stub.state.clipboard || '').includes('Shared memo: ' + board), '안내에 메모 경로');
@@ -257,18 +277,23 @@ test('팀 구성 추천 받기: 만들 것과 세션 수를 받아, 역할 목�
   assert.match(panel.webview.html, /data-act="planTeam"/, '보드에 단추가 있다');
   stub.state.input = 'Add card payments to the shop app';
   stub.state.pick = (items) => items.find((i) => i.label === '3') || items.find((i) => i.id === 'claude'); // 세션 수 3, 도구 Claude Code
-  stub.state.answer = (m, b) => (/team plan request/.test(m) ? b.find((x) => x === 'Open a new Claude Code session') : undefined);
+  stub.state.answer = (m, b) => (/lead session request/.test(m) ? b.find((x) => x === 'Open a new Claude Code session') : undefined);
   const opened = stub.calls.filter((c) => c[0] === 'claude-vscode.editor.open' && c.length === 1).length;
   panel.send({ type: 'planTeam' });
-  await waitFor(() => /^\[Team plan request\]/.test(stub.state.clipboard || ''), '요청 글 복사');
+  await waitFor(() => /^\[Lead session request\]/.test(stub.state.clipboard || ''), '요청 글 복사');
   const t = stub.state.clipboard;
+  assert.match(t, /Please be the lead for this work\. From now on the user talks only to this session/, '붙여 넣은 세션이 대장이 된다');
   assert.match(t, /What I will build: Add card payments to the shop app/);
-  assert.match(t, /Sessions available: 3/);
+  assert.match(t, /Sessions available \(including this lead\): 3/);
+  for (const step of ['## Step 1: recommend the team', '## Step 2: create the team board', '## Step 3: start the working sessions', '## Step 4: work as the lead']) assert.ok(t.includes(step), step);
+  assert.match(t, /```markdown\n# <project name> team board\n[\s\S]*## 0\. Decisions waiting for the user[\s\S]*## 7\. Handoff[\s\S]*```/, '보드 틀을 통째로 넣는다');
+  assert.match(t, /Link a file" on the group board/, 'Session Watchtower 보드에 연결하라고 알린다');
+  assert.match(t, /Do only step 1 now\./);
   assert.match(t, /Sessions already in the group "Chatbot ops"[^\n]*:\n- "Watcher" — Watch\n/, '보드에서 열면 그 그룹의 세션과 역할을 넣는다');
-  for (const r of ['Watch', 'Plan', 'Design', 'Develop', 'Test', 'Review', 'Docs', 'Deploy', 'Security', 'Research']) assert.match(t, new RegExp('\\n- ' + r + ': \\S'), '역할 목록과 하는 일: ' + r);
+  for (const r of ['Lead', 'Watch', 'Plan', 'Design', 'Develop', 'Test', 'Review', 'Docs', 'Deploy', 'Security', 'Research']) assert.match(t, new RegExp('\\n- ' + r + ': \\S'), '역할 목록과 하는 일: ' + r);
   assert.match(t, /Only one session deploys/);
-  assert.match(t, /A table: session name \| role \| what it does \| first step/);
-  assert.match(t, /Do not change code or files in this conversation/);
+  assert.match(t, /a table: session name \| role \| what it does \| first step/);
+  assert.match(t, /do not create or change files in this step/);
   await waitFor(() => stub.calls.filter((c) => c[0] === 'claude-vscode.editor.open' && c.length === 1).length > opened, '새 세션 열기');
 
   // 그룹 없이(세션 창 메뉴에서)도 된다
@@ -276,18 +301,18 @@ test('팀 구성 추천 받기: 만들 것과 세션 수를 받아, 역할 목�
   stub.state.pick = (items) => items[0];
   stub.state.answer = undefined;
   const text = await stub.commands.get('claudeSessionChanges.planTeam')();
-  assert.match(text, /Sessions available: up to your recommendation/);
+  assert.match(text, /Sessions available \(including this lead\): up to your recommendation/);
   assert.ok(!/Sessions already in the group/.test(text), '그룹이 없으면 그 줄도 없다');
-  assert.match(text, /several Claude Code sessions/);
+  assert.match(text, /Tool: Claude Code\n/);
   assert.ok(stub.calls.some((c) => c[0] === 'pick' && /Which tool/.test((c[2] || {}).placeHolder || '')), 'Codex 세션 기록이 있으면 어느 도구로 할지 묻는다');
 
   // Codex를 쓰는 사람: 도구를 묻고, "둘 다"면 표에 도구 칸과 메모로 주고받으라는 기준이 들어간다. Codex는 터미널에서 연다
   ext._test.setCodexCli(true);
   stub.state.input = 'Split the API and the web client';
   stub.state.pick = (items) => items.find((i) => i.id === 'both') || items[0];
-  stub.state.answer = (m, b) => (/team plan request/.test(m) ? b.find((x) => x === 'Open Codex in a terminal') : undefined);
+  stub.state.answer = (m, b) => (/lead session request/.test(m) ? b.find((x) => x === 'Open Codex in a terminal') : undefined);
   const both = await stub.commands.get('claudeSessionChanges.planTeam')();
-  assert.match(both, /several Claude Code and Codex sessions/);
+  assert.match(both, /Tool: Claude Code and Codex\n/);
   assert.match(both, /session name \| tool \(Claude Code or Codex\) \| role/);
   assert.match(both, /cannot message each other directly/);
   const term = await waitFor(() => stub.calls.filter((c) => c[0] === 'terminal').map((c) => c[1]).find((t) => t.opts.name === 'Codex'), 'Codex 터미널');

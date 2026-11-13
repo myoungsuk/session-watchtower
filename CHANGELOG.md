@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.20.0
+
+- **Start a team with a lead session.** The team request now makes the session you paste it into the lead: it recommends the team, creates a team board from a detailed template (decisions waiting, sessions and roles, tasks and order, reports, decision log, shared resources, rules, handoff), writes the first instruction for each working session, and from then on takes reports and gives instructions. A new *Lead* role is in the role list, and *Create a memo file* uses the same board template.
+- **Instructions and results:** split into pages (setting `boardPageSize`, 20 by default), each session has its own color (also in the Sessions table), and clicking a session name opens that session.
+
 ## 0.19.1
 
 - **Codex in groups.** Instructions and results on the board now include what you typed to Codex sessions and the first line of Codex's final answer (review and sub-agent threads are left out). Conversation search finds Codex messages too.

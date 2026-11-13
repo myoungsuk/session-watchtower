@@ -130,12 +130,19 @@ The **board** button on a group opens its board, a page for the whole group:
 | Waiting for you | Sessions waiting for your approval or answer, with the command they want to run |
 | Sessions | Role, state, what each is doing now, files changed, files **not committed yet**, commits and the last conversation |
 | Changes no session log explains | Uncommitted files in the group's repositories that changed within the time range but are in no session log: edited by hand or by another tool. Older uncommitted files, such as backups never added to git, are left out. Check these before you build a release |
-| Instructions and results | What you typed to the group's sessions, newest first, with the first line of each session's last answer to it (people who ask their sessions to lead with the conclusion get a one-line result). Messages from other sessions and system notes are left out, and the same message sent to several sessions is shown once. Long rows show three lines; click a row to read all of it |
+| Instructions and results | What you typed to the group's sessions, newest first, with the first line of each session's last answer to it (people who ask their sessions to lead with the conclusion get a one-line result). Messages from other sessions and system notes are left out, and the same message sent to several sessions is shown once. Each session has its own color, also in the Sessions table; click a session name to open it. Long rows show three lines; click a row to read all of it. Rows are split into pages (`boardPageSize`, 20 by default) |
 | Shared memo | A Markdown file the sessions also read and write, such as a coordination board with decisions and handoff notes. Link an existing file, or create a new one with sections for decisions waiting, the decision log and handoff: in the project folder (sessions read it without asking; you pick the place) or in the extension's storage (the project stays untouched, but a session may ask before reading a file outside the project). It is shown as rendered Markdown and refreshes when the file changes |
 
 *Copy board as Markdown* puts a snapshot of the board on the clipboard, for example to paste into the shared memo.
 
-**Plan the team.** Not sure how many sessions the work needs or how to split the roles? *Plan the team…* (on a board, or in the `…` menu of the Sessions view even before you have a group) asks what you will build and how many sessions you can run, then copies a request to paste into any Claude session. The request lists the roles with what each does, rules of thumb (more sessions cost more; usually 1 for a small change and 2 to 3 for a feature; no two sessions on the same files; one session deploys) and asks for the number of sessions, a table of roles and first steps, what must not run at the same time, and a first instruction for each session. Opened from a board, it also lists the group's sessions and roles. The extension itself never calls an AI.
+**Start a team with a lead session.** Starting from scratch, or not sure how many sessions the work needs? *Start a team with a lead…* (on a board, or in the `…` menu of the Sessions view before any group exists) asks what you will build, how many sessions you can run and, if you use Codex, which tool. It copies a request; paste it into a new session and **that session becomes the lead**, much like a watcher that takes reports and gives instructions, so you only talk to it:
+
+1. It recommends the team: the number of sessions, a table of roles with first steps, what must not run at the same time (rules of thumb included: more sessions cost more, one session deploys, no two sessions on the same files).
+2. After you agree, it creates a **team board** file from a detailed template: decisions waiting for you, sessions and roles, tasks and order, reports, the decision log with your exact words and times, shared resources, rules and handoff.
+3. It writes a first instruction for each working session for you to paste.
+4. From then on, when you ask for the status it reads the reports and git, summarises them, asks you for numbered decisions, records them and writes the next instructions.
+
+Link the board file under *Shared memo* to see it on the group board. The extension itself never calls an AI.
 
 **Role note.** Each row of the board has a *Role note* button. It copies a note to paste into that session, so the session knows its place in the team even in a brand-new project without any team rules yet:
 
@@ -292,6 +299,7 @@ All settings start with `claudeSessionChanges.`
 | `overlapIgnore` | Claude's memory folder | Glob patterns of files that never get an overlap warning. |
 | `notifyStuckMinutes` | 10 | Notify when a working session has written nothing new for this many minutes (0 = off). |
 | `explorerMarks` | true | Mark the file a session is editing right now in the Explorer and on editor tabs. |
+| `boardPageSize` | 20 | Rows per page in Instructions and results on group boards. |
 | `sessionDetails` | true | Show the second line under each session. Turn off for a compact list. |
 | `archiveAfter` | Same as Claude Code | When a quiet session moves to Archived: same as Claude Code, 1 to 30 days, or never. |
 | `sessionListDays` | 90 | List this folder's sessions from the last N days even when they are not running (0 = only running sessions and sessions with changes in the time range). |
@@ -304,7 +312,7 @@ Available from the Command Palette under **Session Watchtower**, and from the me
 
 | Command | What it does |
 |---|---|
-| Plan a team | Copy a request that asks a Claude session how many sessions the work needs and how to divide the roles. |
+| Start a team with a lead session | Copy a request that makes a session the lead: it recommends the team, creates the team board and then takes reports and gives instructions. |
 | New group / Open a group board / Rename a group / Delete a group | Work with groups (deleting a group leaves its sessions as they are). |
 | Search conversations | Find a session by what you wrote in it. |
 | Which sessions changed this file? | List the sessions that changed the current or selected file. |
@@ -334,7 +342,7 @@ Claude Code 세션을 여러 개 돌릴 때 **어느 세션이 일하는 중이�
 - **파일 탐색기에도**: 세션이 지금 고치는 파일은 VS Code 파일 탐색기와 편집기 탭에서 도는 배지와 초록 이름으로 보입니다. 그 파일이 든 폴더에는 초록 점이 붙습니다.
 - **알림**: 세션이 승인이나 답을 기다릴 때, 두 세션이 같은 파일을 고쳤을 때, 작업 중인 세션이 10분 넘게 조용할 때 알려 줍니다.
 - **찾기**: 내가 세션에 쓴 말로 세션을 찾고, 파일을 우클릭해 그 파일을 고친 세션을 봅니다.
-- **그룹과 보드**: 함께 일하는 세션(감시·개발·배포 등)을 그룹으로 묶고 역할을 붙입니다. 세션 수와 역할 분배가 고민되면 "팀 구성 추천 받기"로 Claude 세션에 물어볼 글을 복사합니다. 역할 꼬리표는 이름표라서, 보드의 "역할 안내"를 그 세션에 붙여 넣어야 세션이 자기 역할과 함께 일하는 규칙을 압니다(처음 쓰는 프로젝트도 그대로 쓸 수 있음). 그룹 보드 한 화면에서 기다리는 세션, 세션별 현황(커밋 안 한 파일 포함), 세션 기록으로 설명되지 않는 변경, 내가 한 말(시각과 함께 복사), 공유 메모 파일을 봅니다.
+- **그룹과 보드**: 함께 일하는 세션(감시·개발·배포 등)을 그룹으로 묶고 역할을 붙입니다. 처음 시작할 때는 "대장 세션으로 팀 꾸리기" 요청 글을 새 세션에 붙여 넣으면 그 세션이 대장이 되어 팀 구성 추천, 협업 보드 만들기, 세션별 첫 지시, 보고받고 지시하기를 맡습니다. 역할 꼬리표는 이름표라서, 보드의 "역할 안내"를 그 세션에 붙여 넣어야 세션이 자기 역할과 함께 일하는 규칙을 압니다(처음 쓰는 프로젝트도 그대로 쓸 수 있음). 그룹 보드 한 화면에서 기다리는 세션, 세션별 현황(커밋 안 한 파일 포함), 세션 기록으로 설명되지 않는 변경, 내가 한 말(시각과 함께 복사), 공유 메모 파일을 봅니다.
 - **정리**: 보관함, 세션 이름 바꾸기, 변경 요약을 마크다운으로 복사.
 - **바깥에서 열기**: 데스크톱 알림 같은 다른 프로그램이 `vscode://kms-labs.session-watchtower/open?title=…` 주소로 그 세션의 대화를 열 수 있습니다.
 - **Codex** 세션도 함께 나옵니다.

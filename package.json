@@ -2,7 +2,7 @@
   "name": "session-watchtower",
   "displayName": "Session Watchtower for Claude Code",
   "description": "%description%",
-  "version": "0.19.1",
+  "version": "0.20.0",
   "scripts": {
     "test": "node --test test/*.test.js",
     "shot": "bash tools/screenshot/run.sh"
@@ -522,6 +522,13 @@
           "type": "string",
           "default": "~/.cache/claude-attention",
           "description": "%config.attentionMarkerDir%"
+        },
+        "claudeSessionChanges.boardPageSize": {
+          "type": "number",
+          "default": 20,
+          "minimum": 5,
+          "maximum": 200,
+          "description": "%config.boardPageSize%"
         }
       }
     }
