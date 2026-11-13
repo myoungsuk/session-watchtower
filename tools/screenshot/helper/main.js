@@ -38,6 +38,14 @@ exports.activate = async () => {
     run('claudeSessionChanges.setSessionRole', demo.sids['Fix flaky e2e tests']);
     return;
   }
+  if (scene === 'phone') {
+    // the phone board panel for a stand-in board (see shoot.sh)
+    await sleep(8000);
+    run('claudeSessionChanges.phoneBoardPair');
+    await sleep(3000);
+    await run('notifications.clearAll');
+    return;
+  }
   if (scene === 'fold') {
     // the board with Sessions and Instructions and results folded (see shoot.sh)
     await sleep(9000);

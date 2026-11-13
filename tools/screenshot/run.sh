@@ -1,6 +1,6 @@
 #!/bin/bash
 # npm run shot [-- <scene> [dark|light] [out.png]]
-# Scenes: side (activity bar + side bar), toasts (notifications), search, file, review, summary, explorer, tabs, groups, roles, fold, roster, mcp, gif (crop the status bar from the mcp scene with crop.py's statusbar case). Output: .shots/<scene>-<theme>.png
+# Scenes: side (activity bar + side bar), toasts (notifications), search, file, review, summary, explorer, tabs, groups, roles, fold, roster, mcp, phone, gif (crop the status bar from the mcp scene with crop.py's statusbar case). Output: .shots/<scene>-<theme>.png
 set -eu
 V="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$V/../.." && pwd)"
 SCENE="${1:-side}"; MODE="${2:-dark}"; OUT="${3:-$REPO/.shots/$SCENE-$MODE.png}"

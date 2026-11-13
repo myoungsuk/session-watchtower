@@ -1,7 +1,7 @@
 #!/bin/bash
 # Take a real screenshot of the extension: desktop VS Code on a virtual display (Xvfb), with made-up demo sessions in a throwaway home folder.
 # Usage: xvfb-run -a -s "-screen 0 2400x2400x24" tools/screenshot/shoot.sh "<theme name>" <full.png> [scene]
-# Scenes: side (default), toasts, search, file, review, summary, tabs, groups, roles, fold, roster, mcp — see helper/main.js. "gif" and "explorer" write numbered frames next to <full.png>.
+# Scenes: side (default), toasts, search, file, review, summary, tabs, groups, roles, fold, roster, mcp, phone — see helper/main.js. "gif" and "explorer" write numbered frames next to <full.png>.
 # Needs: desktop VS Code (CODE_BIN), xvfb-run, ImageMagick (import), node, python3.
 set -u
 V="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$V/../.." && pwd)"
@@ -89,6 +89,14 @@ c.execute('INSERT INTO ItemTable VALUES (?, ?)', ('kms-labs.session-watchtower',
 c.commit(); c.close()
 PY
 fi
+if [ "$SCENE" = phone ]; then
+  # a stand-in phone board: a tiny server that answers the health check, and a cli.js that prints a made-up pairing link
+  mkdir -p "$RUN/board"
+  printf '%s\n' "if (process.argv[2] === 'pair') { console.log('https://my-laptop.example.ts.net/pair?c=K7Q2M9XA3P'); console.log('(10 min, once: until 4:50:12)'); console.log('코드: K7Q2M9XA3P  (code only for the iPhone home-screen app)'); }" > "$RUN/board/cli.js"
+  node -e 'require("http").createServer((q, r) => { if (q.url === "/healthz") { r.writeHead(200, { "X-Session-Board": "1", "X-Session-Board-Label": encodeURIComponent("my-laptop") }); r.end("ok"); } else { r.writeHead(404); r.end(); } }).listen(15290, "127.0.0.1")' &
+  FAKEBOARD=$!
+  sed -i "s#^{#{\n  \"claudeSessionChanges.phoneBoard.ports\": [15290],\n  \"claudeSessionChanges.phoneBoard.folder\": \"$RUN/board\",#" "$RUN/ud/User/settings.json"
+fi
 # Start with a clean environment: variables of a VS Code remote shell (ELECTRON_RUN_AS_NODE ...) stop the desktop app from starting.
 env -i HOME="$RUN/home" PATH="$PATH" DISPLAY="$DISPLAY" XAUTHORITY="${XAUTHORITY:-}" LANG="${LANG:-en_US.UTF-8}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}" SWT_SCENE="$SCENE" SWT_DEMO="$RUN/home/demo.json" \
 "$CODE_BIN" --no-sandbox --disable-gpu --force-device-scale-factor=2 --user-data-dir="$RUN/ud" --extensions-dir="$RUN/ext" \
@@ -124,5 +132,6 @@ sleep "${WAIT1:-28}"
 case "$SCENE" in side|toasts) node "$V/demo-live.js" "$REPO" "$RUN/home";; esac
 sleep "${WAIT2:-8}"
 import -window root "$OUT"; echo "screenshot rc=$? $(stat -c %s "$OUT" 2>/dev/null) bytes"
+[ -n "${FAKEBOARD:-}" ] && kill "$FAKEBOARD" 2>/dev/null
 kill $CODE 2>/dev/null; sleep 1; kill $(echo "$PIDS" | tr ',' ' ') 2>/dev/null
 [ "${KEEP:-0}" = 1 ] || { cd "$REPO" && rm -r ".shots/run-$$"; }

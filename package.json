@@ -2,7 +2,7 @@
   "name": "session-watchtower",
   "displayName": "Session Watchtower for Claude Code",
   "description": "%description%",
-  "version": "0.28.1",
+  "version": "0.28.2",
   "scripts": {
     "test": "node --test test/*.test.js",
     "shot": "bash tools/screenshot/run.sh"
@@ -608,6 +608,8 @@
     "vendor/**",
     "media/icon.svg",
     "media/logo.png",
+    "media/phone-board-demo-dark.png",
+    "media/phone-board-demo-light.png",
     "l10n/**",
     "package.nls.json",
     "package.nls.ko.json",

@@ -15,7 +15,7 @@ elif scene == 'roles':           # the role picker at the top of the window
     box = (W // 2 - 640, 0, W // 2 + 640, 1060)
 elif scene == 'statusbar':       # the right half of the status bar (session counts and plan usage)
     box = (W // 2, H - 48, W, H)
-elif scene in ('fold', 'roster'): # the editor area (board or Markdown preview)
+elif scene in ('fold', 'roster', 'phone'): # the editor area (board, Markdown preview or the phone panel)
     box = (left, 0, W, H - 44)
 elif scene == 'groups':          # the whole window: side bar with the group and the board
     box = (0, 0, W, H)

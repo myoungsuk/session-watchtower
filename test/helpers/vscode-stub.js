@@ -81,7 +81,7 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
         const disposeLs = [];
         const panel = {
           viewType, title, revealed: 0, disposed: false,
-          webview: { html: '', cspSource: 'vscode-resource:', onDidReceiveMessage: (cb) => { onMessage = cb; return disposable(); }, postMessage: async (m) => { posted.push(m); return true; } },
+          webview: { html: '', cspSource: 'vscode-resource:', asWebviewUri: (u) => ({ toString: () => 'vscode-resource:' + u.path }), onDidReceiveMessage: (cb) => { onMessage = cb; return disposable(); }, postMessage: async (m) => { posted.push(m); return true; } },
           reveal() { this.revealed++; }, onDidDispose: (cb) => { disposeLs.push(cb); return disposable(); },
           dispose() { if (this.disposed) return; this.disposed = true; disposeLs.forEach((cb) => cb()); },
           posted, send: (m) => onMessage(m), lastPayload: () => { for (let i = posted.length - 1; i >= 0; i--) if (posted[i].type === 'render') return posted[i].payload; return null; },
@@ -116,6 +116,7 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
     globalState: { store: {}, get(k, d) { return k in this.store ? this.store[k] : d; }, async update(k, v) { this.store[k] = v; } },
     globalStorageUri: { fsPath: fs.mkdtempSync(path.join(os.tmpdir(), 'swt-storage-')) },
     extension: { id: 'kms-labs.session-watchtower' },
+    extensionPath: extDir,
   };
 
   // 세션 상태 웹뷰를 열어 주고, 확장이 그려 달라고 보낸 내용을 모은다

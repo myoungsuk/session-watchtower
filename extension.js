@@ -3785,73 +3785,137 @@ async function phoneBoardPair() {
   showPhonePanel(r, boards, folder);
 }
 
+// Tailscale 받는 곳(공식 주소). 휴대폰은 QR로, 컴퓨터는 링크로
+const TS_LINKS = {
+  phone: 'https://tailscale.com/download',
+  android: 'https://play.google.com/store/apps/details?id=com.tailscale.ipn',
+  iphone: 'https://apps.apple.com/app/tailscale/id1470499037',
+  windows: 'https://tailscale.com/download/windows',
+  linux: 'https://tailscale.com/download/linux',
+  mac: 'https://tailscale.com/download/mac',
+};
+
 function showPhonePanel(r, boards, folder) {
+  const media = ctx && ctx.extensionPath ? vscode.Uri.file(path.join(ctx.extensionPath, 'media')) : null;
   if (!phonePanel) {
-    phonePanel = vscode.window.createWebviewPanel('claudeSessionChanges.phone', L('Phone board'), vscode.ViewColumn.Active, { enableScripts: true, localResourceRoots: [] });
+    phonePanel = vscode.window.createWebviewPanel('claudeSessionChanges.phone', L('Phone board'), vscode.ViewColumn.Active, { enableScripts: true, localResourceRoots: media ? [media] : [] });
     phonePanel.onDidDispose(() => { phonePanel = null; });
     phonePanel.webview.onDidReceiveMessage((m) => {
       if (!m || typeof m !== 'object' || !phonePanel) return;
       if ((m.type === 'copyLink' || m.type === 'copyCode') && phonePanel.secret) {
         vscode.env.clipboard.writeText(m.type === 'copyLink' ? phonePanel.secret.url : phonePanel.secret.code);
         vscode.window.showInformationMessage(m.type === 'copyLink' ? L('Copied the link. It works once, within 10 minutes.') : L('Copied the code. It works once, within 10 minutes.'));
-      } else if (m.type === 'openBoard' && phonePanel.board) vscode.env.openExternal(vscode.Uri.parse('http://127.0.0.1:' + phonePanel.board.port + '/'));
+      } else if (m.type === 'copyCmd' && typeof m.text === 'string' && m.text.length < 200) vscode.env.clipboard.writeText(m.text);
+      else if (m.type === 'openBoard' && phonePanel.board) vscode.env.openExternal(vscode.Uri.parse('http://127.0.0.1:' + phonePanel.board.port + '/'));
+      else if (m.type === 'link' && Object.values(TS_LINKS).includes(m.url)) vscode.env.openExternal(vscode.Uri.parse(m.url));
       else if (m.type === 'again') phoneBoardPair();
     });
   }
   phonePanel.secret = { url: r.url, code: r.code };
   phonePanel.board = boards.find((b) => b.local) || boards[0];
-  phonePanel.webview.html = phoneHtml(phonePanel.webview, r, boards, folder);
+  phonePanel.webview.html = phoneHtml(phonePanel.webview, r, boards, folder, media);
   phonePanel.reveal();
 }
 
-function phoneHtml(webview, r, boards, folder) {
+// 휴대폰 보드 패널: 맨 위에 보드 예시 그림, 그 옆에 처음부터 따라 하는 순서(휴대폰 Tailscale은 QR, 컴퓨터는 링크), 마지막에 이 보드의 연결 QR
+function phoneHtml(webview, r, boards, folder, media) {
   const n = nonce();
   const esc = (x) => String(x == null ? '' : x).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  let svg = '';
-  try { svg = phoneboard.qrSvg(r.url); } catch { svg = ''; }
+  const qr = (text, cell) => { try { return phoneboard.qrSvg(text, cell); } catch { return ''; } };
+  const img = (name) => (media && webview.asWebviewUri ? String(webview.asWebviewUri(vscode.Uri.file(path.join(media.fsPath, name)))) : '');
+  const board = boards.find((b) => b.local) || boards[0] || {};
+  const port = board.port || 5290;
   const many = boards.length > 1 && !boards.some((b) => b.local);
   const names = boards.map((b) => b.label || ('127.0.0.1:' + b.port)).join(', ');
+  let host = '';
+  try { host = new URL(r.url).host; } catch { host = ''; }
+  const link = (key, label) => `<a href="${esc(TS_LINKS[key])}" data-link="${esc(TS_LINKS[key])}">${esc(label)}</a>`;
+  const cmd = (text) => `<code>${esc(text)}</code> <button class="mini" data-cmd="${esc(text)}">${esc(L('Copy'))}</button>`;
+  const ready = !r.local;
+  // ③ 이 컴퓨터: 링크가 이미 사설망 주소(https)면 준비된 것이라 접어 두고, 아니면 펼쳐서 보여 준다
+  const pcSteps = `<ul class="sub">
+      <li>${esc(L('Install Tailscale on this computer:'))} ${link('windows', 'Windows')} · ${link('mac', 'Mac')} · ${link('linux', 'Linux')}</li>
+      <li>${esc(L('Sign in with the same account as on the phone.'))} ${esc(L('On Linux:'))} ${cmd('sudo tailscale up')}</li>
+      <li>${esc(L('Let the phone reach the board through Tailscale:'))} ${cmd('tailscale serve --bg ' + port)} <span class="muted">${esc(L('(on Linux with sudo)'))}</span></li>
+      <li>${esc(L('Then press "Make a new link" below; the link should now start with https.'))}</li>
+    </ul>`;
   return `<!DOCTYPE html>
 <html lang="${isKo() ? 'ko' : 'en'}"><head><meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src data:; script-src 'nonce-${n}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data:; script-src 'nonce-${n}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
-  body { margin: 0; padding: 20px 28px; font-family: var(--vscode-font-family); font-size: 13.5px; color: var(--vscode-foreground); background: var(--vscode-editor-background); }
-  h1 { margin: 0 0 4px; font-size: 18px; }
+  body { margin: 0; padding: 20px 28px 28px; font-family: var(--vscode-font-family); font-size: 13.5px; line-height: 1.5; color: var(--vscode-foreground); background: var(--vscode-editor-background); }
+  h1 { margin: 0 0 4px; font-size: 19px; }
+  h2 { margin: 22px 0 8px; font-size: 14px; }
   .muted { color: var(--vscode-descriptionForeground); }
-  .wrap { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; margin-top: 16px; }
-  .qr { padding: 8px; background: #fff; border-radius: 6px; line-height: 0; }
-  .qr svg { width: 240px; height: 240px; }
-  .code { font-family: var(--vscode-editor-font-family); font-size: 26px; letter-spacing: 0.12em; font-weight: 600; }
-  .link { font-family: var(--vscode-editor-font-family); font-size: 12px; word-break: break-all; margin: 6px 0 10px; }
+  .top { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; margin-top: 14px; }
+  .demo { flex: 0 0 auto; width: 250px; border-radius: 16px; overflow: hidden; border: 1px solid var(--vscode-widget-border, rgba(128,128,128,.35)); box-shadow: 0 4px 16px rgba(0,0,0,.25); }
+  .demo img { display: block; width: 100%; }
+  body.vscode-light .demo .dk, body.vscode-high-contrast-light .demo .dk { display: none; }
+  body:not(.vscode-light):not(.vscode-high-contrast-light) .demo .lt { display: none; }
+  .caption { font-size: 11.5px; margin-top: 6px; text-align: center; }
+  .steps { flex: 1 1 380px; min-width: 300px; }
+  ol.main { padding-left: 22px; margin: 0; }
+  ol.main > li { margin: 0 0 14px; }
+  ol.main > li > b { display: block; margin-bottom: 4px; }
+  ul.sub { margin: 6px 0 0; padding-left: 18px; } ul.sub li { margin: 3px 0; }
+  .appqr { display: flex; gap: 14px; align-items: center; margin-top: 6px; }
+  .qr { padding: 6px; background: #fff; border-radius: 6px; line-height: 0; flex: 0 0 auto; }
+  .qr.small svg { width: 110px; height: 110px; }
+  .qr.big svg { width: 230px; height: 230px; }
+  a { color: var(--vscode-textLink-foreground); }
+  code { font-family: var(--vscode-editor-font-family); font-size: 12.5px; padding: 1px 5px; border-radius: 3px; background: var(--vscode-textCodeBlock-background, rgba(128,128,128,.15)); }
+  details.pc summary { cursor: pointer; color: var(--vscode-charts-green); }
+  .pair { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; padding: 14px 16px; border-radius: 8px; border: 1px solid var(--vscode-widget-border, rgba(128,128,128,.35)); }
+  .pair > div:last-child { flex: 1 1 260px; min-width: 240px; }
+  .code { font-family: var(--vscode-editor-font-family); font-size: 24px; letter-spacing: 0.12em; font-weight: 600; }
+  .plink { font-family: var(--vscode-editor-font-family); font-size: 12px; word-break: break-all; margin: 4px 0 10px; }
   button { height: 26px; padding: 0 10px; margin: 0 6px 6px 0; border: 1px solid var(--vscode-button-border, transparent); border-radius: 4px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); font: inherit; cursor: pointer; }
   button:hover { background: var(--vscode-button-secondaryHoverBackground); }
-  .warn { margin-top: 14px; padding: 8px 12px; border-left: 3px solid var(--vscode-editorWarning-foreground, #cca700); background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 9%, transparent); }
-  ol { padding-left: 20px; margin: 8px 0; } li { margin: 3px 0; }
+  button.mini { height: 20px; padding: 0 6px; margin: 0; font-size: 11.5px; }
+  .warn { margin-top: 12px; padding: 8px 12px; border-left: 3px solid var(--vscode-editorWarning-foreground, #cca700); background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 9%, transparent); }
 </style></head><body>
-<h1>${esc(L('Open the phone board on your phone'))}</h1>
-<p>${esc(L('The phone board shows the sessions on this computer in your phone\'s browser: which one is working or waiting for you, what each changed, and the conversation. It is read-only; to answer a session, use Claude Code itself (or its Remote Control).'))}</p>
-<div class="muted">${esc(L('Board: {0}', names))} · ${esc(L('Reachable from the phone over your private network (Tailscale); nothing is published to the internet.'))}</div>
-<div class="wrap">
-  <div class="qr">${svg}</div>
-  <div>
-    <ol>
-      <li>${esc(L('Scan the code with the phone camera, or open the link in Chrome or Safari on the phone.'))}</li>
-      <li>${esc(L('On an iPhone home-screen app or in another board, type only the code.'))}</li>
+<h1>${esc(L('Phone board: see these sessions on your phone'))}</h1>
+<div class="muted">${esc(L('Which session is working or waiting for you, what each changed, and the conversation, in your phone\'s browser. It only shows; to answer, use Claude Code (or its Remote Control).'))}</div>
+<div class="top">
+  ${img('phone-board-demo-dark.png') ? `<div><div class="demo"><img class="dk" src="${esc(img('phone-board-demo-dark.png'))}" alt="${esc(L('Example of the phone board'))}"><img class="lt" src="${esc(img('phone-board-demo-light.png'))}" alt="${esc(L('Example of the phone board'))}"></div><div class="caption muted">${esc(L('Example (made-up sessions)'))}</div></div>` : ''}
+  <div class="steps">
+    <h2 style="margin-top:0">${esc(L('Set it up once'))}</h2>
+    <ol class="main">
+      <li><b>${esc(L('Install the Tailscale app on your phone'))}</b>
+        <div class="appqr"><div class="qr small">${qr(TS_LINKS.phone, 4)}</div>
+          <div>${esc(L('Scan with the phone camera; the page offers the right store.'))}<br>${link('android', L('Android (Google Play)'))} · ${link('iphone', L('iPhone (App Store)'))}<br><span class="muted">${esc(L('Tailscale is a private network: only your own devices can reach the board, nothing is opened to the internet.'))}</span></div></div></li>
+      <li><b>${esc(L('Sign in on the phone and turn the connection on'))}</b>${esc(L('Use the same account as this computer. When the phone asks to allow a VPN, allow it.'))}</li>
+      <li><b>${esc(L('Prepare this computer'))}</b>
+        ${ready ? `<details class="pc"><summary>${esc(L('This computer is ready ✓ ({0})', host))}</summary>${pcSteps}</details>` : `<div class="warn">${esc(L('Not ready yet: the link below only opens on this computer.'))}</div>${pcSteps}`}</li>
+      <li><b>${esc(L('Scan the board code below with the phone camera'))}</b>${esc(L('It opens in Chrome or Safari. Add it to the home screen to open it like an app. On an iPhone home-screen app, type only the code.'))}</li>
+      <li><b>${esc(L('(Optional) Get a buzz when a session waits for you'))}</b>${esc(L('At the bottom of the board on the phone: Notifications → Get them on this device.'))}</li>
     </ol>
+  </div>
+</div>
+<h2>${esc(L('Board code for your phone'))} <span class="muted" style="font-weight:normal">· ${esc(L('board: {0}', names))}</span></h2>
+<div class="pair">
+  <div class="qr big">${qr(r.url, 6)}</div>
+  <div>
     <div class="muted">${esc(L('Code'))}</div>
     <div class="code">${esc(r.code)}</div>
-    <div class="link">${esc(r.url)}</div>
+    <div class="plink">${esc(r.url)}</div>
     <button data-act="copyLink">${esc(L('Copy link'))}</button><button data-act="copyCode">${esc(L('Copy code'))}</button><button data-act="again">${esc(L('Make a new link'))}</button><button data-act="openBoard">${esc(L('Open the board here'))}</button>
     <div class="muted">${esc(r.until ? L('Works once, until {0}. A new link makes this one stop working. Do not send it to anyone else.', r.until) : L('Works once, within 10 minutes. A new link makes this one stop working. Do not send it to anyone else.'))}</div>
   </div>
 </div>
-${r.local ? `<div class="warn">${esc(L('This link only opens on this computer, because the board found no private network address. Turn on Tailscale serve for the board (or set BOARD_PUBLIC_URL) so the phone can reach it.'))}</div>` : ''}
 ${many ? `<div class="warn">${esc(L('More than one board answers here ({0}). This link is for the board installed in {1}.', names, folder))}</div>` : ''}
 <script nonce="${n}">
 (function () {
   const vscode = acquireVsCodeApi();
-  document.body.addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (b) vscode.postMessage({ type: b.dataset.act }); });
+  document.body.addEventListener('click', (e) => {
+    const a = e.target.closest('a[data-link]');
+    if (a) { e.preventDefault(); vscode.postMessage({ type: 'link', url: a.dataset.link }); return; }
+    const c = e.target.closest('button[data-cmd]');
+    if (c) { vscode.postMessage({ type: 'copyCmd', text: c.dataset.cmd }); c.textContent = '✓'; return; }
+    const b = e.target.closest('button[data-act]');
+    if (b) vscode.postMessage({ type: b.dataset.act });
+  });
 })();
 </script></body></html>`;
 }
