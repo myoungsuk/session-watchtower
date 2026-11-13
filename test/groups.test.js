@@ -289,6 +289,9 @@ test('팀 구성 추천 받기: 만들 것과 세션 수를 받아, 역할 목�
   assert.match(t, /```markdown\n# <project name> team board\n[\s\S]*## 0\. Decisions waiting for the user[\s\S]*## 7\. Handoff[\s\S]*```/, '보드 틀을 통째로 넣는다');
   assert.match(t, /Link a file" on the group board/, 'Session Watchtower 보드에 연결하라고 알린다');
   assert.match(t, /Do only step 1 now\./);
+  assert.match(t, /The lead and the deployer are fixed roles\. The roles of the other working sessions/, '대장·배포는 고정, 나머지는 유동');
+  assert.match(t, /update the role column of section 1 "Sessions and roles"/, '역할을 바꾸면 보드 1절을 고친다');
+  assert.match(t, /Never have a session review or test its own change/);
   assert.match(t, /Sessions already in the group "Chatbot ops"[^\n]*:\n- "Watcher" — Watch\n/, '보드에서 열면 그 그룹의 세션과 역할을 넣는다');
   for (const r of ['Lead', 'Watch', 'Plan', 'Design', 'Develop', 'Test', 'Review', 'Docs', 'Deploy', 'Security', 'Research']) assert.match(t, new RegExp('\\n- ' + r + ': \\S'), '역할 목록과 하는 일: ' + r);
   assert.match(t, /Only one session deploys/);
@@ -352,6 +355,44 @@ test('Codex 세션도 그룹에: 지시와 결과에 Codex에 한 말·답이 �
   await waitFor(() => /\(Codex\)/.test(stub.state.clipboard || ''), '역할 안내');
   assert.match(stub.state.clipboard, /- "Write the API client" \(Codex\)/);
   assert.match(stub.state.clipboard, /mixes Claude Code and Codex sessions, which cannot message each other directly\. Ask the user to pass things on\./);
+});
+
+test('유동 역할: 보드의 "세션과 역할" 표가 역할을 정하고(손으로 정한 역할보다 앞섬), 바뀌면 따라가며, 배포가 둘이면 경고한다', async () => {
+  const panel = stub.state.panels.find((p) => !p.disposed);
+  const memo = path.join(home, 'team-board.md');
+  const board = (watcherRole) => ['# Team board', '', '## 1. Sessions and roles (the lead and the deployer are fixed)', '| Role | Session name | Scope | Doing now |', '|---|---|---|---|',
+    `| ${watcherRole} | **Watcher** [ab12cd] | e2e/ | checking |`, '| Deploy | Deployer (address x) | | |', '| Release | Outside | | |', '| <role> | <session name> | | |', '', '## 2. Tasks', ''].join('\n');
+  fs.writeFileSync(memo, board('Test'));
+  stub.state.openDialog = memo;
+  panel.send({ type: 'linkMemo' });
+  const p = await waitFor(() => { const x = panel.lastPayload(); return x && x.memo.file === memo ? x : null; }, '보드 연결');
+  const role = (t) => p.members.find((m) => m.title === t);
+  assert.deepStrictEqual([role('Watcher').role, role('Watcher').roleFromBoard], ['Test', true], '보드가 손으로 정한 Watch보다 앞선다');
+  assert.deepStrictEqual([role('Deployer').role, role('Outside').role], ['Deploy', 'Release']);
+  assert.deepStrictEqual([role('Write the API client').role, role('Write the API client').roleFromBoard], ['', false], '보드 표에 없는 세션은 손으로 정한 역할');
+  assert.match(p.warnings.join(' '), /More than one session has the deploy role: Deployer, Outside\./, '배포가 둘이면 경고');
+  assert.deepStrictEqual([team('Chatbot ops').rows.find((r) => r.sid === SID.w).role, team('Chatbot ops').rows.find((r) => r.sid === SID.w).roleFromBoard], ['Test', true], '세션 창 꼬리표도 보드를 따른다');
+
+  // 역할 안내는 보드의 역할로, 유동 역할 규칙과 자기 검토 금지를 함께
+  panel.send({ type: 'brief', sid: SID.w });
+  await waitFor(() => /the Test member/.test(stub.state.clipboard || ''), '보드 역할로 만든 안내');
+  assert.match(stub.state.clipboard, /Test what changed and report the results/);
+  assert.match(stub.state.clipboard, /Apart from the lead and the deployer, roles are not fixed/);
+  assert.match(stub.state.clipboard, /Do not review or test a change you made yourself/);
+
+  // 대장이 보드에서 역할을 바꾸면 보드 화면을 열지 않아도 세션 창이 따라간다(확인 주기 2초)
+  fs.writeFileSync(memo, board('Review'));
+  await waitFor(() => team('Chatbot ops').rows.find((r) => r.sid === SID.w).role === 'Review', '세션 창이 바뀐 역할을 따름', 15000);
+  await waitFor(() => panel.lastPayload().members.find((m) => m.title === 'Watcher').role === 'Review', '보드 화면도', 15000);
+  // 역할 고르기 창은 보드가 정한 역할이 앞선다고 알려 준다
+  stub.state.quickPick = null;
+  web.send({ type: 'role', sid: SID.w });
+  const qp = await waitFor(() => stub.state.quickPick && stub.state.quickPick.shown && stub.state.quickPick, '역할 고르기 창');
+  assert.match(qp.title, /the team board says "Review"/);
+  qp.hide();
+
+  panel.send({ type: 'unlinkMemo' });
+  await waitFor(() => team('Chatbot ops').rows.find((r) => r.sid === SID.w).role === 'Watch', '보드를 끊으면 손으로 정한 역할로', 15000);
 });
 
 test('세션은 그룹 하나에만: 다른 그룹에 넣으면 앞 그룹에서 빠지고 역할은 따라간다. 다른 창이 바꾼 그룹도 반영한다', async () => {

@@ -120,6 +120,7 @@ If you run several sessions as a team, each with its own job, put them in a **gr
 
 - **Make a group and fill it.** Hover a session and press the group button, then pick a group or "New group…". A session belongs to one group at a time. The board's *Add sessions…* adds several at once, also from other folders.
 - **Roles.** Pick one or more roles from a list of the ones most projects need (Watch, Plan, Design, Develop, Test, Review, Docs, Deploy, Security, Research), each shown with what it does, or type your own. It shows as a tag next to the name. A tag is only a label: the session does not know its role until you tell it, which is what the role note on the board is for.
+- **Roles that follow the team board.** Only the lead and the deployer are fixed; the other roles change task by task. When the group's shared memo has a *Sessions and roles* table (the team board template has one), the role tags follow that table: the lead edits it, and the tags change in the Sessions view and on the board, shown with a dashed border. A role set by hand is used only for sessions the table does not list. The board warns when more than one session has the deploy or the lead role.
 - **The group stays together at the top** of the Sessions view; its sessions no longer repeat further down.
 - Groups are stored for this computer, so every VS Code window on it shows the same groups.
 

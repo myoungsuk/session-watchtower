@@ -30,7 +30,7 @@ node "$V/demo.js" "$REPO" "$RUN/home" "$RUN/ws" "$PIDS" || exit 1
 if [ "$SCENE" = groups ] || [ "$SCENE" = roles ]; then
   # a demo group with roles and a shared memo, written where the extension keeps its groups; plus uncommitted work in the demo repo
   GS="$RUN/ud/User/globalStorage/kms-labs.session-watchtower"; mkdir -p "$GS"
-  printf '# Release crew\n\n## Decisions waiting\n\n| # | Question | Asked by |\n|---|---|---|\n| 1 | Ship the webhook retry change before Friday? | Add payment webhooks |\n\n## Decision log\n\n- 11-12 10:41 "go with the session store" (Refactor auth middleware)\n' > "$RUN/home/board.md"
+  printf '# Release crew team board\n\n## 0. Decisions waiting for the user\n\n| # | Question | Recommendation | Asked by |\n|---|---|---|---|\n| 1 | Ship the webhook retry change before Friday? | Yes | Add payment webhooks |\n\n## 1. Sessions and roles\n\n| Role | Session name | Scope | Doing now |\n|---|---|---|---|\n| Develop | Refactor auth middleware | src/middleware | token refresh |\n| Deploy | Add payment webhooks | src/api | waiting for approval |\n| Review | Fix flaky e2e tests | e2e | reviewing the auth change |\n\n## 4. Decision log\n\n- 11-12 10:41 "go with the session store" (Refactor auth middleware)\n' > "$RUN/home/board.md"
   node -e '
     const fs = require("fs"); const [demoFile, out, memo] = process.argv.slice(1); const d = JSON.parse(fs.readFileSync(demoFile, "utf8"));
     const m = (t, role) => [d.sids[t], { role, at: Date.now() }];

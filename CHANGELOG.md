@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.21.0
+
+- **Roles follow the team board.** The lead and the deployer stay fixed; the other roles change task by task. When a group's shared memo has a *Sessions and roles* table, the role tags are read from it (dashed border) and change as soon as the lead edits the table, even with the board closed. Roles set by hand apply only to sessions the table does not list. Works with the team board template and with tables that use the same column names.
+- The board warns when more than one session has the deploy role, or the lead role.
+- The lead request, the role note and the board template now say that roles other than lead and deploy are not fixed, that a session never reviews or tests its own change, and that the lead updates the roles table when it hands out work.
+
 ## 0.20.0
 
 - **Start a team with a lead session.** The team request now makes the session you paste it into the lead: it recommends the team, creates a team board from a detailed template (decisions waiting, sessions and roles, tasks and order, reports, decision log, shared resources, rules, handoff), writes the first instruction for each working session, and from then on takes reports and gives instructions. A new *Lead* role is in the role list, and *Create a memo file* uses the same board template.

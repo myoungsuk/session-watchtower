@@ -286,5 +286,9 @@
   "Start a team with a lead…": "대장 세션으로 팀 꾸리기…",
   "Copy a request that makes a session the lead: it recommends how many sessions and which roles, creates the team board, writes the first instruction for each session, and then takes reports and gives instructions.": "세션 하나를 대장으로 만드는 요청 글을 복사합니다. 대장은 세션 수와 역할을 추천하고, 협업 보드를 만들고, 세션마다 첫 지시를 쓰고, 그 뒤로 보고받고 지시합니다.",
   "Starting from scratch? Press \"Start a team with a lead…\" and paste the request into a new session; that session becomes the lead and sets up the rest.": "처음부터 시작한다면 \"대장 세션으로 팀 꾸리기…\"를 눌러 요청 글을 새 세션에 붙여 넣으세요. 그 세션이 대장이 되어 나머지를 꾸립니다.",
-  "Copied the lead session request. The session you paste it into becomes the lead: it recommends the team, creates the team board, writes the first instruction for each session, and from then on takes reports and gives instructions.": "대장 세션 요청 글을 복사했습니다. 붙여 넣은 세션이 대장이 됩니다. 팀 구성을 추천하고, 협업 보드를 만들고, 세션마다 첫 지시를 쓰고, 그 뒤로 보고받고 지시합니다."
+  "Copied the lead session request. The session you paste it into becomes the lead: it recommends the team, creates the team board, writes the first instruction for each session, and from then on takes reports and gives instructions.": "대장 세션 요청 글을 복사했습니다. 붙여 넣은 세션이 대장이 됩니다. 팀 구성을 추천하고, 협업 보드를 만들고, 세션마다 첫 지시를 쓰고, 그 뒤로 보고받고 지시합니다.",
+  "More than one session has the deploy role: {0}. Only one session should deploy.": "배포 역할을 가진 세션이 둘 이상입니다: {0}. 배포는 한 세션만 맡아야 합니다.",
+  "More than one session has the lead role: {0}. A team should have one lead.": "대장 역할을 가진 세션이 둘 이상입니다: {0}. 대장은 한 세션이어야 합니다.",
+  "Role from the team board (the lead changes it there)": "협업 보드에서 읽은 역할(대장이 보드에서 바꿉니다)",
+  "the team board says \"{0}\" and wins over this": "협업 보드에 \"{0}\"(으)로 적혀 있어 보드가 앞섭니다"
 }
