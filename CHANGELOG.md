@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.1
+
+- Fixed: with a group board open, a role change in the team board file could leave the old role tag in the Sessions view, because the board read the file first and the Sessions view then saw nothing new.
+
 ## 0.21.0
 
 - **Roles follow the team board.** The lead and the deployer stay fixed; the other roles change task by task. When a group's shared memo has a *Sessions and roles* table, the role tags are read from it (dashed border) and change as soon as the lead edits the table, even with the board closed. Roles set by hand apply only to sessions the table does not list. Works with the team board template and with tables that use the same column names.

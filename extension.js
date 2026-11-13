@@ -880,14 +880,16 @@ function boardRowsOf(file) {
   return rows;
 }
 
-// 연결된 보드 파일이 바뀌었는지(확인 주기마다 본다): 대장이 역할을 고치면 보드 화면을 열지 않아도 세션 창 꼬리표가 바뀌게
+// 연결된 보드 파일이 바뀌었는지(확인 주기마다 본다): 대장이 역할을 고치면 보드 화면을 열지 않아도 세션 창 꼬리표가 바뀌게.
+// 세션 창이 마지막으로 그릴 때 본 판과 비교한다: 보드 화면이 먼저 새 파일을 읽어도 세션 창은 다시 그려야 한다(그룹 파일과 같은 이유)
+const boardsRendered = new Map(); // 파일 → 세션 창이 그릴 때 본 수정 시각
+function memoMtime(file) {
+  try { return fs.statSync(file).mtimeMs; } catch { return -1; }
+}
 function boardFilesChanged() {
   for (const g of loadGroups().groups) {
     if (!g.memo) continue;
-    let m = -1;
-    try { m = fs.statSync(g.memo).mtimeMs; } catch { m = -1; }
-    const hit = boardRoleMemo.get(g.memo);
-    if ((hit ? hit.mtimeMs : -1) !== m) return true;
+    if (memoMtime(g.memo) !== (boardsRendered.has(g.memo) ? boardsRendered.get(g.memo) : -2)) return true;
   }
   return false;
 }
@@ -2138,7 +2140,11 @@ function sessionsPayload() {
   const teamOf = new Map();
   for (const g of teamList) for (const sid of Object.keys(g.members)) teamOf.set(sid, g);
   teamRolesCache.clear();
-  for (const g of teamList) teamRolesCache.set(g.id, effectiveRoles(g));
+  boardsRendered.clear();
+  for (const g of teamList) {
+    if (g.memo) boardsRendered.set(g.memo, memoMtime(g.memo));
+    teamRolesCache.set(g.id, effectiveRoles(g));
+  }
   const all = sessionsModel.concat(archivedModel);
   const free = (s) => !teamOf.has(s.sid);
   const teams = teamList.map((g) => {

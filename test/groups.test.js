@@ -382,6 +382,7 @@ test('유동 역할: 보드의 "세션과 역할" 표가 역할을 정하고(손
 
   // 대장이 보드에서 역할을 바꾸면 보드 화면을 열지 않아도 세션 창이 따라간다(확인 주기 2초)
   fs.writeFileSync(memo, board('Review'));
+  panel.send({ type: 'refresh' }); // 보드 화면이 먼저 새 파일을 읽어도(0.21.0에서 세션 창이 안 바뀌던 경우) 세션 창은 따라가야 한다
   await waitFor(() => team('Chatbot ops').rows.find((r) => r.sid === SID.w).role === 'Review', '세션 창이 바뀐 역할을 따름', 15000);
   await waitFor(() => panel.lastPayload().members.find((m) => m.title === 'Watcher').role === 'Review', '보드 화면도', 15000);
   // 역할 고르기 창은 보드가 정한 역할이 앞선다고 알려 준다
