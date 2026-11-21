@@ -460,5 +460,7 @@
   "Full setup guide": "자세한 설치 안내",
   "The QR code for the phone appears after step 3: the phone cannot open this link yet ({0} only opens on this computer). Finish step 3, then press \"Make a new link\".": "휴대폰용 QR은 3번을 마친 뒤 나옵니다. 지금 링크({0})는 이 컴퓨터에서만 열려서 휴대폰으로는 안 됩니다. 3번을 마친 뒤 \"새 링크 만들기\"를 누르세요.",
   "Renaming the Codex session…": "Codex 대화 이름을 바꾸는 중…",
-  "Could not rename the Codex session: the Codex program was not found. Install the Codex extension or the codex CLI, or rename it in Codex.": "Codex 대화 이름을 바꾸지 못했습니다: Codex 프로그램을 찾지 못했습니다. Codex 확장이나 codex CLI를 설치하거나, Codex에서 직접 바꿔 주세요."
+  "Could not rename the Codex session: the Codex program was not found. Install the Codex extension or the codex CLI, or rename it in Codex.": "Codex 대화 이름을 바꾸지 못했습니다: Codex 프로그램을 찾지 못했습니다. Codex 확장이나 codex CLI를 설치하거나, Codex에서 직접 바꿔 주세요.",
+  "Reviewed. A newer change to this file in this session clears the tick.": "검토함. 이 세션에서 이 파일이 다시 바뀌면 체크가 풀립니다.",
+  "Tick when reviewed": "검토했으면 체크"
 }

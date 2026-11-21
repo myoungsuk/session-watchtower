@@ -2621,6 +2621,7 @@ class Provider {
     }
     if (el.t === 'file') {
       const { s, f } = el;
+      const reviewed = isReviewed(s, f);
       const it = new vscode.TreeItem(path.basename(f.path), N.Collapsed);
       it.id = `f:${s.sid}|${f.path}`;
       it.resourceUri = vscode.Uri.from({ scheme: ITEM_SCHEME, path: f.path, query: f.badge });
@@ -2643,6 +2644,10 @@ class Provider {
       ].filter(Boolean).join('\n');
       it.command = { command: 'claudeSessionChanges.openFileDiff', title: L('Compare'), arguments: [el] };
       it.contextValue = 'file';
+      it.checkboxState = {
+        state: reviewed ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked,
+        tooltip: reviewed ? L('Reviewed. A newer change to this file in this session clears the tick.') : L('Tick when reviewed'),
+      };
       return it;
     }
     if (el.t === 'change') {
@@ -4086,6 +4091,31 @@ function updateStatusBar() {
 // Claude는 Claude Code가 ~/.claude.json에 받아 둔 값, Codex는 가장 최근 Codex 기록의 마지막 한도 값(usage.js).
 // 인터넷에 묻지 않고, 매 주기에 파일 크기·시각만 보고 바뀌었을 때만 읽는다. 글자가 같으면 상태 표시줄을 다시 그리지 않는다.
 const USAGE_CODEX_KEY = 'claudeSessionChanges.usageCodexLast';
+
+// ---------- Mark reviewed ----------
+// A changed file has a checkbox for "reviewed". The mark remembers the file's last change time in that session,
+// so a newer change clears it by itself. Kept in globalState (sessions show in every window), newest 500 only.
+const REVIEWED_KEY = 'claudeSessionChanges.reviewed';
+const reviewedKey = (s, f) => `${s.sid}|${pathKey(f.path)}`;
+
+function isReviewed(s, f) {
+  const marks = (ctx && ctx.globalState.get(REVIEWED_KEY, {})) || {};
+  return !!s && !!f && marks[reviewedKey(s, f)] === f.lastTs;
+}
+
+// items: [[tree element, TreeItemCheckboxState], ...] as onDidChangeCheckboxState gives them
+function setReviewed(items) {
+  if (!ctx) return;
+  const marks = { ...(ctx.globalState.get(REVIEWED_KEY, {}) || {}) };
+  for (const [el, state] of items || []) {
+    if (!el || el.t !== 'file' || !el.s || !el.f) continue;
+    const k = reviewedKey(el.s, el.f);
+    delete marks[k];
+    if (state === vscode.TreeItemCheckboxState.Checked) marks[k] = el.f.lastTs;
+  }
+  ctx.globalState.update(REVIEWED_KEY, Object.fromEntries(Object.entries(marks).slice(-500)));
+  provider.fire();
+}
 let usageItem = null;
 let usageCodexLast = null; // 마지막으로 읽은 Codex 한도(창을 다시 불러와도 남게 globalState에도 둔다)
 let usageShown = '';
@@ -4946,7 +4976,7 @@ function activate(context) {
   aliveOnly = !!context.globalState.get(CTX_ALIVE, false);
   vscode.commands.executeCommand('setContext', CTX_ALIVE, aliveOnly);
 
-  treeView = vscode.window.createTreeView(VIEW, { treeDataProvider: provider, showCollapseAll: true });
+  treeView = vscode.window.createTreeView(VIEW, { treeDataProvider: provider, showCollapseAll: true, manageCheckboxStateManually: true });
   // 세션 숫자와 사용량은 오른쪽에 나란히(사용자 요청). 다른 확장 항목이 사이에 끼지 않게 흔치 않은, 바로 붙은 우선순위를 쓴다
   const STATUS_PRIORITY = 9876.5432;
   statusItem = vscode.window.createStatusBarItem('claudeSessionChanges.status', vscode.StatusBarAlignment.Right, STATUS_PRIORITY + 0.0001);
@@ -5006,6 +5036,7 @@ function activate(context) {
     vscode.commands.registerCommand('claudeSessionChanges.copySessionId', (el) => el && el.s && vscode.env.clipboard.writeText(el.s.sid)),
     vscode.commands.registerCommand('claudeSessionChanges.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
     treeView.onDidChangeVisibility((e) => { if (e.visible) requestScan(false); }),
+    treeView.onDidChangeCheckboxState((e) => setReviewed(e.items)),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('claudeCode.archiveInactiveSessions')) requestScan(true); // 다른 폴더 세션을 읽는 기간도 함께 바뀐다
       if (e.affectsConfiguration('workbench.reduceMotion')) updateExplorerMarks();

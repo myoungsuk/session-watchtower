@@ -342,6 +342,30 @@ test('변경 전부 보기: 세션이 바꾼 파일을 한 창에', async () => 
   assert.strictEqual(await content(edited[2]), 'b\nrest\n');
 });
 
+test('Mark reviewed: a checkbox on each changed file, cleared by a newer change or by unticking', async () => {
+  const view = stub.trees[TREE];
+  assert.strictEqual(view.options.manageCheckboxStateManually, true, 'ticking a file must not tick its parent or children');
+  const { Checked, Unchecked } = stub.vscode.TreeItemCheckboxState;
+  const item = () => provider().getTreeItem(fileOf('app.js'));
+  const tick = (el, state) => view.checkboxListener({ items: [[el, state]] });
+  assert.strictEqual(item().checkboxState.state, Unchecked);
+  assert.strictEqual(provider().getTreeItem(sessionA()).checkboxState, undefined, 'only files have a checkbox');
+  tick(fileOf('app.js'), Checked);
+  assert.strictEqual(item().checkboxState.state, Checked);
+  assert.match(item().checkboxState.tooltip, /Reviewed/);
+  assert.strictEqual(provider().getTreeItem(fileOf('new.js')).checkboxState.state, Unchecked, 'other files are not ticked');
+  const f = fileOf('app.js').f;
+  const was = f.lastTs;
+  f.lastTs = was + 1000; // the session changed the file again
+  try {
+    assert.strictEqual(item().checkboxState.state, Unchecked, 'a newer change clears the tick');
+  } finally { f.lastTs = was; }
+  assert.strictEqual(item().checkboxState.state, Checked);
+  tick(fileOf('app.js'), Unchecked);
+  assert.strictEqual(item().checkboxState.state, Unchecked);
+  view.checkboxListener({ items: [[{ t: 'session', s: sessionA().s }, Checked]] }); // not a file: ignored
+});
+
 test('상태 표시줄: 작업 중 → 승인 기다림이면 경고색', async () => {
   const bar = stub.statusItems[0];
   assert.match(bar.text, /\$\(loading~spin\) 1/);

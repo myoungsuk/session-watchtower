@@ -37,6 +37,7 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
   const vscode = {
     EventEmitter, TreeItem, ThemeIcon, ThemeColor, FileDecoration, MarkdownString, Uri,
     TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
+    TreeItemCheckboxState: { Unchecked: 0, Checked: 1 },
     ViewColumn: { Active: -1, Beside: -2, One: 1 },
     ConfigurationTarget: { Global: 1 },
     StatusBarAlignment: { Left: 1, Right: 2 },
@@ -49,7 +50,8 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
     window: {
       createTreeView: (id, o) => {
         const view = {
-          id, provider: o.treeDataProvider, visible: true, onDidChangeVisibility: disposable, dispose() {},
+          id, provider: o.treeDataProvider, options: o, visible: true, onDidChangeVisibility: disposable, dispose() {},
+          onDidChangeCheckboxState: (fn) => { view.checkboxListener = fn; return disposable(); },
           reveal: async (el, opt) => { reveals.push([id, o.treeDataProvider.getTreeItem(el).id, opt]); let x = el; while (x) { o.treeDataProvider.getTreeItem(x); x = o.treeDataProvider.getParent ? o.treeDataProvider.getParent(x) : undefined; } },
         };
         trees[id] = view;

@@ -181,6 +181,8 @@ The *Review all changes* button opens every file a session changed in one multi-
 
 For files changed only with edit tools or commits, the right side is the file as the session left it, so later edits by other sessions do not get mixed in. Files that are only guesses are left out, and you are told how many.
 
+To keep track in a long session, tick the checkbox in front of a changed file once you have reviewed it. A newer change to that file in the session clears the tick by itself.
+
 ## Notifications
 
 <img src="media/readme/notifications.png" width="470" alt="Three notifications: overlapping edit, waiting for approval, possibly stuck">
