@@ -179,7 +179,7 @@ The *Review all changes* button opens every file a session changed in one multi-
 
 <img src="media/readme/review.png" width="760" alt="A multi-file diff with all the files one session changed">
 
-For files changed only with edit tools or commits, the right side is the file as the session left it, so later edits by other sessions do not get mixed in. Files that are only guesses are left out, and you are told how many.
+For files changed only with edit tools or commits, the right side is the file as the session left it, so later edits by other sessions do not get mixed in. When an edit-tool file on disk still matches that, the right side is the real file, so *Revert Block* changes it. Files that are only guesses are left out, and you are told how many.
 
 ## Notifications
 

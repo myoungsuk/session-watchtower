@@ -342,6 +342,33 @@ test('변경 전부 보기: 세션이 바꾼 파일을 한 창에', async () => 
   assert.strictEqual(await content(edited[2]), 'b\nrest\n');
 });
 
+test('Edit-tool-only file still at its end-of-session content: the right side is the real file (Revert Block works)', async () => {
+  const before = fs.readFileSync(fEdit);
+  const st = fs.statSync(fEdit);
+  const rightOf = async () => {
+    stub.calls.length = 0;
+    await stub.commands.get('claudeSessionChanges.openFileDiff')(fileOf('app.js'));
+    return stub.calls.find((c) => c[0] === 'vscode.diff')[2];
+  };
+  try {
+    for (const text of ['b\nrest\n', 'b\r\nrest\r\n']) {
+      fs.writeFileSync(fEdit, text);
+      fs.utimesSync(fEdit, st.atime, st.mtime);
+      const right = await rightOf();
+      assert.strictEqual(right.scheme, 'file', 'same content on disk: the live file (' + JSON.stringify(text) + ')');
+      assert.strictEqual(right.fsPath, fEdit);
+    }
+    fs.writeFileSync(fEdit, 'b\nrest\nchanged since\n');
+    fs.utimesSync(fEdit, st.atime, st.mtime);
+    const right = await rightOf();
+    assert.notStrictEqual(right.scheme, 'file', 'disk moved on: keep the end-of-session copy');
+    assert.strictEqual(await content(right), 'b\nrest\n');
+  } finally {
+    fs.writeFileSync(fEdit, before);
+    fs.utimesSync(fEdit, st.atime, st.mtime);
+  }
+});
+
 test('상태 표시줄: 작업 중 → 승인 기다림이면 경고색', async () => {
   const bar = stub.statusItems[0];
   assert.match(bar.text, /\$\(loading~spin\) 1/);

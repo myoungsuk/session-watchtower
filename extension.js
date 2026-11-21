@@ -3702,7 +3702,18 @@ async function openChangeDiff(el) {
   await vscode.commands.executeCommand('vscode.diff', u.left, u.right, `${name} (${label})`, { preview: true });
 }
 
+// Does the file on disk still hold exactly this text? (line endings aside)
+async function diskHolds(p, text) {
+  try {
+    const now = await fs.promises.readFile(p, 'utf8');
+    const lf = (t) => String(t).replace(/\r\n/g, '\n');
+    return lf(now) === lf(text);
+  } catch { return false; }
+}
+
 // 비교 화면 한 쌍의 주소(왼쪽은 항상 가상 문서, 오른쪽은 세션 끝 내용 또는 지금 디스크 파일)
+// When the end-of-session content is still what is on disk, the right side is the real file, so the diff's
+// Revert Block / Stage Block change the file and not a read-only copy. Otherwise it stays the virtual document.
 async function diffPair(f, s) {
   const name = path.basename(f.path);
   const where = s ? displayDir(f.path, s) : '';
@@ -3714,7 +3725,8 @@ async function diffPair(f, s) {
     return { left: u.left, right: u.right, title: `${kindText(latest.kind)} ${fmtTime(latest.ts, true)}` };
   }
   const u = registerDiff({ load: async () => ({ left: sd.left, right: sd.right === null ? '' : sd.right }) }, name, where);
-  const right = sd.right !== null ? u.right : sd.exists ? vscode.Uri.file(f.path) : u.right;
+  const live = sd.exists && (sd.right === null || await diskHolds(f.path, sd.right));
+  const right = live ? vscode.Uri.file(f.path) : u.right;
   return { left: u.left, right, title: sd.title };
 }
 

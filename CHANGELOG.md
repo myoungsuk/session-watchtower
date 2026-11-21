@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Revert Block works on files changed only by edit tools.** Their diff used the end-of-session content as a read-only right side, so *Revert Block* and *Stage Block* changed a copy, not the file. When the file on disk still holds exactly that content (line endings aside), the right side is now the real file. If the file has changed since, the diff stays as before.
+
 ## 0.38.0
 
 - **Codex sessions can be renamed, and show their Codex names.** The pencil button used to say Codex sessions cannot be renamed, and the list showed a Codex chat's first question even after you named it in Codex. Watchtower now reads the names Codex keeps in `~/.codex/session_index.jsonl`, and renames a Codex chat the way Codex does: it briefly starts `codex app-server` (from the Codex VS Code extension, or the `codex` CLI on PATH), sends `thread/name/set`, and stops it. Codex writes the name itself; Watchtower does not edit Codex's files. Where no Codex program can be started, Watchtower says so.
