@@ -218,6 +218,12 @@ vscode://kms-labs.session-watchtower/open?title=<session name>&folder=<folder na
 - When several sessions still match, you choose one from a list.
 - Only sessions already in the list are opened. Nothing in the link is run or typed into the conversation.
 
+`/changes` takes the same parts and opens that session's **Review all changes** view instead of its conversation:
+
+```
+vscode://kms-labs.session-watchtower/changes?key=<12 hex characters>
+```
+
 ## Find a session by what you wrote
 
 <img src="media/readme/search.png" width="600" alt="Search box listing three messages that contain the words token refresh, with the session each one belongs to">

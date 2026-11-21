@@ -294,7 +294,18 @@ test('바깥 주소(알림 배너)로 세션 열기: 해시가 이름보다 먼�
   assert.deepStrictEqual(opened(), []);
   assert.ok(stub.calls.some((c) => c[0] === 'info' && /No such session/.test(c[1])), '없으면 안내');
   stub.calls.length = 0;
+  // /changes finds the session the same way and opens its Review all changes view
+  await h.handleUri({ path: '/changes', query: 'key=' + keyA });
+  const review = stub.calls.find((c) => c[0] === 'vscode.changes');
+  assert.ok(review && /Refactor auth/.test(review[1]), '/changes opens the review view');
+  assert.deepStrictEqual(opened(), [], '/changes does not open the conversation');
+  stub.calls.length = 0;
+  await h.handleUri({ path: '/changes', query: 'title=' + encodeURIComponent('No such session') });
+  assert.ok(!stub.calls.some((c) => c[0] === 'vscode.changes'));
+  assert.ok(stub.calls.some((c) => c[0] === 'info' && /No such session/.test(c[1])), '/changes: not found message');
+  stub.calls.length = 0;
   await h.handleUri({ path: '/open', query: 'key=xyz' });
+  await h.handleUri({ path: '/changes', query: 'key=xyz' });
   await h.handleUri({ path: '/other', query: 'title=' + encodeURIComponent('Refactor auth') });
   assert.deepStrictEqual(stub.calls, [], '알 수 없는 주소와 잘못된 해시는 아무것도 하지 않음');
   assert.ok(ext._test.sameTitle('a  b\u0007', 'a b') && !ext._test.sameTitle('abc', '') && !ext._test.sameTitle('abc', 'abd'));

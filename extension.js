@@ -3480,8 +3480,10 @@ async function findSessions(want) {
   return hits;
 }
 
+// /changes?key=… takes the same inputs and matching as /open, but opens that session's Review all changes view.
 async function openFromUri(uri) {
-  if (!uri || uri.path !== '/open') return undefined;
+  const go = !uri ? null : uri.path === '/open' ? openClaudeSession : uri.path === '/changes' ? openSessionChanges : null;
+  if (!go) return undefined;
   const q = new URLSearchParams(uri.query || '');
   const text = (k) => String(q.get(k) || '').slice(0, 200);
   const key = String(q.get('key') || '');
@@ -3489,7 +3491,7 @@ async function openFromUri(uri) {
   if (!want.key && !want.title) return undefined;
   const hits = await findSessions(want);
   if (!hits.length) return vscode.window.showInformationMessage(L('The session "{0}" is not in the list of this window.', want.title || want.key));
-  if (hits.length === 1) return openClaudeSession(hits[0].sid);
+  if (hits.length === 1) return go(hits[0].sid);
   hits.sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
   const items = hits.map((s) => ({
     label: s.title || s.sid.slice(0, 8),
@@ -3497,7 +3499,7 @@ async function openFromUri(uri) {
     sid: s.sid,
   }));
   const choice = await vscode.window.showQuickPick(items, { placeHolder: L('Several sessions have this name. Which one?') });
-  return choice ? openClaudeSession(choice.sid) : undefined;
+  return choice ? go(choice.sid) : undefined;
 }
 
 const pinned = new Map();
