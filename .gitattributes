@@ -1,0 +1,3 @@
+# board/ is a byte-for-byte copy of a session-board commit (test/boardhost.test.js checks its hashes),
+# so never convert its line endings, even with core.autocrlf=true (the Git for Windows default)
+board/** -text

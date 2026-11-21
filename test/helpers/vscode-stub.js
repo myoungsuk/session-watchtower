@@ -86,7 +86,7 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
         const disposeLs = [];
         const panel = {
           viewType, title, revealed: 0, disposed: false,
-          webview: { html: '', cspSource: 'vscode-resource:', asWebviewUri: (u) => ({ toString: () => 'vscode-resource:' + u.path }), onDidReceiveMessage: (cb) => { onMessage = cb; return disposable(); }, postMessage: async (m) => { posted.push(m); return true; } },
+          webview: { html: '', cspSource: 'vscode-resource:', asWebviewUri: (u) => ({ toString: () => 'vscode-resource:' + String(u.path).replace(/\\/g, '/') }), /* real webview URIs always use / */ onDidReceiveMessage: (cb) => { onMessage = cb; return disposable(); }, postMessage: async (m) => { posted.push(m); return true; } },
           reveal() { this.revealed++; }, onDidDispose: (cb) => { disposeLs.push(cb); return disposable(); },
           dispose() { if (this.disposed) return; this.disposed = true; disposeLs.forEach((cb) => cb()); },
           posted, send: (m) => onMessage(m), lastPayload: () => { for (let i = posted.length - 1; i >= 0; i--) if (posted[i].type === 'render') return posted[i].payload; return null; },

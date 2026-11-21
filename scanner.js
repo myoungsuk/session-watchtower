@@ -286,7 +286,13 @@ function resolveTarget(p, cwd) {
   if (p.includes('$')) return null;
   if (p === '~' || p.startsWith('~/')) p = HOME + p.slice(1);
   if (p.startsWith('/dev/') || p.startsWith('/proc/')) return null;
-  if (!path.isAbsolute(p)) {
+  // "//host/..." is the tail of a URL (or a network path); on Windows looking it up would go to the network
+  if (/^[\\/]{2}/.test(p)) return null;
+  // Windows: Git Bash (Claude Code's Bash tool) writes C:\x as /c/x
+  if (process.platform === 'win32') p = p.replace(/^\/([A-Za-z])(\/|$)/, (_, d) => d.toUpperCase() + ':/');
+  // Windows: a path without a drive ("/x" or "\x") is on the drive of the folder the command ran in
+  const noDrive = process.platform === 'win32' && !/^[A-Za-z]:/.test(p);
+  if (!path.isAbsolute(p) || noDrive) {
     if (!cwd) return null;
     p = path.resolve(cwd, p);
   }
@@ -589,7 +595,8 @@ function tsBefore(line) {
 
 // 명령 글자 속 절대 경로(따옴표·여기 문서 안도)가 가리키는 폴더. 작업 폴더 밖 저장소의 파일을
 // 파이썬 등으로 고친 명령도 그 저장소를 보게 한다(예: Path('/다른/저장소/note.txt').write_bytes(…)). 있는 파일·폴더만
-const ABS_PATH_RE = /(?:^|[\s"'`=(,:[{])((?:~|\$HOME|\$\{HOME\})?\/[^\s"'`;|&<>(){}[\],]+)/g;
+// Windows drive paths too (C:\x or C:/x)
+const ABS_PATH_RE = /(?:^|[\s"'`=(,:[{])((?:~|\$HOME|\$\{HOME\})?\/[^\s"'`;|&<>(){}[\],]+|[A-Za-z]:[\\/][^\s"'`;|&<>(){}[\],]+)/g;
 function pathDirsIn(cmd) {
   const out = [];
   const src = String(cmd || '').slice(0, 20000);

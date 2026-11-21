@@ -6,6 +6,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const fx = require('./helpers/fixture');
+const fb = require('./helpers/fake-bin');
 
 const { home, project, markers } = fx.makeHome();
 const stub = require('./helpers/vscode-stub').install({
@@ -124,10 +125,15 @@ test('다시 받기: 값이 오래됐고 그 뒤에 Claude 세션이 일했으�
   const SIDC = 'c1a0de00-1111-4111-8111-111111111111';
   fx.claudeSession(home, project, SIDC, [{ type: 'user', message: { role: 'user', content: 'hello' }, cwd: project, sessionId: SIDC, timestamp: new Date().toISOString(), uuid: 'u1' }]);
   // 진짜 claude 대신: 받은 인자·폴더·환경을 적고, Claude Code처럼 ~/.claude.json에 새 값을 써 넣는 대역
-  const bin = path.join(home, 'fake-claude');
   const log = path.join(home, 'fake-claude.log');
-  fs.writeFileSync(bin, `#!/bin/sh\necho "$PWD|$*|entry=\${CLAUDE_CODE_ENTRYPOINT:-none}|cc=\${CLAUDECODE:-none}" >> '${log}'\nnode -e 'const f=process.argv[1];const fs=require("fs");const d=JSON.parse(fs.readFileSync(f,"utf8"));d.cachedUsageUtilization={fetchedAtMs:Date.now(),utilization:{seven_day:{utilization:88,resets_at:new Date(Date.now()+180000000).toISOString()}}};fs.writeFileSync(f,JSON.stringify(d,null,2))' '${CFG}'\n`);
-  fs.chmodSync(bin, 0o755);
+  const bin = fb.fakeBin(home, 'fake-claude', `const fs = require('fs');
+const e = process.env;
+fs.appendFileSync(${JSON.stringify(log)}, process.cwd() + '|' + process.argv.slice(2).join(' ') + '|entry=' + (e.CLAUDE_CODE_ENTRYPOINT || 'none') + '|cc=' + (e.CLAUDECODE || 'none') + '\\n');
+const f = ${JSON.stringify(CFG)};
+const d = JSON.parse(fs.readFileSync(f, 'utf8'));
+d.cachedUsageUtilization = { fetchedAtMs: Date.now(), utilization: { seven_day: { utilization: 88, resets_at: new Date(Date.now() + 180000000).toISOString() } } };
+fs.writeFileSync(f, JSON.stringify(d, null, 2));
+`);
   ext._test.setClaudeBin(bin);
   process.env.CLAUDE_CODE_ENTRYPOINT = 'claude-vscode';
   process.env.CLAUDECODE = '1';
@@ -136,7 +142,9 @@ test('다시 받기: 값이 오래됐고 그 뒤에 Claude 세션이 일했으�
   await waitFor(() => /Claude 88%/.test(item().text), '자동으로 다시 받음', 15000);
   const lines = fs.readFileSync(log, 'utf8').trim().split('\n');
   assert.strictEqual(lines.length, 1, '한 번만');
-  assert.strictEqual(lines[0], `${project}|-p /usage --no-session-persistence --strict-mcp-config --mcp-config {"mcpServers":{}}|entry=none|cc=none`, '이 폴더에서, MCP 서버 없이, 기록 없이, 이 세션의 표시를 빼고');
+  // A .cmd stand-in on Windows runs through the shell, where the extension leaves out the JSON MCP arguments (cmd.exe would mangle the quotes)
+  const mcpArgs = fb.win ? '' : ' --strict-mcp-config --mcp-config {"mcpServers":{}}';
+  assert.strictEqual(lines[0], `${project}|-p /usage --no-session-persistence${mcpArgs}|entry=none|cc=none`, '이 폴더에서, MCP 서버 없이, 기록 없이, 이 세션의 표시를 빼고');
   assert.match(item().tooltip.value, /re-check this every 15 minutes/);
   assert.match(item().tooltip.value, /never reads your login/);
   // 값이 새것이면 다시 돌리지 않는다

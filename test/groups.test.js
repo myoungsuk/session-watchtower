@@ -70,7 +70,7 @@ fx.codexSession(home, 'c0de0000-2222-4222-8222-222222222222', [
 for (const f of fs.readdirSync(path.join(home, '.codex', 'sessions'), { recursive: true })) { const p = path.join(home, '.codex', 'sessions', f); if (p.endsWith('.jsonl')) fs.utimesSync(p, new Date(now - 9 * MIN), new Date(now - 9 * MIN)); }
 fx.registerSession(home, process.pid, SID.w, { status: 'idle', cwd: project, name: 'w', nameSource: 'derived', statusUpdatedAt: now - 5 * MIN });
 fx.registerSession(home, process.ppid, SID.d, { status: 'waiting', waitingFor: 'permission prompt', cwd: project, name: 'd', nameSource: 'derived', statusUpdatedAt: now - 2 * MIN });
-fx.registerSession(home, 1, SID.v, { status: 'busy', cwd: project, name: 'v', nameSource: 'derived', statusUpdatedAt: now - 25 * MIN });
+fx.registerSession(home, fx.alivePid(), SID.v, { status: 'busy', cwd: project, name: 'v', nameSource: 'derived', statusUpdatedAt: now - 25 * MIN });
 fx.registerSession(home, sleeper.pid, SID.o, { status: 'idle', cwd: other, name: 'o', nameSource: 'derived', statusUpdatedAt: now - 9 * MIN });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

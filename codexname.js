@@ -8,6 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { programExists } = require('./findbin');
 
 const SET_TIMEOUT_MS = 20000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -40,6 +41,8 @@ function setCodexThreadName({ bin, threadId, name, home, timeoutMs = SET_TIMEOUT
     const title = String(name || '').replace(/\s+/g, ' ').trim();
     if (!title) return resolve({ ok: false, reason: 'rpc', message: 'empty name' });
     const b = bin || findCodexBin([]);
+    // Through the shell a missing program gives no ENOENT, so check first
+    if (b.shell && !programExists(b.cmd)) return resolve({ ok: false, reason: 'missing', message: 'codex not found' });
     let child;
     try {
       child = spawn(b.cmd, ['app-server'], { shell: !!b.shell, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'], env: { ...process.env, CODEX_HOME: home || codexHome() } });

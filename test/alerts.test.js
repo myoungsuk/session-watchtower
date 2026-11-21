@@ -44,7 +44,7 @@ fx.subagentSession(home, project, SID_SUB, 'agent-callers', [rec.toolUse(project
 const fileO = fx.claudeSession(home, project, SID_O, [rec.user(project, now - 30 * MIN, 'Tidy imports'), rec.aiTitle(SID_O, 'Tidier')]);
 fx.registerSession(home, process.pid, SID_STUCK, { status: 'busy', cwd: project, name: 'd1', nameSource: 'derived', statusUpdatedAt: now - 20 * MIN });
 fx.registerSession(home, process.ppid, SID_SUB, { status: 'busy', cwd: project, name: 'd2', nameSource: 'derived', statusUpdatedAt: now - 9 * MIN });
-fx.registerSession(home, 1, SID_O, { status: 'idle', cwd: project, name: 'd3', nameSource: 'derived', statusUpdatedAt: now - 29 * MIN });
+fx.registerSession(home, fx.alivePid(), SID_O, { status: 'idle', cwd: project, name: 'd3', nameSource: 'derived', statusUpdatedAt: now - 29 * MIN });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(fn, what, ms = 15000) {
@@ -162,8 +162,10 @@ test('변경 요약을 마크다운으로 복사한다', async () => {
   const one = await stub.commands.get('claudeSessionChanges.copySummary')(SID_SUB);
   assert.strictEqual(stub.state.clipboard, one);
   assert.match(one, /^## Session changes · last 24h\n\n### Splitter\n\n- 3 files · \+6 −3 · /);
-  assert.match(one, /- Files:\n {2}- `src\/solo\.js` M \(\+2 −1\)\n/);
-  assert.match(one, /`src\/shared\.js` M \(\+2 −1\) ⚠ also changed by Tidier/);
+  // Relative paths use this OS's separator (src\solo.js on Windows)
+  const rel = (name) => ['src', name].join(path.sep).replace(/[\\.]/g, '\\$&');
+  assert.match(one, new RegExp('- Files:\\n {2}- `' + rel('solo.js') + '` M \\(\\+2 −1\\)\\n'));
+  assert.match(one, new RegExp('`' + rel('shared.js') + '` M \\(\\+2 −1\\) ⚠ also changed by Tidier'));
   const all = await stub.commands.get('claudeSessionChanges.copyFolderSummary')();
   assert.ok(/### Splitter/.test(all) && /### Tidier/.test(all) && !/### Stuck one/.test(all), '바꾼 파일이 있는 세션만');
   assert.ok(stub.calls.some((c) => c[0] === 'info' && /Copied a summary of \d session\(s\)/.test(c[1])));

@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
+const { programExists } = require('./findbin');
 
 const LOCK_WAIT_MS = 4000;
 const LIST_TIMEOUT_MS = 90000;
@@ -288,8 +289,10 @@ function parseMcpList(stdout) {
 // 상태 확인: Claude Code가 세션을 시작할 때처럼 서버마다 실제로 붙어 본다(stdio 서버는 잠깐 실행된다). 결과: { ok, servers, err }
 function checkStatus(bin, folder, timeoutMs = LIST_TIMEOUT_MS) {
   return new Promise((resolve) => {
-    const win = process.platform === 'win32';
-    execFile(bin, ['mcp', 'list'], { cwd: folder, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, windowsHide: true, shell: win && !/\.exe$/i.test(bin), env: process.env }, (err, stdout) => {
+    const shell = process.platform === 'win32' && !/\.exe$/i.test(bin);
+    // Through the shell a missing program gives no ENOENT (cmd.exe exits 0 or 1), so check first
+    if (shell && !programExists(bin)) return resolve({ ok: false, err: 'nobin' });
+    execFile(bin, ['mcp', 'list'], { cwd: folder, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, windowsHide: true, shell, env: process.env }, (err, stdout) => {
       const servers = parseMcpList(stdout || '');
       if (err && !servers.size) resolve({ ok: false, err: err.code === 'ENOENT' ? 'nobin' : err.killed ? 'timeout' : 'failed' });
       else resolve({ ok: true, servers, empty: /No MCP servers configured/.test(stdout || '') });

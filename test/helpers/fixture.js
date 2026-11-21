@@ -77,6 +77,19 @@ function registerSession(home, pid, sid, fields) {
   fs.writeFileSync(path.join(dir, pid + '.json'), JSON.stringify(data));
 }
 
+// A running process that is not this test: someone else's live Claude Code session.
+// pid 1 is always that on Linux and macOS, but Windows has no pid 1, so start a small idle process instead.
+let otherPid = null;
+function alivePid() {
+  if (otherPid) return otherPid;
+  const { spawn } = require('child_process');
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10 * 60e3)'], { stdio: 'ignore', windowsHide: true });
+  child.unref();
+  process.on('exit', () => { try { child.kill(); } catch { /* already gone */ } });
+  otherPid = child.pid;
+  return otherPid;
+}
+
 function writeMarker(dir, sid, tool) {
   fs.mkdirSync(dir, { recursive: true });
   const p = path.join(dir, crypto.createHash('sha256').update(sid).digest('hex').slice(0, 12) + '.pending');
@@ -84,4 +97,4 @@ function writeMarker(dir, sid, tool) {
   return p;
 }
 
-module.exports = { makeHome, claudeSession, subagentSession, codexSession, rec, registerSession, writeMarker, iso, encode };
+module.exports = { makeHome, claudeSession, subagentSession, codexSession, rec, registerSession, alivePid, writeMarker, iso, encode };

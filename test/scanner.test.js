@@ -221,19 +221,27 @@ test('출력 없는 커밋(-q)도 명령 실행 시간대로 찾는다', (t) => 
   assert.strictEqual(hit.add, 1);
 });
 
+// Absolute paths the way this OS writes them (/work/x on POSIX, C:\work\x on Windows)
+const abs = (...parts) => path.resolve('/', ...parts);
+
 test('셸 명령에서 쓴 파일 추정', () => {
-  const t = (cmd) => S.shellTargets(cmd, '/w').sort();
-  assert.deepStrictEqual(t('echo a > out.txt'), ['/w/out.txt']);
-  assert.deepStrictEqual(t('cd sub && echo a >> log.md 2>&1'), ['/w/sub/log.md']);
-  assert.deepStrictEqual(t("sed -i 's/a/b/' one.txt two.txt"), ['/w/one.txt', '/w/two.txt']);
-  assert.deepStrictEqual(t('cat x | tee -a /abs/t.log'), ['/abs/t.log']);
+  const W = abs('work');
+  const t = (cmd) => S.shellTargets(cmd, W).sort();
+  assert.deepStrictEqual(t('echo a > out.txt'), [abs('work', 'out.txt')]);
+  assert.deepStrictEqual(t('cd sub && echo a >> log.md 2>&1'), [abs('work', 'sub', 'log.md')]);
+  assert.deepStrictEqual(t("sed -i 's/a/b/' one.txt two.txt"), [abs('work', 'one.txt'), abs('work', 'two.txt')]);
+  assert.deepStrictEqual(t('cat x | tee -a /abs/t.log'), [abs('abs', 't.log')]);
+  if (process.platform === 'win32') {
+    assert.deepStrictEqual(t('echo a > /c/other/x.txt'), ['C:\\other\\x.txt'], 'Git Bash drive path');
+    assert.deepStrictEqual(t('echo a > C:/other/y.txt'), ['C:\\other\\y.txt']);
+  }
   assert.deepStrictEqual(t('ls 2>/dev/null; echo $X > "$OUT"'), [], '변수 경로와 /dev/null 은 뺀다');
   assert.deepStrictEqual(t("python3 - <<'EOF'\nif a > b: pass\nEOF"), [], '여기 문서 안의 > 는 무시');
 });
 
 test('apply_patch 글 해석과 임시 파일 판정', () => {
-  const parts = S.parsePatch('*** Begin Patch\n*** Update File: a.txt\n@@\n-x\n+y\n+z\n*** Delete File: /abs/b.txt\n*** End Patch', '/w');
-  assert.deepStrictEqual(parts.map((p) => [p.op, p.path, p.add, p.del]), [['Update', '/w/a.txt', 2, 1], ['Delete', '/abs/b.txt', 0, 0]]);
+  const parts = S.parsePatch('*** Begin Patch\n*** Update File: a.txt\n@@\n-x\n+y\n+z\n*** Delete File: /abs/b.txt\n*** End Patch', abs('work'));
+  assert.deepStrictEqual(parts.map((p) => [p.op, p.path, p.add, p.del]), [['Update', abs('work', 'a.txt'), 2, 1], ['Delete', abs('abs', 'b.txt'), 0, 0]]);
   assert.strictEqual(S.isScratch('/tmp/claude-0000/no-such-project/abc/scratchpad/out.txt'), true);
   assert.strictEqual(S.isScratch(path.join(home, 'work', 'file.txt')), path.join(home, 'x').startsWith('/tmp/claude-'));
 });

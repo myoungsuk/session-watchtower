@@ -74,7 +74,7 @@ const restFile = fx.claudeSession(home, project, SID_REST, [
 ]);
 fx.registerSession(home, process.pid, SID_A, { status: 'busy', cwd: project, name: 'demo-a1', nameSource: 'derived' });
 fx.registerSession(home, process.ppid, SID_OTHER, { status: 'idle', cwd: other, name: 'other-b2', nameSource: 'derived', statusUpdatedAt: now - 30 * MIN });
-fx.registerSession(home, 1, SID_REST, { status: 'idle', cwd: project, name: 'demo-c3', nameSource: 'derived', statusUpdatedAt: now });
+fx.registerSession(home, fx.alivePid(), SID_REST, { status: 'idle', cwd: project, name: 'demo-c3', nameSource: 'derived', statusUpdatedAt: now });
 
 const TREE = 'claudeSessionChanges.tree';
 const SESSIONS = 'claudeSessionChanges.sessions';
@@ -515,7 +515,7 @@ test('목록과 보관함: 이 폴더의 꺼진 세션도 보이고, 오래 대�
   // 5시간 전에 대화가 끝났지만 창에 열려 있는(프로세스가 살아 있는) 세션
   const SID_OPEN = '56565656-9999-4999-8999-999999999999';
   fx.claudeSession(home, project, SID_OPEN, [rec.user(project, t5 - MIN, 'Still open'), rec.aiTitle(SID_OPEN, 'Still open'), rec.user(project, t5, 'more')]);
-  fx.registerSession(home, 1, SID_OPEN, { status: 'idle', cwd: project, name: 'demo-d4', nameSource: 'derived', statusUpdatedAt: t5 });
+  fx.registerSession(home, fx.alivePid(), SID_OPEN, { status: 'idle', cwd: project, name: 'demo-d4', nameSource: 'derived', statusUpdatedAt: t5 });
   setClaude(0.1);
   await refresh();
   await waitFor(() => web.lastPayload().archived.some((r) => r.sid === SID_5H), '5시간 전 세션이 보관함에');
@@ -598,7 +598,7 @@ test('Codex 세션 이름: Codex가 붙인 이름을 보여 주고, 여기서 �
   await waitFor(() => titleOf() === 'Named in Codex', 'Codex가 붙인 이름');
   // 여기서 바꾸기: PATH의 가짜 codex가 받는다(진짜 Codex처럼 session_index.jsonl에 적는다)
   const bin = fs.mkdtempSync(path.join(require('os').tmpdir(), 'swt-bin-'));
-  fs.symlinkSync(path.join(__dirname, 'helpers', 'fake-codex.js'), path.join(bin, 'codex'));
+  require('./helpers/fake-bin').linkBin(bin, 'codex', path.join(__dirname, 'helpers', 'fake-codex.js'));
   const oldPath = process.env.PATH;
   process.env.PATH = bin + path.delimiter + oldPath;
   process.env.CODEX_HOME = path.join(home, '.codex');

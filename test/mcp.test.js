@@ -9,6 +9,7 @@ const path = require('path');
 const vm = require('vm');
 const { execFileSync } = require('child_process');
 const fx = require('./helpers/fixture');
+const { fakeBin } = require('./helpers/fake-bin');
 
 const { home, project, markers } = fx.makeHome();
 // 창은 저장소 안의 하위 폴더를 연다: Claude Code는 저장소 뿌리를 열쇠로 쓴다
@@ -24,6 +25,9 @@ const mcp = require('../mcp.js');
 
 const SECRET = 'sk-test-SECRET-4242';
 const CFG = path.join(home, '.claude.json');
+// Claude Code keys ~/.claude.json "projects" by folder path, written with forward slashes on Windows (C:/Users/...)
+const claudeKey = (p) => (process.platform === 'win32' ? p.split(path.sep).join('/') : p);
+const KEY = claudeKey(project);
 const base = () => ({
   numStartups: 3,
   mcpServers: {
@@ -32,7 +36,7 @@ const base = () => ({
   },
   claudeAiMcpEverConnected: ['claude.ai Notion', 'claude.ai Gmail', 'claude.ai Old'],
   projects: {
-    [project]: { allowedTools: [], mcpServers: { db: { command: 'db-mcp', env: { PASS: SECRET } } }, disabledMcpServers: ['claude.ai Gmail'], hasTrustDialogAccepted: true },
+    [KEY]: { allowedTools: [], mcpServers: { db: { command: 'db-mcp', env: { PASS: SECRET } } }, disabledMcpServers: ['claude.ai Gmail'], hasTrustDialogAccepted: true },
     '/elsewhere/app': { allowedTools: [], disabledMcpServers: ['docs'] },
   },
   oauthAccount: { emailAddress: 'someone@example.invalid' },
@@ -98,10 +102,11 @@ test('끄면 이 폴더 항목의 disabledMcpServers에만 더하고, 나머지 
   web.send({ type: 'toggle', name: 'files', off: true });
   await waitFor(() => toasts('info').length === 1, '알림');
   const after = readCfg();
-  assert.deepStrictEqual(after.projects[project].disabledMcpServers, ['claude.ai Gmail', 'files']);
-  before.projects[project].disabledMcpServers = ['claude.ai Gmail', 'files'];
+  assert.deepStrictEqual(after.projects[KEY].disabledMcpServers, ['claude.ai Gmail', 'files']);
+  before.projects[KEY].disabledMcpServers = ['claude.ai Gmail', 'files'];
   assert.strictEqual(fs.readFileSync(CFG, 'utf8'), JSON.stringify(before, null, 2), 'Claude Code와 같은 형식(2칸 들여쓰기, 끝 줄바꿈 없음), 다른 칸은 그대로');
-  assert.strictEqual(fs.statSync(CFG).mode & 0o777, 0o600, '파일 권한 유지');
+  // Windows has no POSIX mode bits (Node always reports 0o666 there)
+  if (process.platform !== 'win32') assert.strictEqual(fs.statSync(CFG).mode & 0o777, 0o600, '파일 권한 유지');
   assert.ok(!fs.existsSync(CFG + '.lock'), '잠금은 풀어 둔다');
   assert.ok(!fs.readdirSync(home).some((f) => f.startsWith('.claude.json.tmp.')), '임시 파일이 남지 않는다');
   assert.match(toasts('info')[0], /files is off in this folder\. New Claude sessions start without it/);
@@ -115,7 +120,7 @@ test('끄면 이 폴더 항목의 disabledMcpServers에만 더하고, 나머지 
 
 test('화면 맨 위 "되돌리기"와 알림의 "되돌리기"로 다시 켠다', async () => {
   web.send({ type: 'undo' });
-  await waitFor(() => !readCfg().projects[project].disabledMcpServers.includes('files'), '되돌리기');
+  await waitFor(() => !readCfg().projects[KEY].disabledMcpServers.includes('files'), '되돌리기');
   await waitFor(() => rowOf(web.lastPayload(), 'user', 'files').state === 'on', '줄이 켜짐으로');
   stub.calls.length = 0;
   let clicked = false; // 한 번만 누른다(다시 켠 알림에도 되돌리기가 있다)
@@ -123,7 +128,7 @@ test('화면 맨 위 "되돌리기"와 알림의 "되돌리기"로 다시 켠다
   web.send({ type: 'toggle', name: 'docs', off: true });
   await waitFor(() => toasts('info').length >= 2, '끄고 알림의 되돌리기로 다시 켬');
   stub.state.answer = undefined;
-  await waitFor(() => !readCfg().projects[project].disabledMcpServers.includes('docs'), '알림 되돌리기');
+  await waitFor(() => !readCfg().projects[KEY].disabledMcpServers.includes('docs'), '알림 되돌리기');
   assert.match(toasts('info')[1], /docs is on again in this folder/);
   await sleep(1700);
 });
@@ -161,15 +166,15 @@ test('이 폴더에서 Claude Code를 연 적이 없으면 항목을 만들지 �
   assert.strictEqual(fs.readFileSync(CFG, 'utf8'), text);
   const info = mcp.listServers(fresh);
   assert.strictEqual(info.hasProject, false);
-  assert.strictEqual(info.key, fresh, 'git 저장소가 아니면 폴더 자체가 열쇠');
-  assert.strictEqual(mcp.projectKey(sub), project, '하위 폴더는 저장소 뿌리');
+  assert.strictEqual(info.key, claudeKey(fresh), 'git 저장소가 아니면 폴더 자체가 열쇠');
+  assert.strictEqual(mcp.projectKey(sub), KEY, '하위 폴더는 저장소 뿌리');
 });
 
 test('저장한 직후 다른 프로그램이 예전 내용으로 덮어쓰면 알린다', async () => {
   const old = fs.readFileSync(CFG, 'utf8');
   stub.calls.length = 0;
   web.send({ type: 'toggle', name: 'db', off: true });
-  await waitFor(() => readCfg().projects[project].disabledMcpServers.includes('db'), '저장');
+  await waitFor(() => readCfg().projects[KEY].disabledMcpServers.includes('db'), '저장');
   fs.writeFileSync(CFG, old); // 예전 내용을 들고 있던 프로그램이 다시 씀
   await waitFor(() => toasts('warn').some((m) => /did not stay/.test(m)), '덮어쓰기 경고', 4000);
 });
@@ -177,7 +182,7 @@ test('저장한 직후 다른 프로그램이 예전 내용으로 덮어쓰면 �
 test('다른 세션이 설정 파일을 바꾸면(/mcp disable 등) 창이 다시 그린다', async () => {
   const n = renders();
   const d = readCfg();
-  d.projects[project].disabledMcpServers = ['claude.ai Notion'];
+  d.projects[KEY].disabledMcpServers = ['claude.ai Notion'];
   fs.writeFileSync(CFG, JSON.stringify(d, null, 2));
   const t = new Date(Date.now() + 5000);
   fs.utimesSync(CFG, t, t);
@@ -185,10 +190,11 @@ test('다른 세션이 설정 파일을 바꾸면(/mcp disable 등) 창이 다�
 });
 
 test('상태 확인: claude mcp list 결과를 읽고(가운데 명령·주소는 버림), 플러그인 서버를 플러그인별로 보여 준다', async () => {
-  const bin = path.join(home, 'fake-claude');
   const log = path.join(home, 'fake-claude.log');
-  fs.writeFileSync(bin, `#!/bin/sh\necho "$PWD|$*" > '${log}'\ncat <<'X'\nChecking MCP server health…\n\ndocs: https://docs.example.com/mcp?key=${SECRET} (HTTP) - ✔ Connected\nfiles: files-mcp --token ${SECRET} - ✘ Failed to connect — could not reach https://files.example.com/x?token=${SECRET} - retry\ndb: db-mcp - ⊘ Disabled for this project (re-enable via /mcp)\nclaude.ai Notion: https://mcp.notion.example - ⊘ Disabled for this project (re-enable via /mcp)\nclaude.ai Gmail: https://gmail.example - ! Needs authentication\nplugin:productivity:slack: https://slack.example - ! Needs authentication\nplugin:productivity:gmail:  - Not configured\nplugin:pdf-viewer:pdf: node server.js - ✔ Connected\nlint: lint-mcp - ⏸ Pending approval (run \`claude\` to approve)\nmanaged-x: https://corp.example - ✔ Connected\nX\n`);
-  fs.chmodSync(bin, 0o755);
+  const out = `Checking MCP server health…\n\ndocs: https://docs.example.com/mcp?key=${SECRET} (HTTP) - ✔ Connected\nfiles: files-mcp --token ${SECRET} - ✘ Failed to connect — could not reach https://files.example.com/x?token=${SECRET} - retry\ndb: db-mcp - ⊘ Disabled for this project (re-enable via /mcp)\nclaude.ai Notion: https://mcp.notion.example - ⊘ Disabled for this project (re-enable via /mcp)\nclaude.ai Gmail: https://gmail.example - ! Needs authentication\nplugin:productivity:slack: https://slack.example - ! Needs authentication\nplugin:productivity:gmail:  - Not configured\nplugin:pdf-viewer:pdf: node server.js - ✔ Connected\nlint: lint-mcp - ⏸ Pending approval (run \`claude\` to approve)\nmanaged-x: https://corp.example - ✔ Connected\n`;
+  const bin = fakeBin(home, 'fake-claude', `require('fs').writeFileSync(${JSON.stringify(log)}, process.cwd() + '|' + process.argv.slice(2).join(' ') + '\\n');
+process.stdout.write(${JSON.stringify(out)});
+`);
   ext._test.setClaudeBin(bin);
   web.send({ type: 'check' });
   await waitFor(() => web.lastPayload().checking === true, '확인 중 표시');
@@ -210,7 +216,7 @@ test('상태 확인: claude mcp list 결과를 읽고(가운데 명령·주소�
   assert.ok(!JSON.stringify(p).includes(SECRET));
   // 플러그인 서버도 이 폴더에서 끌 수 있다(같은 칸)
   web.send({ type: 'toggle', name: 'plugin:productivity:slack', off: true });
-  await waitFor(() => readCfg().projects[project].disabledMcpServers.includes('plugin:productivity:slack'), '플러그인 서버 끄기');
+  await waitFor(() => readCfg().projects[KEY].disabledMcpServers.includes('plugin:productivity:slack'), '플러그인 서버 끄기');
   await waitFor(() => rowOf(web.lastPayload(), 'plugins', 'slack').state === 'off', '줄 반영');
   await sleep(1700);
 });

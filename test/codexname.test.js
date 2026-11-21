@@ -12,9 +12,11 @@ fx.makeHome();
 const { parseCodexIndex, codexNames } = require('../scanner');
 const { findCodexBin, setCodexThreadName } = require('../codexname');
 
-const FAKE = { cmd: path.join(__dirname, 'helpers', 'fake-codex.js'), shell: false };
-const ID = '01a1e6f3-d0a2-71d3-b842-1306c64643ca';
+const { linkBin, win } = require('./helpers/fake-bin');
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'swt-cx-'));
+// Windows starts the .cmd stand-in through the shell, like an npm-installed codex.cmd
+const FAKE = { cmd: linkBin(tmp(), 'codex', path.join(__dirname, 'helpers', 'fake-codex.js')), shell: win };
+const ID = '01a1e6f3-d0a2-71d3-b842-1306c64643ca';
 
 test('session_index.jsonl: 같은 id는 마지막 이름, 깨진 줄·빈 이름은 건너뛴다', () => {
   const m = parseCodexIndex([
@@ -76,6 +78,7 @@ test('이름 바꾸기 실패: 오류 대답·대답 없음·바로 끝남·프�
   assert.strictEqual((await run('silent', { timeoutMs: 800 })).reason, 'timeout');
   assert.strictEqual((await run('exit')).reason, 'exit');
   assert.strictEqual((await setCodexThreadName({ bin: { cmd: path.join(home, 'no-such-codex'), shell: false }, threadId: ID, name: 'x', home })).reason, 'missing');
+  assert.strictEqual((await setCodexThreadName({ bin: { cmd: path.join(home, 'no-such-codex'), shell: true }, threadId: ID, name: 'x', home })).reason, 'missing', 'through the shell too');
   assert.strictEqual((await setCodexThreadName({ bin: FAKE, threadId: '../etc', name: 'x', home })).ok, false);
   assert.ok(!fs.existsSync(path.join(home, 'session_index.jsonl')), '실패하면 아무것도 적히지 않는다');
 });

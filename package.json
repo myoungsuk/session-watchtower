@@ -687,6 +687,7 @@
     "worker.js",
     "mcp.js",
     "codexname.js",
+    "findbin.js",
     "usage.js",
     "phoneboard.js",
     "boardhost.js",

@@ -3245,7 +3245,8 @@ function hasCodexCli() {
   if (codexCli) return Promise.resolve(true);
   if (codexCli === false && hasCodexCli.fixed) return Promise.resolve(false); // 시험에서 고정한 값
   return new Promise((resolve) => {
-    execFile('codex', ['--version'], { timeout: 5000 }, (err) => { codexCli = !err; resolve(!err); });
+    // Windows: an npm-installed Codex is codex.cmd, which only the shell finds (the argument is fixed)
+    execFile('codex', ['--version'], { timeout: 5000, windowsHide: true, shell: process.platform === 'win32' }, (err) => { codexCli = !err; resolve(!err); });
   });
 }
 async function openCodexSession(s) {

@@ -101,7 +101,9 @@ test('run.json이 있으면 포트를 훑지 않고 그 보드 하나만 본다(
   assert.strictEqual(pb.localRun(), null);
 });
 
-test('확장: 보드가 켜져 있으면 세션 창에 단추, 누르면 QR·코드 패널, 복사는 누를 때만, 보드가 없으면 안내', async () => {
+// Skipped on Windows like the test above: the extension only starts tailscale.exe (and falls back to the installed one),
+// so the script stand-in cannot be used there
+test('확장: 보드가 켜져 있으면 세션 창에 단추, 누르면 QR·코드 패널, 복사는 누를 때만, 보드가 없으면 안내', { skip: process.platform === 'win32' && 'needs a tailscale stand-in, which Windows can only start as an .exe' }, async () => {
   const a = await serve(board('95번 서버'));
   const b = await serve(board('85번 PC'));
   servers.push(a, b);
