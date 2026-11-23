@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.39.2
+
+- **Codex chats are marked in Search conversations.** A result from a Codex chat now starts with *Codex ·*, so you know before picking it that it opens in Codex (the Codex extension's panel, or the Codex CLI in a terminal when the extension is not installed), not in Claude Code.
+
 ## 0.39.1
 
 - **The "Search conversations and answers" line goes away when the filter box is empty.** In 0.39.0 it stayed with the last text you had typed (for example *“c”*), because its style overrode the hidden state.

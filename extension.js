@@ -492,8 +492,9 @@ function searchConversations(initial) {
     qp.busy = false;
     qp.title = res.error ? res.error : res.total > res.results.length ? L('{0} matches (showing the newest {1})', res.total, res.results.length) : L('{0} matches', res.total);
     qp.items = res.results.map((r) => ({
-      // 답에서 찾은 것은 "답:"을 붙이고, 그 답을 받은 내 말을 아랫줄에 보여 준다
-      label: r.inAnswer ? L('Answer: {0}', r.snippet) : r.snippet,
+      // 답에서 찾은 것은 "답:"을 붙이고, 그 답을 받은 내 말을 아랫줄에 보여 준다.
+      // Codex 대화는 맨 앞에 "Codex ·"를 붙인다(누르면 Claude 대화가 아니라 Codex 확장이나 터미널의 Codex CLI로 열린다)
+      label: (String(r.sid).startsWith('codex:') ? 'Codex · ' : '') + (r.inAnswer ? L('Answer: {0}', r.snippet) : r.snippet),
       detail: r.inAnswer && r.said ? L('You asked: {0}', String(r.said).replace(/\s+/g, ' ')) : undefined,
       description: [String(r.title).replace(/\s+/g, ' ').slice(0, 40), r.ts ? fmtAgo(r.ts) : '', r.project && !inWorkspace({ cwd: r.cwd }) ? r.project : ''].filter(Boolean).join(' · '),
       alwaysShow: true, // 걸러 내기는 이미 끝났다(보이는 글귀에 낱말이 다 들어 있지 않을 수 있다)
