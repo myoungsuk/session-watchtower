@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.39.1
+
+- **The "Search conversations and answers" line goes away when the filter box is empty.** In 0.39.0 it stayed with the last text you had typed (for example *“c”*), because its style overrode the hidden state.
+
 ## 0.39.0
 
 - **Search conversations also finds what a session answered.** It used to search only what you typed. Now the session's final answer to each of your messages (up to 2,000 characters; answers in between are left out) is searched too, and all your words can be split between your message and the answer. A hit in an answer starts with *Answer:* and shows the message it answered below. The index is rebuilt once after the update (about 7 seconds on 4 GB of logs; about 8 MB on disk) and is now written to disk at most every 2 minutes instead of on every update.

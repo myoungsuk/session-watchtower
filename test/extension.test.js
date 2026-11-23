@@ -158,6 +158,7 @@ test('세션 창 화면 코드가 문법 오류 없이 읽힌다', () => {
   assert.ok(m, '화면 코드가 있어야 함');
   assert.doesNotThrow(() => new vm.Script(m[1]));
   assert.match(web.view.webview.html, /default-src 'none'/, '외부 자원을 막는 보안 정책');
+  assert.match(web.view.webview.html, /\.deep\[hidden\]\s*\{\s*display:\s*none/, '칸을 비우면 "대화 내용·답에서 찾기" 줄이 숨는다(display: block이 hidden을 이기지 않게)');
 });
 
 test('세션을 누르면 Claude 대화 열기, 새 세션 열기', async () => {

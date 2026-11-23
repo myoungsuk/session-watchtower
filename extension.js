@@ -3006,6 +3006,7 @@ function sessionsHtml(webview) {
   .search input:focus { border-color: var(--vscode-focusBorder); }
   .deep { display: block; width: 100%; box-sizing: border-box; margin: 4px 0 0; padding: 3px 8px; border: 0; border-radius: 3px; background: none; color: var(--vscode-textLink-foreground); font: inherit; font-size: 12px; text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .deep:hover, .deep:focus { background: var(--vscode-list-hoverBackground); outline: none; }
+  .deep[hidden] { display: none; } /* display: block이 hidden 속성을 이기므로 따로 숨긴다(칸을 비워도 옛 글자로 남던 문제) */
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .dot.busy { animation: none; border-top-color: var(--vscode-charts-green); } }
 </style></head>
