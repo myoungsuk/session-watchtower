@@ -40,6 +40,7 @@ function install({ extDir, language = 'en', workspace, config = {}, workspaceSch
     ViewColumn: { Active: -1, Beside: -2, One: 1 },
     ConfigurationTarget: { Global: 1 },
     StatusBarAlignment: { Left: 1, Right: 2 },
+    QuickPickItemKind: { Separator: -1, Default: 0 },
     ProgressLocation: { Notification: 15 },
     l10n: { t: (msg, ...args) => (bundle[msg] || msg).replace(/\{(\d+)\}/g, (m, i) => String(args[+i])) },
     extensions: { getExtension: (id) => ((state.installedExtensions || []).includes(id) ? { id } : undefined) },

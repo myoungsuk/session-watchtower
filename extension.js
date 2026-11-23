@@ -489,6 +489,8 @@ function cleanSnippet(s) {
     .trim();
 }
 
+const isCodexHit = (r) => String(r.sid).startsWith('codex:');
+
 function searchConversations(initial) {
   const qp = vscode.window.createQuickPick();
   qp.placeholder = L('Type words from what you wrote or what the session answered (all of them must match)');
@@ -510,18 +512,25 @@ function searchConversations(initial) {
     qp.title = res.error ? res.error
       : !res.total ? L('{0} matches', 0)
       : L('{0} sessions · {1} matches', nSessions, res.total) + (nSessions > sessions.length ? ' ' + L('(showing the newest {0})', sessions.length) : '');
-    qp.items = sessions.map((r) => {
+    const toItem = (r) => {
       const text = cleanSnippet(r.snippet);
       return {
-        // Codex 대화는 맨 앞에 "Codex ·"를 붙인다(누르면 Claude 대화가 아니라 Codex 확장이나 터미널의 Codex CLI로 열린다)
-        label: (String(r.sid).startsWith('codex:') ? 'Codex · ' : '') + String(r.title || '').replace(/\s+/g, ' ').slice(0, 60),
+        // Codex 대화는 맨 앞에 아이콘과 "Codex ·"를 붙인다(누르면 Claude 대화가 아니라 Codex 확장이나 터미널의 Codex CLI로 열린다)
+        label: (isCodexHit(r) ? '$(robot) Codex · ' : '') + String(r.title || '').replace(/\s+/g, ' ').slice(0, 60),
         description: [r.ts ? fmtAgo(r.ts) : '', r.hits > 1 ? L('{0} places', r.hits) : '', r.project && !inWorkspace({ cwd: r.cwd }) ? r.project : ''].filter(Boolean).join(' · '),
         // 답에서 찾은 것은 "답:"을 붙인다
         detail: r.inAnswer ? L('Answer: {0}', text) : text,
         alwaysShow: true, // 걸러 내기는 이미 끝났다(보이는 글귀에 낱말이 다 들어 있지 않을 수 있다)
         r,
       };
-    });
+    };
+    // Claude Code와 Codex가 섞이면 구역을 나눈다(각 구역 안은 최근 것부터). 한 종류뿐이면 구역 줄 없이 그대로
+    const claudeHits = sessions.filter((r) => !isCodexHit(r));
+    const codexHits = sessions.filter(isCodexHit);
+    const sep = (label) => ({ label, kind: vscode.QuickPickItemKind.Separator, alwaysShow: true });
+    qp.items = claudeHits.length && codexHits.length
+      ? [sep('Claude Code'), ...claudeHits.map(toItem), sep('Codex'), ...codexHits.map(toItem)]
+      : sessions.map(toItem);
   };
   qp.onDidChangeValue(() => { if (timer) clearTimeout(timer); timer = setTimeout(run, 250); });
   qp.onDidAccept(() => {

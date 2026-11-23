@@ -551,8 +551,14 @@ test('Codex 세션을 누르면 그 세션 폴더에서 터미널로 이어 연�
   // 대화 내용 찾기에서도 Codex 대화는 "Codex ·"로 시작한다(누르기 전에 Codex로 열린다는 것을 알 수 있게)
   const qp = stub.commands.get('claudeSessionChanges.searchConversations')('codex job elsewhere');
   await waitFor(() => qp.items.length === 1, 'Codex 대화 찾기');
-  assert.deepStrictEqual([qp.items[0].r.sid, qp.items[0].label, qp.items[0].detail], ['codex:' + CX, 'Codex · A codex job elsewhere', 'A codex job elsewhere']);
+  assert.deepStrictEqual([qp.items[0].r.sid, qp.items[0].label, qp.items[0].detail], ['codex:' + CX, '$(robot) Codex · A codex job elsewhere', 'A codex job elsewhere']);
   qp.hide();
+  // Claude 세션과 섞이면 "Claude Code"·"Codex" 구역 줄로 나눈다
+  fx.claudeSession(home, other, 'c1a0de00-7777-4777-8777-00000000abcd', [fx.rec.user(other, Date.now() - 1000, 'a claude job elsewhere too')]);
+  const mixed = stub.commands.get('claudeSessionChanges.searchConversations')('job elsewhere');
+  await waitFor(() => mixed.items.length === 4, '두 구역');
+  assert.deepStrictEqual(mixed.items.map((i) => (i.kind === -1 ? '— ' + i.label : i.r.sid)), ['— Claude Code', 'c1a0de00-7777-4777-8777-00000000abcd', '— Codex', 'codex:' + CX]);
+  mixed.hide();
   assert.match(bar.text, /\$\(loading~spin\) 1(?!\d)/, '이 폴더에서 작업 중인 세션은 1개');
   ext._test.setCodexCli(true);
   stub.calls.length = 0;
