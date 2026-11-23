@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.39.0
+
+- **Search conversations also finds what a session answered.** It used to search only what you typed. Now the session's final answer to each of your messages (up to 2,000 characters; answers in between are left out) is searched too, and all your words can be split between your message and the answer. A hit in an answer starts with *Answer:* and shows the message it answered below. The index is rebuilt once after the update (about 7 seconds on 4 GB of logs; about 8 MB on disk) and is now written to disk at most every 2 minutes instead of on every update.
+- **The filter box finds role, folder and team names**, not only titles. Typing a team name shows the whole team. A line under the box searches conversations and answers for what you typed (same as Enter).
+
 ## 0.38.0
 
 - **Codex sessions can be renamed, and show their Codex names.** The pencil button used to say Codex sessions cannot be renamed, and the list showed a Codex chat's first question even after you named it in Codex. Watchtower now reads the names Codex keeps in `~/.codex/session_index.jsonl`, and renames a Codex chat the way Codex does: it briefly starts `codex app-server` (from the Codex VS Code extension, or the `codex` CLI on PATH), sends `thread/name/set`, and stops it. Codex writes the name itself; Watchtower does not edit Codex's files. Where no Codex program can be started, Watchtower says so.

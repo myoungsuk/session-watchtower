@@ -625,7 +625,39 @@ test('대화 내용으로 찾기: 내가 쓴 말만 모아 두고, 기록이 자
   const more = ix.search('export button', { indexFile });
   assert.strictEqual(more.results.filter((x) => x.sid === sid).length, 1);
   assert.ok(more.stats.bytes > 0 && more.stats.bytes < 400, '덧붙은 줄만 읽어야 함: ' + more.stats.bytes);
+  // 색인 파일은 2분에 한 번만 다시 쓴다: 방금 덧붙은 줄은 아직 파일에 없어서, 새로 띄운 색인은 그 줄만 다시 읽는다(처음부터 다 읽지 않는다)
   const again = S.createPromptIndex().search('export button', { indexFile });
-  assert.deepStrictEqual([again.results.filter((x) => x.sid === sid).length, again.stats.bytes], [1, 0], '저장한 색인을 다시 쓴다');
+  assert.deepStrictEqual([again.results.filter((x) => x.sid === sid).length, again.stats.bytes], [1, more.stats.bytes], '저장한 색인 + 덧붙은 줄만');
+  // 저장 간격이 지나면 다시 쓰고, 그 뒤에 띄운 색인은 아무것도 다시 읽지 않는다
+  const ix2 = S.createPromptIndex();
+  ix2.search('export button', { indexFile, saveEveryMs: 0 });
+  const third = S.createPromptIndex().search('export button', { indexFile });
+  assert.deepStrictEqual([third.results.filter((x) => x.sid === sid).length, third.stats.bytes], [1, 0], '저장한 색인을 다시 쓴다');
+});
+
+test('대화 내용으로 찾기: 그 차례의 마지막 답도 2,000자까지 찾고, 답에서 찾으면 답과 내 말을 함께 준다', () => {
+  const sid = '5ea4c000-1111-4111-8111-0000000000a2';
+  const ans = (ts, text) => ({ parentUuid: null, isSidechain: false, type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] }, cwd: project, timestamp: fx.iso(ts) });
+  const long = 'x'.repeat(2100) + ' beyondlimit';
+  fx.claudeSession(home, project, sid, [
+    rec.user(project, now - 30 * MIN, 'how do I restart the worker'),
+    ans(now - 29 * MIN, 'Checking first.'),
+    ans(now - 28 * MIN, '## Fix\nRun `systemctl --user restart quokka-worker` then check the log.'),
+    rec.user(project, now - 20 * MIN, 'and the long one'),
+    ans(now - 19 * MIN, long),
+  ]);
+  const indexFile = path.join(home, 'prompt-index-ans.json');
+  const ix = S.createPromptIndex();
+  const r = ix.search('quokka-worker', { indexFile }).results.filter((x) => x.sid === sid);
+  assert.strictEqual(r.length, 1, '마지막 답에 있는 낱말');
+  assert.ok(r[0].inAnswer && /systemctl --user restart quokka-worker/.test(r[0].snippet) && r[0].said === 'how do I restart the worker');
+  assert.strictEqual(ix.search('checking first', { indexFile }).results.filter((x) => x.sid === sid).length, 0, '중간 답은 남기지 않는다');
+  const mixed = ix.search('restart quokka-worker', { indexFile }).results.filter((x) => x.sid === sid);
+  assert.strictEqual(mixed.length, 1, '내 말과 답에 나뉘어 있어도 찾는다');
+  assert.strictEqual(ix.search('beyondlimit', { indexFile }).results.filter((x) => x.sid === sid).length, 0, '2,000자 뒤는 남기지 않는다');
+  const plain = ix.search('restart the worker', { indexFile }).results.filter((x) => x.sid === sid);
+  assert.deepStrictEqual([plain.length, plain[0].inAnswer], [1, false], '내 말에 다 있으면 내 말을 보여 준다');
+  const said = ix.recent([sid], { indexFile }).results.find((x) => x.text === 'how do I restart the worker');
+  assert.strictEqual(said.reply, 'Fix', '보드의 답 첫 줄은 마지막 답에서 뽑는다(머리표 등은 뺀다)');
 });
 

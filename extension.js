@@ -478,7 +478,7 @@ function searchPrompts(query, onProgress) {
 
 function searchConversations(initial) {
   const qp = vscode.window.createQuickPick();
-  qp.placeholder = L('Type words you wrote in a session (all of them must match)');
+  qp.placeholder = L('Type words from what you wrote or what the session answered (all of them must match)');
   qp.matchOnDescription = true;
   let seq = 0;
   let timer = null;
@@ -492,7 +492,9 @@ function searchConversations(initial) {
     qp.busy = false;
     qp.title = res.error ? res.error : res.total > res.results.length ? L('{0} matches (showing the newest {1})', res.total, res.results.length) : L('{0} matches', res.total);
     qp.items = res.results.map((r) => ({
-      label: r.snippet,
+      // 답에서 찾은 것은 "답:"을 붙이고, 그 답을 받은 내 말을 아랫줄에 보여 준다
+      label: r.inAnswer ? L('Answer: {0}', r.snippet) : r.snippet,
+      detail: r.inAnswer && r.said ? L('You asked: {0}', String(r.said).replace(/\s+/g, ' ')) : undefined,
       description: [String(r.title).replace(/\s+/g, ' ').slice(0, 40), r.ts ? fmtAgo(r.ts) : '', r.project && !inWorkspace({ cwd: r.cwd }) ? r.project : ''].filter(Boolean).join(' · '),
       alwaysShow: true, // 걸러 내기는 이미 끝났다(보이는 글귀에 낱말이 다 들어 있지 않을 수 있다)
       r,
@@ -2774,7 +2776,7 @@ function sessionsPayload() {
     // "열린 세션" = 지금 프로세스가 떠 있는 세션(작업 중·기다림·쉼). 작업 중인 것만 세는 숫자가 아니다
     // 숫자는 화면 쪽에서 채운다 → 자리표시자를 그대로 넘겨 번역 함수가 건드리지 않게 한다
     activeTip: L('Show only sessions that are open right now (working, waiting or idle). The number counts this folder: {0}. Other folders: {1}.', '{0}', '{1}'),
-    search: L('Search sessions'), noMatch: L('No matching sessions'), legend: L('What the colors mean'),
+    search: L('Search sessions'), searchHint: L('Name, role or folder · Enter: inside conversations'), searchDeep: L('Search conversations and answers for “{0}” (Enter)', '{0}'), noMatch: L('No matching sessions'), legend: L('What the colors mean'),
     archive: L('Archive'), unarchive: L('Restore from archive'), archivedTitle: L('Archived'), archiveRule: L('Choose when sessions move to Archived'),
     loadChanges: L("Load this session's changed files"),
     rename: L('Rename session'),
@@ -3002,6 +3004,8 @@ function sessionsHtml(webview) {
   .search.show { display: block; }
   .search input { width: 100%; box-sizing: border-box; height: 26px; padding: 0 8px; border: 1px solid var(--vscode-input-border, transparent); border-radius: 3px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); font: inherit; font-size: 12.5px; outline: none; }
   .search input:focus { border-color: var(--vscode-focusBorder); }
+  .deep { display: block; width: 100%; box-sizing: border-box; margin: 4px 0 0; padding: 3px 8px; border: 0; border-radius: 3px; background: none; color: var(--vscode-textLink-foreground); font: inherit; font-size: 12px; text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .deep:hover, .deep:focus { background: var(--vscode-list-hoverBackground); outline: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .dot.busy { animation: none; border-top-color: var(--vscode-charts-green); } }
 </style></head>
@@ -3015,7 +3019,7 @@ function sessionsHtml(webview) {
   <button class="btn" id="btnBoardPc" hidden><svg width="15" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="8.5" rx="1.2"/><path d="M6 14h4M8 11v3"/></svg></button>
   <button class="btn" id="btnLegend" aria-pressed="false"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="6.2"/><path d="M6.3 6.2a1.8 1.8 0 1 1 2.5 1.7c-.5.2-.8.6-.8 1.1v.5"/><circle cx="8" cy="11.6" r=".4" fill="currentColor"/></svg></button>
 </div>
-<div class="search" id="searchBox"><input id="q" type="text" autocomplete="off" spellcheck="false"></div>
+<div class="search" id="searchBox"><input id="q" type="text" autocomplete="off" spellcheck="false"><button class="deep" id="deep" type="button" hidden></button></div>
 <div class="legend" id="legend"></div>
 <div id="root" role="list"></div>
 <script nonce="${n}">
@@ -3034,7 +3038,11 @@ function sessionsHtml(webview) {
   const btnSearch = document.getElementById('btnSearch');
   const box = document.getElementById('searchBox');
   const q = document.getElementById('q');
+  const deep = document.getElementById('deep');
   q.value = saved.q;
+  // 제목 거르기 칸 아래: 같은 낱말로 대화 내용·AI 답까지 찾기(Enter와 같다)
+  const showDeep = () => { const v = q.value.trim(); deep.hidden = !v; if (v) deep.textContent = String(strings.searchDeep || '').replace('{0}', v); };
+  deep.addEventListener('click', () => { const v = q.value.trim(); if (v) vscode.postMessage({ type: 'searchText', q: v }); });
   if (saved.searchOpen) box.classList.add('show');
   const save = () => vscode.setState(saved);
   btnNew.addEventListener('click', () => vscode.postMessage({ type: 'new' }));
@@ -3042,11 +3050,11 @@ function sessionsHtml(webview) {
   btnSearch.addEventListener('click', () => {
     saved.searchOpen = !box.classList.contains('show');
     box.classList.toggle('show', saved.searchOpen);
-    if (saved.searchOpen) q.focus(); else { q.value = ''; saved.q = ''; if (last) render(last); }
+    if (saved.searchOpen) q.focus(); else { q.value = ''; saved.q = ''; showDeep(); if (last) render(last); }
     save();
   });
-  q.addEventListener('input', () => { saved.q = q.value; save(); if (last) render(last); });
-  q.addEventListener('keydown', (e) => { if (e.key === 'Enter' && q.value.trim()) { vscode.postMessage({ type: 'searchText', q: q.value.trim() }); return; } if (e.key === 'Escape') { q.value = ''; saved.q = ''; saved.searchOpen = false; box.classList.remove('show'); save(); if (last) render(last); } });
+  q.addEventListener('input', () => { saved.q = q.value; save(); showDeep(); if (last) render(last); });
+  q.addEventListener('keydown', (e) => { if (e.key === 'Enter' && q.value.trim()) { vscode.postMessage({ type: 'searchText', q: q.value.trim() }); return; } if (e.key === 'Escape') { q.value = ''; saved.q = ''; saved.searchOpen = false; box.classList.remove('show'); save(); showDeep(); if (last) render(last); } });
   const reviewIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M4.5 1.5h5l2.5 2.5v6.5h-7.5z"/><path d="M2.5 4v10.5h7"/><path d="M6.5 6h3.5M6.5 8.3h3.5"/></svg>';
   // 변경 규모: +줄 −줄과 다섯 칸 막대(초록=추가, 빨강=삭제 비율)
   function diffstat(add, del) {
@@ -3146,14 +3154,16 @@ function sessionsHtml(webview) {
     requestAnimationFrame(fitBar); // "열린 세션 · N" 글자 등 이 그리기에서 바뀌는 것까지 다 들어간 뒤에 잰다
     btnSearch.title = strings.search || '';
     btnSearch.setAttribute('aria-label', strings.search || '');
-    q.placeholder = strings.search || '';
+    q.placeholder = strings.searchHint || strings.search || '';
+    showDeep();
     if (p.message) { document.getElementById('lblActive').textContent = strings.active || ''; root.innerHTML = '<div class="msg" title="' + esc(p.detail) + '">' + esc(p.message) + '</div>'; return; }
     document.getElementById('lblActive').textContent = (strings.active || '') + ' · ' + (p.openHere || 0);
     btnActive.title = String(strings.activeTip || '').replace('{0}', p.openHere || 0).replace('{1}', p.openElsewhere || 0);
     btnActive.classList.toggle('on', saved.active);
     btnActive.setAttribute('aria-pressed', String(saved.active));
     const needle = saved.q.trim().toLowerCase();
-    const keep = (r) => (!saved.active || r.alive) && (!needle || String(r.title).toLowerCase().includes(needle));
+    const hay = (r) => [r.title, r.role, r.lead ? strings.leadName : '', r.folder, r.worktree, r.codex ? 'codex' : ''].filter(Boolean).join(' ').toLowerCase();
+    const keep = (r) => (!saved.active || r.alive) && (!needle || hay(r).includes(needle));
     const filtering = saved.active || !!needle;
     const mine = (p.mine || []).filter(keep);
     let h = '';
@@ -3161,7 +3171,8 @@ function sessionsHtml(webview) {
     // 사용자가 만든 그룹(맨 위, 처음에는 펼침)
     const sbtn = (act, label, svg, id) => '<button class="sact" data-act="' + act + '" data-team="' + esc(id) + '" title="' + esc(label) + '" aria-label="' + esc(label) + '">' + svg + '</button>';
     for (const t of p.teams || []) {
-      const rows = t.rows.filter(keep);
+      // 그룹 이름이 맞으면 그 그룹의 세션을 모두 보여 준다
+      const rows = needle && String(t.name || '').toLowerCase().includes(needle) ? t.rows.filter((r) => !saved.active || r.alive) : t.rows.filter(keep);
       if (filtering && !rows.length) continue;
       shown += rows.length;
       const key = 'team:' + t.id;

@@ -19,7 +19,7 @@ If you run several Claude Code sessions at once, you lose track quickly: which o
 - **Changed files view**: the files each session changed, with line counts, a diff on click, and a spinner on the file being edited right now.
 - **In the file Explorer too**: the file a session is editing right now gets a turning badge and a green name, also on its editor tab.
 - **Notifications**: when a session waits for your approval or answer, when two sessions change the same file, and when a working session goes quiet.
-- **Find things**: search what you wrote in any session, or ask which sessions changed a file.
+- **Find things**: search what you wrote in any session and what it answered, or ask which sessions changed a file.
 - **Groups and a board per group**: put the sessions that work together (for example a watcher, a developer and a deployer) in a group, give each a role, and watch them on one board.
 - **Housekeeping**: archive, rename, copy a summary of the changes as Markdown.
 - **Codex too**: Codex sessions appear next to Claude Code sessions.
@@ -70,7 +70,7 @@ Under a working or waiting session a second line shows **what it is doing now** 
 
 - **Click a row** to open that conversation in Claude Code. **New session** starts a new one: a Claude Code conversation, or a Codex chat when the setting `newSessionTool` is `codex` (the Codex extension's new agent, or the Codex CLI in a terminal when the extension is not installed). To switch, use *Choose what New session opens* in the view's `…` menu; *Open all Watchtower settings* in the same menu lists every setting.
 - **Open · 5** filters the list to sessions that are open right now (working, waiting or idle). The number counts this folder.
-- **The magnifier** filters by title. Press Enter in the box to search inside conversations instead.
+- **The magnifier** filters by title, role, folder and team name (a team name shows the whole team). Press Enter, or click the line under the box, to search inside conversations and answers instead.
 - **The ? button** explains every color.
 - **Hover a row** for its buttons: rename, review all changes, show changed files, archive.
 - **A shaded row with a bar on the left** is the conversation you have in front of you: the Claude Code tab that is showing in this window (one per editor group; tabs behind it are not marked).
@@ -222,7 +222,7 @@ vscode://kms-labs.session-watchtower/open?title=<session name>&folder=<folder na
 
 <img src="media/readme/search.png" width="600" alt="Search box listing three messages that contain the words token refresh, with the session each one belongs to">
 
-*Search conversations* (the `…` menu of the Sessions view, or Enter in the title filter box) searches **everything you typed in any session**, not just titles. All words must match. Pick a result to open that session.
+*Search conversations* (the `…` menu of the Sessions view, Enter in the filter box, or the line under the box) searches **everything you typed in any session and the session's final answer to each message** (up to 2,000 characters), not just titles. All words must match; they can be split between your message and the answer. A hit in an answer starts with *Answer:* and shows the message it answered. Pick a result to open that session.
 
 The first search reads all conversation logs once to collect your own messages (a few seconds for a couple of gigabytes); after that only new lines are read.
 
@@ -382,7 +382,7 @@ Session state is read from the files Claude Code writes in `~/.claude/sessions/`
 - **Groups.** Roles and members are matched by session ID. After `/clear` the new conversation takes over the old one's place, role, lead badge and name (the same Claude Code process switching to a conversation that starts with `/clear`, or, if no window saw the switch, a `/clear` conversation in the same folder that starts within seconds of the old one ending); the old one goes to Archived. `/resume` into another conversation does not take over, and a conversation started with *New session* has to be added again. A session from another folder is listed on the board; clicking it opens the conversation in that folder's window. "Changes no session log explains" only looks at files changed within the time range, and it can miss a deleted file.
 - **Shown in a tab.** Claude Code's tabs carry only the session name (cut to 24 characters and `…` when longer), so tabs are matched to sessions by name. When several sessions in this folder have the name, the running ones are marked, otherwise the most recent one. A conversation open in the Claude Code side bar instead of a tab is not marked.
 - **Archive.** Sessions you archived or restored by hand inside Claude Code cannot be detected (Claude Code keeps that list private), and neither can its "unread" mark. If you archive by hand in Claude Code, set the archive time to something short such as 1 day so finished sessions leave the list here too. Sessions started by scripts through the SDK are left out of the list, as in Claude Code.
-- **Search.** Only your own messages are indexed, up to 2,000 characters each, from Claude Code and Codex sessions (Codex review and sub-agent threads are left out).
+- **Search.** Your own messages (up to 2,000 characters each) and the session's final answer to each (up to 2,000 characters; answers in between are left out) are indexed, from Claude Code and Codex sessions (Codex review and sub-agent threads are left out). The index file is rewritten at most every 2 minutes; on about 4 GB of logs it is about 8 MB.
 - **Which sessions changed this file** and the summaries only cover the selected time range.
 - **Codex.** There is no list of running Codex sessions, so a Codex session counts as working only while its log changed in the last 90 seconds, and Codex sessions are shown only while their log changed inside the time range. A patch that the script builds at run time, or a script that failed after its patch was applied, is missed. Opening needs the `codex` command, and the Codex extension itself has no command to open a conversation by ID.
 - **MCP servers.** The switches follow Claude Code's own `/mcp disable` storage as of Claude Code 2.1.323; a later Claude Code may store it differently. Plugin servers and claude.ai connectors appear only after a status check, because Claude Code fetches them when it starts. If `CLAUDE_CONFIG_DIR` is set for the extension, its `.claude.json` is used. Not tested on Windows.
@@ -436,7 +436,7 @@ Available from the Command Palette under **Session Watchtower**, and from the me
 | Check MCP server status | Open the MCP Servers view and check every server of this folder. |
 | Start a team with a lead session | Copy a request that makes a session the lead: it recommends the team, creates the team board and then takes reports and gives instructions. |
 | New group / Open a group board / Rename a group / Delete a group | Work with groups (deleting a group leaves its sessions as they are). |
-| Search conversations | Find a session by what you wrote in it. |
+| Search conversations | Find a session by what you wrote in it or what it answered. |
 | Which sessions changed this file? | List the sessions that changed the current or selected file. |
 | Copy a summary of all sessions' changes in this folder | Markdown summary on the clipboard. |
 | Choose when sessions move to Archived | Pick the archive time. |

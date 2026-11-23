@@ -1534,7 +1534,10 @@ function discover(sinceMs, registry, includeCodex, listSinceMs, projectDirs, oth
 
 // ---------- 내가 보낸 말 색인(대화 내용으로 세션 찾기) ----------
 // 대화 기록은 수 GB라 찾을 때마다 다 읽을 수 없다. 사용자가 직접 쓴 말만 따로 모아 두고(기록 파일이 자란 만큼만 더 읽음) 그 안에서 찾는다.
-const PROMPT_INDEX_VERSION = 3; // 2: 세션 답의 첫 줄(reply), 끼워 넣은 말 빼기. 3: Codex 기록도 모은다
+const PROMPT_INDEX_VERSION = 4; // 2: 세션 답의 첫 줄(reply), 끼워 넣은 말 빼기. 3: Codex 기록도 모은다. 4: 답 첫 줄 대신 마지막 답을 2,000자까지(answer, 검색에도 쓴다)
+const ANSWER_MAX = 2000; // 차례마다 남기는 마지막 답의 길이. 답 전체(중간 말까지)는 남기지 않는다: 95번 실측 마지막 답만 2,000자로 약 10MB, 전부면 두 배 넘음
+const INDEX_SAVE_MS = 120000; // 색인 파일은 2분에 한 번만 다시 쓴다(보드가 15초마다 읽어도). 많이 읽은 때(처음 만들 때 등)는 바로
+const INDEX_SAVE_BYTES = 32 * 1024 * 1024;
 const PROMPT_MAX = 2000;
 const K_ISMETA = B('"isMeta":true');
 
@@ -1553,6 +1556,12 @@ const NOT_TYPED_RE = /^(\[Request interrupted by user|This session is being cont
 const K_TEXTPART = B('"type":"text"');
 
 // 세션이 답한 글의 첫 줄(마크다운 꾸밈은 걷어 낸다). 사용자의 세션들은 첫 줄에 결론을 쓴다
+// 마지막 답: 앞뒤 공백을 지우고 ANSWER_MAX자까지(줄 바꿈은 둔다: 첫 줄을 뽑을 때 쓴다)
+function answerText(text) {
+  const t = String(text || '').replace(/\n{3,}/g, '\n\n').trim();
+  return t.length > ANSWER_MAX ? t.slice(0, ANSWER_MAX) : t;
+}
+
 function replyHead(text) {
   for (const raw of String(text || '').split('\n')) {
     const t = raw.replace(/^\s*(#{1,6}\s+|[-*]\s+|>\s*)/, '').replace(/\*\*|__|`/g, '').replace(/\s+/g, ' ').trim();
@@ -1574,7 +1583,7 @@ function codexPromptText(content) {
   return cleanPrompt(parts.join(' '));
 }
 
-// Codex 기록 한 줄: 하위 스레드(검토·하위 에이전트, 부모가 시킨 말)는 통째로 뺀다. 차례마다 마지막 답의 첫 줄을 남긴다
+// Codex 기록 한 줄: 하위 스레드(검토·하위 에이전트, 부모가 시킨 말)는 통째로 뺀다. 차례마다 마지막 답을 남긴다
 function codexPromptLine(e, line) {
   if (e.skip || line.length < 2 || line.length > 400000) return;
   const meta = line.indexOf(CX_META);
@@ -1600,8 +1609,8 @@ function codexPromptLine(e, line) {
     if (!e.title) e.title = text.slice(0, 60);
   } else if (p.role === 'assistant' && e.open && e.prompts.length) {
     const txt = (Array.isArray(p.content) ? p.content : []).filter((c) => c && typeof c.text === 'string').map((c) => c.text).join('\n');
-    const head = replyHead(txt);
-    if (head) { const last = e.prompts[e.prompts.length - 1]; last.reply = head; last.replyTs = ts; }
+    const ans = answerText(txt);
+    if (ans) { const last = e.prompts[e.prompts.length - 1]; last.answer = ans; last.replyTs = ts; }
   }
 }
 
@@ -1609,6 +1618,7 @@ function createPromptIndex() {
   const idx = new Map(); // 기록 파일 → { offset, size, mtimeMs, sid, cwd, title, prompts: [{ ts, text }] }
   let loadedFrom = null;
   let dirty = false;
+  let lastSave = 0;
 
   function load(file) {
     if (loadedFrom === file) return;
@@ -1620,8 +1630,10 @@ function createPromptIndex() {
     } catch { /* 없거나 깨짐: 처음부터 */ }
   }
 
-  function save(file) {
+  function save(file, force, everyMs = INDEX_SAVE_MS) {
     if (!file || !dirty) return;
+    if (!force && Date.now() - lastSave < everyMs) return;
+    lastSave = Date.now();
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       const tmp = file + '.tmp-' + process.pid;
@@ -1647,14 +1659,14 @@ function createPromptIndex() {
           try { const o = JSON.parse(line.toString('utf8')); if (o.type === 'custom-title' && o.customTitle) { e.title = String(o.customTitle); e.custom = true; } else if (o.type === 'ai-title' && o.aiTitle && !e.custom) e.title = String(o.aiTitle); } catch { /* 깨진 줄 */ }
           return;
         }
-        // 세션의 답: 마지막 말 다음에 나온 assistant 글. 차례가 끝날 때까지 덮어써서 마지막 답의 첫 줄이 남는다
+        // 세션의 답: 마지막 말 다음에 나온 assistant 글. 차례가 끝날 때까지 덮어써서 마지막 답이 남는다
         if (e.open && e.prompts.length && line.length < 400000 && line.indexOf(K_ASSISTANT) >= 0 && line.indexOf(K_TEXTPART) >= 0 && line.subarray(0, 48).indexOf(K_APIREQ) < 0) {
           let a;
           try { a = JSON.parse(line.toString('utf8')); } catch { return; }
           if (!a || a.type !== 'assistant' || a.isSidechain || !a.message || !Array.isArray(a.message.content)) return;
           const txt = a.message.content.filter((x) => x && x.type === 'text' && typeof x.text === 'string').map((x) => x.text).join('\n');
-          const head = replyHead(txt);
-          if (head) { const last = e.prompts[e.prompts.length - 1]; last.reply = head; last.replyTs = Date.parse(a.timestamp) || 0; }
+          const ans = answerText(txt);
+          if (ans) { const last = e.prompts[e.prompts.length - 1]; last.answer = ans; last.replyTs = Date.parse(a.timestamp) || 0; }
           return;
         }
         // 사용자가 쓴 말: user 기록이면서 도구 결과가 아니고, 시스템이 끼워 넣은 것(isMeta)이 아닌 줄
@@ -1738,7 +1750,7 @@ function createPromptIndex() {
       done++;
       if (opts.onProgress) opts.onProgress(done, found.length);
     }
-    save(opts.indexFile);
+    save(opts.indexFile, bytes >= INDEX_SAVE_BYTES, opts.saveEveryMs);
     return { files: found.length, bytes };
   }
 
@@ -1753,10 +1765,16 @@ function createPromptIndex() {
       for (const e of idx.values()) {
         const cxTitle = e.codex ? cxn.get(String(e.sid).slice(6).toLowerCase()) : null;
         for (const p of e.prompts) {
+          // 낱말은 내 말과 그 차례의 마지막 답을 합쳐서 본다. 내 말에 다 있으면 내 말을, 아니면 답을 보여 준다
           const low = p.text.toLowerCase();
-          if (!terms.every((t) => low.includes(t))) continue;
-          const at = Math.max(0, low.indexOf(terms[0]) - 40);
-          out.push({ sid: e.sid, file: e.file, cwd: e.cwd, project: e.cwd ? path.basename(e.cwd) : null, title: e.title || cxTitle || (e.prompts[0] ? e.prompts[0].text.slice(0, 60) : e.sid.slice(0, 8)), ts: p.ts, snippet: (at > 0 ? '…' : '') + p.text.slice(at, at + 160) });
+          const ansLow = p.answer ? p.answer.toLowerCase() : '';
+          if (!terms.every((t) => low.includes(t) || ansLow.includes(t))) continue;
+          const inAnswer = !terms.every((t) => low.includes(t));
+          const src = inAnswer ? p.answer.replace(/\s+/g, ' ') : p.text;
+          const srcLow = inAnswer ? src.toLowerCase() : low;
+          const first = terms.find((t) => srcLow.includes(t)) || terms[0];
+          const at = Math.max(0, srcLow.indexOf(first) - 40);
+          out.push({ sid: e.sid, file: e.file, cwd: e.cwd, project: e.cwd ? path.basename(e.cwd) : null, title: e.title || cxTitle || (e.prompts[0] ? e.prompts[0].text.slice(0, 60) : e.sid.slice(0, 8)), ts: inAnswer && p.replyTs ? p.replyTs : p.ts, snippet: (at > 0 ? '…' : '') + src.slice(at, at + 160), inAnswer, said: inAnswer ? p.text.slice(0, 120) : '' });
         }
       }
     }
@@ -1773,7 +1791,7 @@ function createPromptIndex() {
     const out = [];
     for (const e of idx.values()) {
       if (!want.has(e.sid)) continue;
-      for (const p of e.prompts) out.push({ sid: e.sid, title: e.title || '', ts: p.ts, text: p.text, reply: p.reply || '', replyTs: p.replyTs || 0 });
+      for (const p of e.prompts) out.push({ sid: e.sid, title: e.title || '', ts: p.ts, text: p.text, reply: p.answer ? replyHead(p.answer) : '', replyTs: p.replyTs || 0 });
     }
     out.sort((a, b) => b.ts - a.ts);
     return { results: out.slice(0, o.max || 50), total: out.length, stats };
