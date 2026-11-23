@@ -222,7 +222,7 @@ vscode://kms-labs.session-watchtower/open?title=<session name>&folder=<folder na
 
 <img src="media/readme/search.png" width="600" alt="Search box listing three messages that contain the words token refresh, with the session each one belongs to">
 
-*Search conversations* (the `…` menu of the Sessions view, Enter in the filter box, or the line under the box) searches **everything you typed in any session and the session's final answer to each message** (up to 2,000 characters), not just titles. All words must match; they can be split between your message and the answer. A hit in an answer starts with *Answer:* and shows the message it answered; a result from a Codex chat starts with *Codex ·*. Pick a result to open that session (Codex chats open in Codex).
+*Search conversations* (the `…` menu of the Sessions view, Enter in the filter box, or the line under the box) searches **everything you typed in any session and the session's final answer to each message** (up to 2,000 characters), not just titles. All words must match; they can be split between your message and the answer. Each session is one row: its name, when, and how many places matched, with the newest match underneath (*Answer:* when it is in an answer; Markdown marks and table lines are left out). A Codex chat's name starts with *Codex ·*. Pick a row to open that session (Codex chats open in Codex).
 
 The first search reads all conversation logs once to collect your own messages (a few seconds for a couple of gigabytes); after that only new lines are read.
 

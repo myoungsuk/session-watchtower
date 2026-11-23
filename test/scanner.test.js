@@ -657,6 +657,11 @@ test('대화 내용으로 찾기: 그 차례의 마지막 답도 2,000자까지 
   assert.strictEqual(ix.search('beyondlimit', { indexFile }).results.filter((x) => x.sid === sid).length, 0, '2,000자 뒤는 남기지 않는다');
   const plain = ix.search('restart the worker', { indexFile }).results.filter((x) => x.sid === sid);
   assert.deepStrictEqual([plain.length, plain[0].inAnswer], [1, false], '내 말에 다 있으면 내 말을 보여 준다');
+  // 세션마다 한 줄로 묶은 것: 가장 최근에 찾은 곳(답)과 찾은 곳 수
+  const grouped = ix.search('the', { indexFile });
+  const g = grouped.sessions.filter((x) => x.sid === sid);
+  assert.deepStrictEqual([g.length, g[0].hits, g[0].snippet], [1, 2, 'and the long one'], '같은 세션의 두 물음은 한 줄, 가장 최근 것을 보여 준다');
+  assert.ok(grouped.sessionTotal <= grouped.total && grouped.sessions.length === grouped.sessionTotal);
   const said = ix.recent([sid], { indexFile }).results.find((x) => x.text === 'how do I restart the worker');
   assert.strictEqual(said.reply, 'Fix', '보드의 답 첫 줄은 마지막 답에서 뽑는다(머리표 등은 뺀다)');
 });

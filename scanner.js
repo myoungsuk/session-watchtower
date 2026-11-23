@@ -1780,7 +1780,11 @@ function createPromptIndex() {
     }
     out.sort((a, b) => b.ts - a.ts);
     const max = o.max || 200;
-    return { results: out.slice(0, max), total: out.length, stats };
+    // 세션마다 한 줄: 가장 최근에 찾은 곳 하나와 그 세션에서 찾은 곳 수(찾기 창은 이것을 보여 준다)
+    const bySid = new Map();
+    for (const r of out) { const g = bySid.get(r.sid); if (g) g.hits++; else bySid.set(r.sid, { ...r, hits: 1 }); }
+    const sessions = [...bySid.values()].slice(0, o.maxSessions || 200);
+    return { results: out.slice(0, max), total: out.length, sessions, sessionTotal: bySid.size, stats };
   }
 
   // 고른 세션들에 내가 쓴 말을 최근 것부터(그룹 보드의 "내가 한 말")

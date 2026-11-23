@@ -145,8 +145,9 @@ test('겹침: 다른 세션이 고친 파일을 고치면 표시하고 한 번 �
 test('대화 내용으로 세션 찾기: 내가 쓴 말에서 찾아 그 세션을 연다', async () => {
   const qp = stub.commands.get('claudeSessionChanges.searchConversations')('date helpers migrate');
   await waitFor(() => qp.items.length === 1, '찾은 결과');
-  assert.deepStrictEqual([qp.items[0].r.sid, qp.items[0].label, qp.items[0].alwaysShow], [SID_STUCK, 'Migrate the date helpers to the new library', true]);
-  assert.match(qp.items[0].description, /^Stuck one · /);
+  // 세션마다 한 줄: 윗줄은 세션 이름, 아랫줄은 찾은 글귀
+  assert.deepStrictEqual([qp.items[0].r.sid, qp.items[0].label, qp.items[0].detail, qp.items[0].alwaysShow], [SID_STUCK, 'Stuck one', 'Migrate the date helpers to the new library', true]);
+  assert.match(qp.title, /^1 sessions · 1 matches$/);
   stub.calls.length = 0;
   qp.accept(qp.items[0]);
   await waitFor(() => stub.calls.find((c) => c[0] === 'claude-vscode.editor.open' && c[1] === SID_STUCK), '세션 열기');

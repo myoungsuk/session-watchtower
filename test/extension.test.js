@@ -551,7 +551,7 @@ test('Codex 세션을 누르면 그 세션 폴더에서 터미널로 이어 연�
   // 대화 내용 찾기에서도 Codex 대화는 "Codex ·"로 시작한다(누르기 전에 Codex로 열린다는 것을 알 수 있게)
   const qp = stub.commands.get('claudeSessionChanges.searchConversations')('codex job elsewhere');
   await waitFor(() => qp.items.length === 1, 'Codex 대화 찾기');
-  assert.deepStrictEqual([qp.items[0].r.sid, qp.items[0].label], ['codex:' + CX, 'Codex · A codex job elsewhere']);
+  assert.deepStrictEqual([qp.items[0].r.sid, qp.items[0].label, qp.items[0].detail], ['codex:' + CX, 'Codex · A codex job elsewhere', 'A codex job elsewhere']);
   qp.hide();
   assert.match(bar.text, /\$\(loading~spin\) 1(?!\d)/, '이 폴더에서 작업 중인 세션은 1개');
   ext._test.setCodexCli(true);

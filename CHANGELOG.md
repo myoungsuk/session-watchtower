@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.40.0
+
+- **Search conversations shows one row per session.** It used to show every matching message as its own row, so one busy session filled the list and the session name was pushed off the right edge. Now each session is one row: the session name, when, and how many places matched (for example *160 places*), with the newest match on the line below. Markdown marks (`**`, backticks) and table lines are left out of that line. The title says how many sessions and matches were found. Real logs on the author's machine: `comi` went from 687 rows to 35.
+
 ## 0.39.2
 
 - **Codex chats are marked in Search conversations.** A result from a Codex chat now starts with *Codex ·*, so you know before picking it that it opens in Codex (the Codex extension's panel, or the Codex CLI in a terminal when the extension is not installed), not in Claude Code.
