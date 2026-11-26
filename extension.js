@@ -64,6 +64,7 @@ function cfg() {
     pollSeconds: Math.max(2, Number(c.get('pollSeconds', 5)) || 5),
     sessionDetails: c.get('sessionDetails', true) !== false,
     contextSize: c.get('contextSize', true) !== false,
+    contextSizeScope: c.get('contextSizeScope', 'workspace') === 'all' ? 'all' : 'workspace',
     sessionListDays: Math.max(0, Math.min(365, Number(c.get('sessionListDays', 90)) || 0)),
     notifyWaiting: c.get('notifyWaiting', true) !== false,
     notifyOverlap: c.get('notifyOverlap', true) !== false,
@@ -2962,7 +2963,9 @@ const sessionsWebview = new SessionsWebview();
 let contextItem = null;
 let contextShown = '';
 function contextPayload() {
-  const rows = !cfg().contextSize ? [] : sessionsModel.filter((s) => s.alive).map((s) => {
+  // 기본은 이 창의 작업 폴더에서 연 세션만(설정 contextSizeScope = all이면 다른 폴더도). 폴더를 안 연 창은 inWorkspace가 모두 참
+  const all = cfg().contextSizeScope === 'all';
+  const rows = !cfg().contextSize ? [] : sessionsModel.filter((s) => s.alive && (all || inWorkspace(s))).map((s) => {
     const ctx = contextGauge(s.context);
     return ctx ? { sid: s.sid, title: s.title, canOpen: canOpenSession(s), folder: inWorkspace(s) ? '' : s.project || '', ctx } : null;
   }).filter(Boolean).sort((a, b) => b.ctx.pct - a.ctx.pct);
@@ -2983,12 +2986,12 @@ function updateContextItem() {
     const seg = (color, k) => k ? `<span style="background-color:${color};">${'&nbsp;'.repeat(k)}</span>` : '';
     return seg(fill, n) + seg('var(--vscode-scrollbarSlider-background)', 20 - n);
   };
-  // 막대와 %는 한 칸에 둔다: 왼쪽 정렬이라 줄마다 막대 시작이 맞고, 머리줄에 빈칸이 생기지 않는다
   // 창을 확대하면 표 폭이 좁아져 막대 뒤 %와 '253k / 300k'가 줄바꿈됐다(0.43.3 화면) → 숫자 칸 안의 띄어쓰기는 &nbsp;
   const nb = (t) => String(t).replace(/ /g, '&nbsp;');
   let md = '**' + L('Conversation size') + '** — ' + L('open sessions against their auto-compact point') + '\n\n'
-    + `| ${L('Session')} | ${nb(L('Full'))} | ${nb(L('Used / point'))} |\n|---|---|--:|\n`;
-  for (const r of p.rows) md += `| ${mdCell(r.title)}${r.folder ? ' · ' + mdCell(r.folder) : ''} | ${bar(r)}&nbsp;${r.ctx.level === 'hi' ? '**' + r.ctx.pct + '%**' : r.ctx.pct + '%'} | ${nb(mdCell(r.ctx.text))} |\n`;
+    // 막대와 %를 따로 두고 % 칸을 오른쪽 정렬: 한 자리 %·굵은 %가 섞여도 숫자 끝이 맞는다(0.43.4 화면). 글자 칸은 머리줄까지 왼쪽 정렬
+    + `| ${L('Session')} | ${nb(L('Full'))} | % | ${nb(L('Used / point'))} |\n|:--|:--|--:|--:|\n`;
+  for (const r of p.rows) md += `| ${mdCell(r.title)}${r.folder ? ' · ' + mdCell(r.folder) : ''} | ${bar(r)} | ${r.ctx.level === 'hi' ? '**' + r.ctx.pct + '%**' : r.ctx.pct + '%'} | ${nb(mdCell(r.ctx.text))} |\n`;
   md += '\n' + L('Click to pick one and open it.') + '  \n' + L('Where each point comes from: hover the session row in the Sessions view.');
   const key = text + '\u0000' + md + '\u0000' + p.hi;
   if (key === contextShown) return;

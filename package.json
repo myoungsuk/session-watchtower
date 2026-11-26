@@ -2,7 +2,7 @@
   "name": "session-watchtower",
   "displayName": "Session Watchtower for Claude Code",
   "description": "%description%",
-  "version": "0.43.4",
+  "version": "0.43.5",
   "scripts": {
     "test": "node --test --test-timeout=180000 test/*.test.js",
     "shot": "bash tools/screenshot/run.sh"
@@ -617,6 +617,19 @@
           "type": "boolean",
           "default": true,
           "description": "%config.contextSize%"
+        },
+        "claudeSessionChanges.contextSizeScope": {
+          "type": "string",
+          "default": "workspace",
+          "enum": [
+            "workspace",
+            "all"
+          ],
+          "enumItemLabels": [
+            "%config.contextSizeScope.workspace%",
+            "%config.contextSizeScope.all%"
+          ],
+          "description": "%config.contextSizeScope%"
         },
         "claudeSessionChanges.sessionListDays": {
           "type": "number",

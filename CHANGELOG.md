@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.43.5
+
+- **Conversation size counts only this window's sessions by default.** The status bar number and the hover table now include only open sessions started in this window's workspace folders. The new setting `contextSizeScope` (`workspace` by default, or `all`) brings back every folder. A window with no folder open counts all.
+- **The hover table lines up.** The percent has its own right-aligned column, so one-digit, two-digit and bold percents end at the same place, and the text columns (headers included) are left-aligned instead of centered.
+
 ## 0.43.4
 
 - **The conversation-size table keeps numbers on one line when the window is zoomed in.** With a larger zoom the hover gets narrower, and the percent dropped below its bar and *253k / 300k* broke into two lines. The spaces inside the number columns are now non-breaking.

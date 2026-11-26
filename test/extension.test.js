@@ -196,13 +196,22 @@ test('상태 표시줄 대화 크기: 사용량 바로 오른쪽, 열린 세션 
   const item = stub.statusItems.find((x) => x.id === 'claudeSessionChanges.context');
   const usageItem = stub.statusItems.find((x) => x.id === 'claudeSessionChanges.usage');
   assert.ok(item && item.priority < usageItem.priority && usageItem.priority - item.priority < 0.001, '사용량 바로 오른쪽');
-  await waitFor(() => item.visible && item.text, '대화 크기 항목');
+  // 기본(contextSizeScope = workspace)은 이 창의 작업 폴더에서 연 세션만: 다른 폴더의 SID_OTHER는 빠진다
+  stub.calls.length = 0;
+  stub.state.pick = (items) => items[0];
+  await stub.commands.get('claudeSessionChanges.pickContext')();
+  stub.state.pick = undefined;
+  const pick0 = stub.calls.find((c) => c[0] === 'pick');
+  assert.ok(!pick0 || !pick0[1].some((x) => x.sid === SID_OTHER), '기본은 다른 폴더 세션을 고르기 목록에 넣지 않는다');
+  assert.ok(!item.visible || !/Other folder work/.test(item.tooltip.value), '기본은 다른 폴더 세션을 표에 넣지 않는다');
+  stub.changeConfig('contextSizeScope', 'all');
+  await waitFor(() => item.visible && item.text, '모든 폴더로 바꾸면 대화 크기 항목');
   assert.strictEqual(item.text, '$(comment-discussion) 75%', '끝난 세션(95%)이 아니라 열린 세션 중 가장 찬 값');
   assert.strictEqual(item.backgroundColor, undefined, '80% 넘은 열린 세션이 없으면 색 없음');
   const md = item.tooltip.value;
-  assert.match(md, /\| Session \| Full \| Used&nbsp;\/&nbsp;point \|\n\|---\|---\|--:\|\n/, '머리줄에 칸 이름(빈칸 없음)');
+  assert.match(md, /\| Session \| Full \| % \| Used&nbsp;\/&nbsp;point \|\n\|:--\|:--\|--:\|--:\|\n/, '머리줄에 칸 이름(빈칸 없음), 글자 칸 왼쪽·숫자 칸 오른쪽 정렬');
   const BAR = (c, k) => `<span style="background-color:${c};">${'&nbsp;'.repeat(k)}</span>`;
-  assert.ok(md.includes('| Other folder work · other\\-app | ' + BAR('var(--vscode-progressBar-background)', 15) + BAR('var(--vscode-scrollbarSlider-background)', 5) + '&nbsp;75% | 150k&nbsp;/&nbsp;200k |'), '세션마다 이름·막대(75% → 20칸 중 15칸)와 %·크기, 숫자 칸은 줄바꿈 안 되는 빈칸');
+  assert.ok(md.includes('| Other folder work · other\\-app | ' + BAR('var(--vscode-progressBar-background)', 15) + BAR('var(--vscode-scrollbarSlider-background)', 5) + ' | 75% | 150k&nbsp;/&nbsp;200k |'), '세션마다 이름·막대(75% → 20칸 중 15칸)·%·크기, 숫자 칸은 줄바꿈 안 되는 빈칸');
   assert.doesNotMatch(md, /[█░]/, '글꼴 따라 길이가 뭉개지는 막대 글자 없음');
   // 85번 VS Code(69047191fc) 화면 코드 workbench.desktop.main.js가 span style에 허용하는 형식. 벗어나면 막대가 통째로 지워진다
   const allowed = /^(color\:(#[0-9a-fA-F]+|var\(--vscode(-[a-zA-Z0-9]+)+\));)?(background-color\:(#[0-9a-fA-F]+|var\(--vscode(-[a-zA-Z0-9]+)+\));)?(display\:inline-block;)?(border-radius:[0-9]+px;)?$/;
@@ -222,6 +231,7 @@ test('상태 표시줄 대화 크기: 사용량 바로 오른쪽, 열린 세션 
   await waitFor(() => !item.visible, '끄면 숨김');
   stub.changeConfig('contextSize', true);
   await waitFor(() => item.visible, '켜면 다시');
+  stub.changeConfig('contextSizeScope', 'workspace');
   fs.unlinkSync(goneFile);
   await refresh();
   await waitFor(() => !web.lastPayload().mine.some((r) => r.sid === SID_GONE), '시험용 세션 지움');
