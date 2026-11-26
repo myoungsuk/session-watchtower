@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.42.2
+
+- **The Conversation Size view fits five sessions in its smallest height.** VS Code keeps an open view at least about 120 px tall, and the note line under the list pushed in a scroll bar. The note now shows on hover, rows are 22 px like VS Code lists, and the padding is smaller. To hide the list completely, collapse the view: its title still shows *N past 80%*.
+
 ## 0.42.1
 
 - **Conversation size has its own view, right above MCP Servers.** 0.42.0 put it at the bottom of the Sessions view, below the other-folder groups, where it was easy to miss. It is now a separate collapsible view like MCP Servers. The view title shows *N past 80%* when sessions pass 80% (once the view has been opened in that window; a badge was not used because it would mix with the waiting count on the activity bar icon).

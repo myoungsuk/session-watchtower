@@ -202,6 +202,8 @@ test('"대화 크기" 창: MCP 서버 바로 위·기본 접힘, 열린 세션�
   assert.doesNotThrow(() => new vm.Script(m[1]));
   assert.match(html, /default-src 'none'/);
   assert.match(html, /\.cbar\.hi i \{ background: var\(--vscode-editorError-foreground/);
+  assert.match(html, /\.crow \{[^}]*min-height: 22px/, '줄 높이 22px(VS Code 목록과 같음)');
+  assert.doesNotMatch(html, /id="note"/, '안내 줄은 따로 두지 않는다(최소 높이 안에 줄 5개)');
   const p = cw.lastPayload();
   const alive = new Set((web.lastPayload().groups || []).flatMap((g) => g.rows).concat(web.lastPayload().mine).filter((r) => r.alive).map((r) => r.sid));
   assert.ok(p.rows.length >= 1 && p.rows.every((r) => alive.has(r.sid)), '열린 세션만');

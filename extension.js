@@ -3004,10 +3004,10 @@ function contextHtml(webview) {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${n}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
-  body { margin: 0; padding: 4px 0 8px; font-family: var(--vscode-font-family); font-size: 13px; color: var(--vscode-foreground); background: transparent; }
+  body { margin: 0; padding: 1px 0; font-family: var(--vscode-font-family); font-size: 13px; color: var(--vscode-foreground); background: transparent; }
   .info { margin: 2px 10px 6px; font-size: 11.5px; color: var(--vscode-descriptionForeground); }
   .cfold { color: var(--vscode-descriptionForeground); font-size: 11.5px; }
-  .crow { display: flex; align-items: center; gap: 8px; min-height: 24px; padding: 0 10px; font-size: 12.5px; cursor: pointer; border-radius: 3px; }
+  .crow { display: flex; align-items: center; gap: 8px; min-height: 22px; padding: 0 10px; font-size: 12.5px; cursor: pointer; border-radius: 3px; }
   .crow:hover, .crow:focus-visible { background: var(--vscode-list-hoverBackground); outline: none; }
   .crow.other { cursor: default; }
   .cname { flex: 1; min-width: 4em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3021,7 +3021,6 @@ function contextHtml(webview) {
   .cnum { flex-shrink: 0; font-size: 11.5px; color: var(--vscode-descriptionForeground); font-variant-numeric: tabular-nums; }
 </style></head><body>
 <div id="root" role="list"></div>
-<div class="info" id="note"></div>
 <script nonce="${n}">
   const vscode = acquireVsCodeApi();
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -3034,7 +3033,8 @@ function contextHtml(webview) {
   }
   function render(p) {
     document.getElementById('root').innerHTML = p.rows.length ? p.rows.map(crow).join('') : '<div class="info">' + esc(p.empty) + '</div>';
-    document.getElementById('note').textContent = p.rows.length ? p.note : '';
+    // VS Code가 펼친 창의 최소 높이(본문 약 120px)를 정해 두므로, 안내 줄은 따로 두지 않고 마우스를 올렸을 때만 보인다 → 줄(22px) 5개가 스크롤 없이 들어간다
+    document.getElementById('root').title = p.rows.length ? p.note : '';
   }
   document.addEventListener('click', (e) => {
     const r = e.target.closest('.crow');
