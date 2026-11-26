@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.43.2
+
+- **The bar is back in the conversation-size table.** 0.43.1 removed it, but the bar was the part that read best. It now sits in the *Full* column next to the percent (left-aligned, so every bar starts at the same place); the named header and the two-line note from 0.43.1 stay.
+
 ## 0.43.1
 
 - **The conversation-size hover table reads cleanly.** The bar column (block characters in code formatting) rendered as grey blobs whose lengths barely differed, the header row was empty, and the note under the table was cut off at the right edge. The bar column is gone, the header now names the columns (*Session · Full · Used / point*), and the note is two short lines.

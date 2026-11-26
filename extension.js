@@ -2975,10 +2975,11 @@ function updateContextItem() {
   if (!p.rows.length) { if (contextShown) { contextItem.hide(); contextShown = ''; } return; }
   const top = p.rows[0].ctx;
   const text = '$(comment-discussion) ' + top.pct + '%';
-  // 막대(█░)는 글꼴마다 칸 폭이 달라 회색 덩어리로 뭉개졌다(0.43.0 화면) → 숫자만 두고 머리줄에 칸 이름을 넣는다
+  const bar = (pct) => { const n = Math.max(0, Math.min(10, Math.round(pct / 10))); return '█'.repeat(n) + '░'.repeat(10 - n); };
+  // 막대와 %는 한 칸에 둔다: 왼쪽 정렬이라 줄마다 막대 시작이 맞고, 머리줄에 빈칸이 생기지 않는다
   let md = '**' + L('Conversation size') + '** — ' + L('open sessions against their auto-compact point') + '\n\n'
-    + `| ${L('Session')} | ${L('Full')} | ${L('Used / point')} |\n|---|--:|--:|\n`;
-  for (const r of p.rows) md += `| ${mdCell(r.title)}${r.folder ? ' · ' + mdCell(r.folder) : ''} | ${r.ctx.level === 'hi' ? '**' + r.ctx.pct + '%**' : r.ctx.pct + '%'} | ${mdCell(r.ctx.text)} |\n`;
+    + `| ${L('Session')} | ${L('Full')} | ${L('Used / point')} |\n|---|---|--:|\n`;
+  for (const r of p.rows) md += `| ${mdCell(r.title)}${r.folder ? ' · ' + mdCell(r.folder) : ''} | \`${bar(r.ctx.pct)}\` ${r.ctx.level === 'hi' ? '**' + r.ctx.pct + '%**' : r.ctx.pct + '%'} | ${mdCell(r.ctx.text)} |\n`;
   md += '\n' + L('Click to pick one and open it.') + '  \n' + L('Where each point comes from: hover the session row in the Sessions view.');
   const key = text + '\u0000' + md + '\u0000' + p.hi;
   if (key === contextShown) return;
