@@ -200,9 +200,9 @@ test('상태 표시줄 대화 크기: 사용량 바로 오른쪽, 열린 세션 
   assert.strictEqual(item.text, '$(comment-discussion) 75%', '끝난 세션(95%)이 아니라 열린 세션 중 가장 찬 값');
   assert.strictEqual(item.backgroundColor, undefined, '80% 넘은 열린 세션이 없으면 색 없음');
   const md = item.tooltip.value;
-  assert.match(md, /\| Session \| Full \| Used \/ point \|\n\|---\|---\|--:\|\n/, '머리줄에 칸 이름(빈칸 없음)');
+  assert.match(md, /\| Session \| Full \| Used&nbsp;\/&nbsp;point \|\n\|---\|---\|--:\|\n/, '머리줄에 칸 이름(빈칸 없음)');
   const BAR = (c, k) => `<span style="background-color:${c};">${'&nbsp;'.repeat(k)}</span>`;
-  assert.ok(md.includes('| Other folder work · other\\-app | ' + BAR('var(--vscode-progressBar-background)', 15) + BAR('var(--vscode-scrollbarSlider-background)', 5) + ' 75% | 150k / 200k |'), '세션마다 이름·막대(75% → 20칸 중 15칸)와 %·크기');
+  assert.ok(md.includes('| Other folder work · other\\-app | ' + BAR('var(--vscode-progressBar-background)', 15) + BAR('var(--vscode-scrollbarSlider-background)', 5) + '&nbsp;75% | 150k&nbsp;/&nbsp;200k |'), '세션마다 이름·막대(75% → 20칸 중 15칸)와 %·크기, 숫자 칸은 줄바꿈 안 되는 빈칸');
   assert.doesNotMatch(md, /[█░]/, '글꼴 따라 길이가 뭉개지는 막대 글자 없음');
   // 85번 VS Code(69047191fc) 화면 코드 workbench.desktop.main.js가 span style에 허용하는 형식. 벗어나면 막대가 통째로 지워진다
   const allowed = /^(color\:(#[0-9a-fA-F]+|var\(--vscode(-[a-zA-Z0-9]+)+\));)?(background-color\:(#[0-9a-fA-F]+|var\(--vscode(-[a-zA-Z0-9]+)+\));)?(display\:inline-block;)?(border-radius:[0-9]+px;)?$/;

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.43.4
+
+- **The conversation-size table keeps numbers on one line when the window is zoomed in.** With a larger zoom the hover gets narrower, and the percent dropped below its bar and *253k / 300k* broke into two lines. The spaces inside the number columns are now non-breaking.
+
 ## 0.43.3
 
 - **Conversation-size bars have real lengths.** The block-character bar (█░) drew every row at the same length in some fonts (84% and 45% looked identical). The bar is now drawn with background-colored spans in 5% steps, using theme colors (progress-bar color, yellow from 80%, scrollbar color for the empty part), so it no longer depends on the font. Only the `background-color` style that VS Code keeps in hovers is used.

@@ -2984,9 +2984,11 @@ function updateContextItem() {
     return seg(fill, n) + seg('var(--vscode-scrollbarSlider-background)', 20 - n);
   };
   // 막대와 %는 한 칸에 둔다: 왼쪽 정렬이라 줄마다 막대 시작이 맞고, 머리줄에 빈칸이 생기지 않는다
+  // 창을 확대하면 표 폭이 좁아져 막대 뒤 %와 '253k / 300k'가 줄바꿈됐다(0.43.3 화면) → 숫자 칸 안의 띄어쓰기는 &nbsp;
+  const nb = (t) => String(t).replace(/ /g, '&nbsp;');
   let md = '**' + L('Conversation size') + '** — ' + L('open sessions against their auto-compact point') + '\n\n'
-    + `| ${L('Session')} | ${L('Full')} | ${L('Used / point')} |\n|---|---|--:|\n`;
-  for (const r of p.rows) md += `| ${mdCell(r.title)}${r.folder ? ' · ' + mdCell(r.folder) : ''} | ${bar(r)} ${r.ctx.level === 'hi' ? '**' + r.ctx.pct + '%**' : r.ctx.pct + '%'} | ${mdCell(r.ctx.text)} |\n`;
+    + `| ${L('Session')} | ${nb(L('Full'))} | ${nb(L('Used / point'))} |\n|---|---|--:|\n`;
+  for (const r of p.rows) md += `| ${mdCell(r.title)}${r.folder ? ' · ' + mdCell(r.folder) : ''} | ${bar(r)}&nbsp;${r.ctx.level === 'hi' ? '**' + r.ctx.pct + '%**' : r.ctx.pct + '%'} | ${nb(mdCell(r.ctx.text))} |\n`;
   md += '\n' + L('Click to pick one and open it.') + '  \n' + L('Where each point comes from: hover the session row in the Sessions view.');
   const key = text + '\u0000' + md + '\u0000' + p.hi;
   if (key === contextShown) return;
