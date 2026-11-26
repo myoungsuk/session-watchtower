@@ -2575,6 +2575,7 @@ function rebuildSessions() {
       : undefined;
   }
   sessionsWebview.post();
+  contextWebview.post();
   refreshBoards();
   writeTeamRosters();
 }
@@ -2794,7 +2795,7 @@ function sessionRow(s, tabs, team) {
   const lead = !!(eff && eff.lead);
   const role = eff ? eff.extra : '';
   const roleFromBoard = !!(eff && eff.extraSource === 'board');
-  const ctx = cfg().contextSize ? contextGauge(s.context) : null; // 설정 contextSize를 끄면 대화 크기 구역도 설명 줄도 없다
+  const ctx = cfg().contextSize ? contextGauge(s.context) : null; // 설정 contextSize를 끄면 "대화 크기" 창도 줄 설명의 크기도 없다
   return {
     team: team ? team.id : '', role, roleFromBoard, lead,
     sid: s.sid, title: s.title, state: st.key, meta, tip: (tab ? L('Shown in a tab right now') + '\n' : '') + sessionTooltip(s, st) + (ctx ? '\n' + ctx.tip : '') + '\n' + hint, canOpen, alive: !!s.alive, codex, tab,
@@ -2804,7 +2805,7 @@ function sessionRow(s, tabs, team) {
   };
 }
 
-// 대화 크기(세션 창의 접는 "대화 크기" 구역): 마지막 응답에 들어간 토큰 ÷ 자동 압축 기준(Claude는 settings의 autoCompactWindow, Codex는 모델 문맥 창)
+// 대화 크기("MCP 서버" 위의 "대화 크기" 창): 마지막 응답에 들어간 토큰 ÷ 자동 압축 기준(Claude는 settings의 autoCompactWindow, Codex는 모델 문맥 창)
 // 색은 50% 미만 초록 · 80% 미만 노랑 · 그 이상 빨강(50%는 전역 지침 19절 "15만쯤 넘으면 /compact 권함"과 맞춘 선)
 function contextGauge(c) {
   if (!c || !(c.used > 0) || !(c.window > 0)) return null;
@@ -2830,7 +2831,7 @@ function sessionsPayload() {
     // 숫자는 화면 쪽에서 채운다 → 자리표시자를 그대로 넘겨 번역 함수가 건드리지 않게 한다
     activeTip: L('Show only sessions that are open right now (working, waiting or idle). The number counts this folder: {0}. Other folders: {1}.', '{0}', '{1}'),
     search: L('Search sessions'), searchHint: L('Name, role or folder · Enter: inside conversations'), searchDeep: L('Search conversations and answers for “{0}” (Enter)', '{0}'), noMatch: L('No matching sessions'), legend: L('What the colors mean'),
-    archive: L('Archive'), unarchive: L('Restore from archive'), archivedTitle: L('Archived'), ctxTitle: L('Conversation size'), ctxDesc: L('against the auto-compact point'), ctxHiTip: L('{0} sessions past 80% of the auto-compact point', '{0}'), archiveRule: L('Choose when sessions move to Archived'),
+    archive: L('Archive'), unarchive: L('Restore from archive'), archivedTitle: L('Archived'), archiveRule: L('Choose when sessions move to Archived'),
     loadChanges: L("Load this session's changed files"),
     rename: L('Rename session'),
     overlapTip: L('{0} file(s) here were also changed by another session. Click to compare or stop the warning.', '{0}'),
@@ -2955,6 +2956,100 @@ class SessionsWebview {
 
 const sessionsWebview = new SessionsWebview();
 
+// "대화 크기" 창("MCP 서버" 바로 위, 기본 접힘): 지금 열려 있는 세션만, 많이 찬 순.
+// 끝난 세션은 뺀다 — 옛 기준(예: 40만) 시절에 끝난 대화를 지금 기준(30만)과 비교하면 195%처럼 잘못 경고한다.
+// 80%를 넘은 세션 수는 창 제목 옆 설명 글자로(배지는 활동 막대 아이콘의 "기다림" 숫자와 섞일 수 있어 쓰지 않는다).
+const CONTEXT_VIEW = 'claudeSessionChanges.context';
+function contextPayload() {
+  const off = !cfg().contextSize;
+  const rows = off ? [] : sessionsModel.filter((s) => s.alive).map((s) => {
+    const ctx = contextGauge(s.context);
+    return ctx ? { sid: s.sid, title: s.title, canOpen: canOpenSession(s), folder: inWorkspace(s) ? '' : s.project || '', ctx } : null;
+  }).filter(Boolean).sort((a, b) => b.ctx.pct - a.ctx.pct);
+  const hi = rows.filter((r) => r.ctx.level === 'hi').length;
+  return {
+    rows, hi,
+    empty: off ? L('Turned off (setting claudeSessionChanges.contextSize).') : L('No open session has a conversation size yet.'),
+    note: L('Open sessions only, fullest first. Against each session\'s auto-compact point; hover a line for where the point came from.'),
+  };
+}
+class ContextWebview {
+  constructor() { this.view = undefined; this.ready = false; }
+  resolveWebviewView(view) {
+    this.view = view;
+    this.ready = false;
+    view.webview.options = { enableScripts: true, localResourceRoots: [] };
+    view.webview.html = contextHtml(view.webview);
+    view.webview.onDidReceiveMessage((m) => {
+      if (!m || typeof m !== 'object') return;
+      if (m.type === 'ready') { this.ready = true; this.post(); }
+      else if (m.type === 'open' && typeof m.sid === 'string') openClaudeSession(m.sid);
+    });
+    view.onDidChangeVisibility(() => { if (view.visible) this.post(); });
+    view.onDidDispose(() => { if (this.view === view) { this.view = undefined; this.ready = false; } });
+  }
+  post() {
+    if (!this.view) return;
+    const p = contextPayload();
+    this.view.description = p.hi ? L('{0} past 80%', p.hi) : '';
+    if (this.ready) this.view.webview.postMessage({ type: 'render', payload: p });
+  }
+}
+const contextWebview = new ContextWebview();
+
+function contextHtml(webview) {
+  const n = nonce();
+  return `<!DOCTYPE html>
+<html lang="${isKo() ? 'ko' : 'en'}"><head><meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${n}';">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  body { margin: 0; padding: 4px 0 8px; font-family: var(--vscode-font-family); font-size: 13px; color: var(--vscode-foreground); background: transparent; }
+  .info { margin: 2px 10px 6px; font-size: 11.5px; color: var(--vscode-descriptionForeground); }
+  .cfold { color: var(--vscode-descriptionForeground); font-size: 11.5px; }
+  .crow { display: flex; align-items: center; gap: 8px; min-height: 24px; padding: 0 10px; font-size: 12.5px; cursor: pointer; border-radius: 3px; }
+  .crow:hover, .crow:focus-visible { background: var(--vscode-list-hoverBackground); outline: none; }
+  .crow.other { cursor: default; }
+  .cname { flex: 1; min-width: 4em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cbar { flex: 0 1 90px; min-width: 36px; height: 6px; border-radius: 3px; overflow: hidden; background: color-mix(in srgb, var(--vscode-descriptionForeground) 22%, transparent); }
+  .cbar i { display: block; height: 100%; border-radius: 3px; }
+  .cbar.lo i { background: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
+  .cbar.mid i { background: var(--vscode-editorWarning-foreground, #cca700); }
+  .cbar.hi i { background: var(--vscode-editorError-foreground, #f14c4c); }
+  .cpct { flex-shrink: 0; width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
+  .cpct.hi { color: var(--vscode-editorError-foreground, #f14c4c); font-weight: 600; }
+  .cnum { flex-shrink: 0; font-size: 11.5px; color: var(--vscode-descriptionForeground); font-variant-numeric: tabular-nums; }
+</style></head><body>
+<div id="root" role="list"></div>
+<div class="info" id="note"></div>
+<script nonce="${n}">
+  const vscode = acquireVsCodeApi();
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  function crow(r) {
+    const w = Math.min(100, Math.max(0, r.ctx.pct));
+    return '<div class="crow' + (r.canOpen ? '' : ' other') + '" role="listitem" tabindex="0" data-sid="' + esc(r.sid) + '" data-open="' + (r.canOpen ? '1' : '') + '" title="' + esc(r.ctx.tip) + '">'
+      + '<span class="cname">' + esc(r.title) + (r.folder ? ' <span class="cfold">· ' + esc(r.folder) + '</span>' : '') + '</span>'
+      + '<span class="cbar ' + esc(r.ctx.level) + '"><i style="width:' + w + '%"></i></span>'
+      + '<span class="cpct ' + esc(r.ctx.level) + '">' + r.ctx.pct + '%</span><span class="cnum">' + esc(r.ctx.text) + '</span></div>';
+  }
+  function render(p) {
+    document.getElementById('root').innerHTML = p.rows.length ? p.rows.map(crow).join('') : '<div class="info">' + esc(p.empty) + '</div>';
+    document.getElementById('note').textContent = p.rows.length ? p.note : '';
+  }
+  document.addEventListener('click', (e) => {
+    const r = e.target.closest('.crow');
+    if (r && r.dataset.open) vscode.postMessage({ type: 'open', sid: r.dataset.sid });
+  });
+  document.addEventListener('keydown', (e) => {
+    const r = e.target.closest && e.target.closest('.crow');
+    if (e.key === 'Enter' && r && r === e.target && r.dataset.open) vscode.postMessage({ type: 'open', sid: r.dataset.sid });
+  });
+  window.addEventListener('message', (e) => { if (e.data && e.data.type === 'render') render(e.data.payload); });
+  vscode.postMessage({ type: 'ready' });
+</script>
+</body></html>`;
+}
+
 function sessionsHtml(webview) {
   const n = nonce();
   return `<!DOCTYPE html>
@@ -2992,20 +3087,6 @@ function sessionsHtml(webview) {
   .tabkey { display: inline-block; width: 14px; height: 12px; border-radius: 2px; }
   .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .meta { flex-shrink: 0; font-size: 12px; color: var(--vscode-descriptionForeground); }
-  /* 대화 크기 구역: 세션마다 한 줄(이름 · 막대 · % · 크기/기준) */
-  .crow { display: flex; align-items: center; gap: 8px; min-height: 24px; padding: 0 8px 0 26px; font-size: 12.5px; cursor: pointer; border-radius: 3px; }
-  .crow:hover, .crow:focus-visible { background: var(--vscode-list-hoverBackground); outline: none; }
-  .crow.other { cursor: default; }
-  .cname { flex: 1; min-width: 4em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cbar { flex: 0 1 90px; min-width: 36px; height: 6px; border-radius: 3px; overflow: hidden; background: color-mix(in srgb, var(--vscode-descriptionForeground) 22%, transparent); }
-  .cbar i { display: block; height: 100%; border-radius: 3px; }
-  .cbar.lo i { background: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
-  .cbar.mid i { background: var(--vscode-editorWarning-foreground, #cca700); }
-  .cbar.hi i { background: var(--vscode-editorError-foreground, #f14c4c); }
-  .cpct { flex-shrink: 0; width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
-  .cpct.hi { color: var(--vscode-editorError-foreground, #f14c4c); font-weight: 600; }
-  .cnum { flex-shrink: 0; font-size: 11.5px; color: var(--vscode-descriptionForeground); font-variant-numeric: tabular-nums; }
-  .gcount.hi { color: var(--vscode-editor-background); background: var(--vscode-editorError-foreground, #f14c4c); }
   /* 단추는 마우스를 올린 줄에서만 시간 자리에 나온다(평소에는 자리를 차지하지 않아 제목이 덜 잘린다. Claude 세션 목록과 같은 방식) */
   .act { flex-shrink: 0; display: none; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--vscode-icon-foreground, var(--vscode-foreground)); cursor: pointer; }
   .row:hover .act, .row:focus-visible .act, .row:has(.act:focus-visible) .act { display: inline-flex; }
@@ -3147,22 +3228,6 @@ function sessionsHtml(webview) {
   const boardIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="11" rx="1"/><path d="M2 6h12M6.5 6v7.5"/></svg>';
   const trashIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.7 9h6.6l.7-9"/></svg>';
   const gearIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/></svg>';
-  // 대화 크기 구역(접힘이 기본): 세션마다 이름 · 막대 · % · 크기/기준, 많이 찬 순. 80% 넘은 세션 수를 빨간 숫자로
-  function ctxSection(rows, needle) {
-    const seen = new Set();
-    const list = rows.filter((r) => r.ctx && !seen.has(r.sid) && seen.add(r.sid)).sort((a, b) => b.ctx.pct - a.ctx.pct);
-    if (!list.length) return '';
-    const hi = list.filter((r) => r.ctx.level === 'hi').length;
-    const open = needle ? true : !!saved.open.__context;
-    return '<details class="grp ctx" data-key="__context"' + (open ? ' open' : '') + '><summary><span class="chev">›</span><span class="gname">' + esc(strings.ctxTitle) + '</span>'
-      + '<span class="gdesc">' + esc(strings.ctxDesc) + '</span>'
-      + (hi ? '<span class="gcount hi" title="' + esc(String(strings.ctxHiTip || '').replace('{0}', hi)) + '">' + hi + '</span>' : '') + '</summary>'
-      + list.map((r) => '<div class="crow' + (r.canOpen ? '' : ' other') + '" role="listitem" tabindex="0" data-sid="' + esc(r.sid) + '" data-open="' + (r.canOpen ? '1' : '') + '" title="' + esc(r.ctx.tip) + '">'
-        + '<span class="cname">' + esc(r.title) + '</span>'
-        + '<span class="cbar ' + esc(r.ctx.level) + '"><i style="width:' + Math.min(100, Math.max(0, r.ctx.pct)) + '%"></i></span>'
-        + '<span class="cpct ' + esc(r.ctx.level) + '">' + r.ctx.pct + '%</span><span class="cnum">' + esc(r.ctx.text) + '</span></div>').join('')
-      + '</details>';
-  }
   function row(r, inArchive) {
     const btn = (act, label, svg) => '<button class="act" data-act="' + act + '" data-sid="' + esc(r.sid) + '" title="' + esc(label) + '" aria-label="' + esc(label) + '">' + svg + '</button>';
     // 보는 기간 안에 바꾼 파일이 없는 세션은 "불러오기" 단추(그 세션의 마지막 작업분을 읽어 온다)
@@ -3282,12 +3347,6 @@ function sessionsHtml(webview) {
         + '<span class="gicon">' + folderIcon + '</span>' + (g.waiting ? '<span class="bell"></span>' : '') + '<span class="gname">' + esc(g.key) + '</span><span class="gdesc">' + esc(g.desc) + '</span></summary>'
         + rows.map((r) => row(r, false)).join('') + '</details>';
     }
-    // 대화 크기 구역: 보관함 바로 위. 지금 보이는 세션(그룹·이 폴더·다른 폴더)만
-    const ctxRows = [];
-    for (const t of p.teams || []) ctxRows.push(...t.rows.filter(keep));
-    ctxRows.push(...mine);
-    for (const g of p.groups || []) ctxRows.push(...g.rows.filter(keep));
-    h += ctxSection(ctxRows, needle);
     // 보관함: 맨 아래 접힌 묶음. "실행 중만" 필터에서는 숨기고, 검색하면 맞는 것이 있을 때 펼친다
     const arch = saved.active ? [] : (p.archived || []).filter((r) => !needle || String(r.title).toLowerCase().includes(needle));
     if (arch.length) {
@@ -3304,12 +3363,12 @@ function sessionsHtml(webview) {
   root.addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-act]');
     if (btn) { e.stopPropagation(); e.preventDefault(); vscode.postMessage({ type: btn.dataset.act, sid: btn.dataset.sid, team: btn.dataset.team }); return; }
-    const r = e.target.closest('.row, .crow');
+    const r = e.target.closest('.row');
     if (r && r.dataset.open) vscode.postMessage({ type: 'open', sid: r.dataset.sid });
   });
   root.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
-    const r = e.target.closest && e.target.closest('.row, .crow');
+    const r = e.target.closest && e.target.closest('.row');
     if (r && r === e.target && r.dataset.open) vscode.postMessage({ type: 'open', sid: r.dataset.sid });
   });
   root.addEventListener('toggle', (e) => {
@@ -5061,6 +5120,7 @@ function activate(context) {
     statusItem,
     usageItem,
     vscode.window.registerWebviewViewProvider(SESSIONS_VIEW, sessionsWebview),
+    vscode.window.registerWebviewViewProvider(CONTEXT_VIEW, contextWebview),
     vscode.window.registerWebviewViewProvider(MCP_VIEW, mcpWebview),
     vscode.commands.registerCommand('claudeSessionChanges.refreshUsage', () => refreshClaudeUsage(true)),
     vscode.commands.registerCommand('claudeSessionChanges.phoneBoardPair', () => phoneBoardPair()),

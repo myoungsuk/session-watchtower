@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.42.1
+
+- **Conversation size has its own view, right above MCP Servers.** 0.42.0 put it at the bottom of the Sessions view, below the other-folder groups, where it was easy to miss. It is now a separate collapsible view like MCP Servers. The view title shows *N past 80%* when sessions pass 80% (once the view has been opened in that window; a badge was not used because it would mix with the waiting count on the activity bar icon).
+- **Only open sessions are listed.** Ended sessions were compared with today's auto-compact setting even if they ended under an older, larger one, which showed false alarms such as *195% · 585k / 300k*.
+
 ## 0.42.0
 
 - **Conversation size moved from every session row into one collapsible section.** A ring on every row was noisy. The rings are gone; a **Conversation size** section above Archived (closed by default, remembers open or closed) lists each session with a bar, a percent and *used / point* (for example *245k / 300k*), fullest first. A red number on its header counts the sessions past 80%, visible even when closed. Click a line to open the session. The session row's tooltip still shows the numbers.
