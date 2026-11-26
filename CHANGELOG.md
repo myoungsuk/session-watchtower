@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.41.2
+
+- **The conversation-size ring can be turned off.** New setting `contextRing` (on by default). Changes apply right away.
+- **Codex rings use Codex's auto-compact point.** 0.41.0 compared Codex sessions with the full context window. Now: `model_auto_compact_token_limit` at the top of `~/.codex/config.toml` when set, otherwise 90% of the model context window (an estimate checked against 169 real Codex compactions).
+- **No question-mark pointer over the ring.** The ring used the "help" mouse pointer, which shows a question mark; it now uses the row's normal pointer. The numbers still appear on hover.
+
 ## 0.41.1
 
 - **The conversation-size ring now uses each person's own auto-compact point.** 0.41.0 read only the top-level `autoCompactWindow` and assumed 200k when it was missing, which is wrong for most people: with nothing set, Claude Code compacts at about 967k on models with a native 1M window. The ring now follows Claude Code's documented order: `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in a settings file's `env`, then managed, project local, project and user settings (a per-model window saved with `/autocompact` before the top-level key in each file), then the model's default (about 967k for native 1M models, 200k for the others, 200k with `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`), never past the model's context window. The tooltip says where the point came from.

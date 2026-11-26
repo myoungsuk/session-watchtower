@@ -110,3 +110,17 @@ test('설정 env 블록: CLAUDE_CODE_AUTO_COMPACT_WINDOW가 모든 값보다 앞
   assert.deepStrictEqual(S.claudeCompactWindow(project, 'claude-fable-5-2', 1), { window: 200000, source: 'default', assumed: false });
   fs.rmSync(path.join(home, '.claude', 'settings.json'));
 });
+
+test('Codex 자동 압축 지점: config.toml 맨 위 model_auto_compact_token_limit, 없으면 문맥 창(유효 창 ÷ 0.95)의 90%', () => {
+  assert.deepStrictEqual(S.codexCompactWindow(258400), { window: 244800, source: 'codex-default' });
+  const dir = path.join(home, '.codex');
+  fs.mkdirSync(dir, { recursive: true });
+  const cfg = path.join(dir, 'config.toml');
+  fs.writeFileSync(cfg, 'model = "gpt-5"\n[profiles.big]\nmodel_auto_compact_token_limit = 999999\n');
+  assert.strictEqual(S.codexCompactWindow(258400).source, 'codex-default', '표 안의 값은 보지 않는다');
+  fs.writeFileSync(cfg, 'model = "gpt-5"\nmodel_auto_compact_token_limit = 180_000 # 일찍 압축\n[mcp_servers.x]\ncommand = "y"\n');
+  assert.deepStrictEqual(S.codexCompactWindow(258400), { window: 180000, source: 'codex-setting', file: cfg });
+  fs.writeFileSync(cfg, 'model_auto_compact_token_limit = 900000\n');
+  assert.strictEqual(S.codexCompactWindow(258400).window, 258400, '유효 창을 넘지 않는다');
+  fs.rmSync(cfg);
+});

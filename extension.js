@@ -63,6 +63,7 @@ function cfg() {
     includeSubagents: c.get('includeSubagents', true) !== false,
     pollSeconds: Math.max(2, Number(c.get('pollSeconds', 5)) || 5),
     sessionDetails: c.get('sessionDetails', true) !== false,
+    contextRing: c.get('contextRing', true) !== false,
     sessionListDays: Math.max(0, Math.min(365, Number(c.get('sessionListDays', 90)) || 0)),
     notifyWaiting: c.get('notifyWaiting', true) !== false,
     notifyOverlap: c.get('notifyOverlap', true) !== false,
@@ -2793,7 +2794,7 @@ function sessionRow(s, tabs, team) {
   const lead = !!(eff && eff.lead);
   const role = eff ? eff.extra : '';
   const roleFromBoard = !!(eff && eff.extraSource === 'board');
-  const ctx = contextGauge(s.context);
+  const ctx = cfg().contextRing ? contextGauge(s.context) : null; // 설정 contextRing을 끄면 고리도 설명 줄도 없다
   return {
     team: team ? team.id : '', role, roleFromBoard, lead,
     sid: s.sid, title: s.title, state: st.key, meta, tip: (tab ? L('Shown in a tab right now') + '\n' : '') + sessionTooltip(s, st) + (ctx ? '\n' + ctx.tip : '') + '\n' + hint, canOpen, alive: !!s.alive, codex, tab,
@@ -2811,7 +2812,8 @@ function contextGauge(c) {
   const n = (x) => (x >= 1e6 ? +(x / 1e6).toFixed(2) + 'M' : Math.round(x / 1000) + 'k');
   const where = c.file ? ' · ' + c.file.replace(os.homedir(), '~') : '';
   const tip = {
-    codex: () => L('Conversation size {0} / {1} ({2}%) · model context window', n(c.used), n(c.window), pct),
+    'codex-default': () => L('Conversation size {0} / {1} ({2}%) · Codex auto-compact point (estimated: 90% of the model context window)', n(c.used), n(c.window), pct),
+    'codex-setting': () => L('Conversation size {0} / {1} ({2}%) · Codex model_auto_compact_token_limit', n(c.used), n(c.window), pct) + where,
     'model-setting': () => L('Conversation size {0} / {1} ({2}%) · auto-compact window saved for this model (/autocompact)', n(c.used), n(c.window), pct) + where,
     env: () => L('Conversation size {0} / {1} ({2}%) · auto-compact window from CLAUDE_CODE_AUTO_COMPACT_WINDOW', n(c.used), n(c.window), pct) + where,
     setting: () => L('Conversation size {0} / {1} ({2}%) · autoCompactWindow setting', n(c.used), n(c.window), pct) + where,
@@ -2990,7 +2992,7 @@ function sessionsHtml(webview) {
   .tabkey { display: inline-block; width: 14px; height: 12px; border-radius: 2px; }
   .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .meta { flex-shrink: 0; font-size: 12px; color: var(--vscode-descriptionForeground); }
-  .ring { flex-shrink: 0; display: inline-flex; cursor: help; }
+  .ring { flex-shrink: 0; display: inline-flex; }
   .ring circle { fill: none; stroke-width: 2.4; }
   .ring .tr { stroke: var(--vscode-descriptionForeground); opacity: .25; }
   .ring .arc { stroke-linecap: round; }

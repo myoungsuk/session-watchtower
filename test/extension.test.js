@@ -152,6 +152,16 @@ test('세션 창: 상태·지금 하는 일·변경 규모·다른 폴더 묶음
   assert.ok(/\{0\}.*\{1\}/.test(str.activeTip) && /\{0\}/.test(str.worktreeTip) && !/undefined/.test(JSON.stringify(str)), '화면에서 채울 자리표시자가 그대로 넘어가야 함');
 });
 
+test('설정 contextRing을 끄면 대화 크기 고리를 그리지 않고, 켜면 다시 그린다', async () => {
+  const ctxOf = () => (web.lastPayload().groups || []).flatMap((g) => g.rows).find((r) => r.sid === SID_OTHER).ctx;
+  assert.ok(ctxOf(), '기본은 켜짐');
+  stub.changeConfig('contextRing', false);
+  await waitFor(() => ctxOf() === null, '끄면 고리 없음');
+  assert.doesNotMatch((web.lastPayload().groups || []).flatMap((g) => g.rows).find((r) => r.sid === SID_OTHER).tip, /Conversation size/, '줄 설명에서도 빠진다');
+  stub.changeConfig('contextRing', true);
+  await waitFor(() => ctxOf() && ctxOf().pct === 75, '켜면 다시');
+});
+
 test('한 줄 보기 설정을 끄면 둘째 줄을 그리지 않는다', async () => {
   stub.changeConfig('sessionDetails', false);
   await waitFor(() => web.lastPayload().compact === true, '설정 반영');
@@ -174,6 +184,7 @@ test('세션 창 화면 코드가 문법 오류 없이 읽힌다', () => {
   assert.match(ring({ pct: 130, level: 'hi', tip: 't' }), new RegExp('stroke-dasharray="' + C + ' ' + C + '"'));
   assert.strictEqual(ring(null), '');
   assert.match(web.view.webview.html, /\.ring\.hi \.arc \{ stroke: var\(--vscode-editorError-foreground/);
+  assert.doesNotMatch(web.view.webview.html, /\.ring \{[^}]*cursor: help/, '물음표 모양 마우스 포인터를 쓰지 않는다');
 });
 
 test('세션을 누르면 Claude 대화 열기, 새 세션 열기', async () => {

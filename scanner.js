@@ -711,12 +711,43 @@ function claudeCompactWindow(cwd, model, used) {
   return { window: ctx.native1m ? DEFAULT_1M_COMPACT : ctx.limit, source: 'default', assumed: false };
 }
 
+// ---------- Codex 자동 압축 지점 ----------
+// config.toml 맨 위의 model_auto_compact_token_limit가 있으면 그 값. 없으면 모델 문맥 창의 90%로 본다.
+// 기록의 model_context_window(예: 258400)는 문맥 창(272000)의 95%만 쓰는 "유효 창"이라 0.95로 되돌린 뒤 90%를 잡는다.
+// 근거(추정): 이 컴퓨터의 Codex 압축 169번 직전 크기가 199k ~ 250k에 몰리고 245k(= 272k × 0.9)를 넘은 것은 13번뿐(11-26 측정)
+let codexCfgCache = null; // { mtimeMs, size, limit }
+function codexConfigLimit() {
+  const file = path.join(process.env.CODEX_HOME || path.join(HOME, '.codex'), 'config.toml');
+  let st;
+  try { st = fs.statSync(file); } catch { codexCfgCache = null; return { limit: null, file }; }
+  if (codexCfgCache && codexCfgCache.mtimeMs === st.mtimeMs && codexCfgCache.size === st.size) return { limit: codexCfgCache.limit, file };
+  let limit = null;
+  try {
+    for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+      if (/^\s*\[/.test(line)) break; // 표([profiles.x] 등) 안의 값은 보지 않는다
+      const m = /^\s*model_auto_compact_token_limit\s*=\s*([\d_]+)\s*(?:#.*)?$/.exec(line);
+      if (m) { const n = Number(m[1].replace(/_/g, '')); if (n > 0) limit = n; }
+    }
+  } catch { limit = null; }
+  codexCfgCache = { mtimeMs: st.mtimeMs, size: st.size, limit };
+  return { limit, file };
+}
+function codexCompactWindow(effectiveWindow) {
+  const c = codexConfigLimit();
+  if (c.limit) return { window: Math.min(c.limit, effectiveWindow), source: 'codex-setting', file: c.file };
+  return { window: Math.round((effectiveWindow / 0.95) * 0.9), source: 'codex-default' };
+}
+
 // 세션 줄에 붙일 값: { used, window, source, assumed, model }
 function sessionContext(main, cwd) {
   if (!main || !main.file) return null;
   const v = lastContext(main.file, main.agent);
   if (!v) return null;
-  if (main.agent === 'codex') return v.window ? { used: v.used, window: v.window, source: 'codex', assumed: false, codex: true } : null;
+  if (main.agent === 'codex') {
+    if (!v.window) return null;
+    const w = codexCompactWindow(v.window);
+    return { used: v.used, window: w.window, source: w.source, file: w.file || null, assumed: false, codex: true };
+  }
   const w = claudeCompactWindow(cwd, v.model, v.used);
   return { used: v.used, window: w.window, source: w.source, file: w.file || null, assumed: w.assumed, model: v.model || '' };
 }
@@ -2310,4 +2341,4 @@ function scanOne(file, agent, sinceMs, seekMinBytes) {
   return st;
 }
 
-module.exports = { LIVE_MS, lastContext, claudeCompactWindow, parseCodexIndex, codexNames, pathDirsIn, codexPatchText, looksReadOnly, createPromptIndex, createModel, shellTargets, stripHeredocBodies, hunkCounts, isScratch, readRegistry, parsePatch, attentionMarker, scanOne };
+module.exports = { LIVE_MS, lastContext, claudeCompactWindow, codexCompactWindow, parseCodexIndex, codexNames, pathDirsIn, codexPatchText, looksReadOnly, createPromptIndex, createModel, shellTargets, stripHeredocBodies, hunkCounts, isScratch, readRegistry, parsePatch, attentionMarker, scanOne };

@@ -467,9 +467,10 @@
   "Name, role or folder · Enter: inside conversations": "이름·역할·폴더 · Enter: 대화 내용까지",
   "Search conversations and answers for “{0}” (Enter)": "“{0}”을(를) 대화 내용·답에서 찾기 (Enter)",
   "Conversation size {0} / {1} ({2}%) · autoCompactWindow setting": "대화 크기 {0} / {1} ({2}%) · 자동 압축 기준(autoCompactWindow)",
-  "Conversation size {0} / {1} ({2}%) · model context window": "대화 크기 {0} / {1} ({2}%) · 모델 문맥 창(Codex)",
   "Conversation size {0} / {1} ({2}%) · auto-compact window saved for this model (/autocompact)": "대화 크기 {0} / {1} ({2}%) · 이 모델에 저장한 자동 압축 기준(/autocompact)",
   "Conversation size {0} / {1} ({2}%) · auto-compact window from CLAUDE_CODE_AUTO_COMPACT_WINDOW": "대화 크기 {0} / {1} ({2}%) · 환경 변수 CLAUDE_CODE_AUTO_COMPACT_WINDOW의 자동 압축 기준",
   "Conversation size {0} / {1} ({2}%) · default auto-compact point for {3}": "대화 크기 {0} / {1} ({2}%) · {3}의 기본 자동 압축 지점(설정 없음)",
-  "Conversation size {0} / {1} ({2}%) · unknown model, assumed {1}": "대화 크기 {0} / {1} ({2}%) · 모르는 모델이라 {1}로 가정"
+  "Conversation size {0} / {1} ({2}%) · unknown model, assumed {1}": "대화 크기 {0} / {1} ({2}%) · 모르는 모델이라 {1}로 가정",
+  "Conversation size {0} / {1} ({2}%) · Codex auto-compact point (estimated: 90% of the model context window)": "대화 크기 {0} / {1} ({2}%) · Codex 자동 압축 지점(추정: 모델 문맥 창의 90%)",
+  "Conversation size {0} / {1} ({2}%) · Codex model_auto_compact_token_limit": "대화 크기 {0} / {1} ({2}%) · Codex 설정 model_auto_compact_token_limit"
 }
