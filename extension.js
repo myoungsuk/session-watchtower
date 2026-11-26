@@ -63,7 +63,7 @@ function cfg() {
     includeSubagents: c.get('includeSubagents', true) !== false,
     pollSeconds: Math.max(2, Number(c.get('pollSeconds', 5)) || 5),
     sessionDetails: c.get('sessionDetails', true) !== false,
-    contextRing: c.get('contextRing', true) !== false,
+    contextSize: c.get('contextSize', true) !== false,
     sessionListDays: Math.max(0, Math.min(365, Number(c.get('sessionListDays', 90)) || 0)),
     notifyWaiting: c.get('notifyWaiting', true) !== false,
     notifyOverlap: c.get('notifyOverlap', true) !== false,
@@ -2794,7 +2794,7 @@ function sessionRow(s, tabs, team) {
   const lead = !!(eff && eff.lead);
   const role = eff ? eff.extra : '';
   const roleFromBoard = !!(eff && eff.extraSource === 'board');
-  const ctx = cfg().contextRing ? contextGauge(s.context) : null; // 설정 contextRing을 끄면 고리도 설명 줄도 없다
+  const ctx = cfg().contextSize ? contextGauge(s.context) : null; // 설정 contextSize를 끄면 대화 크기 구역도 설명 줄도 없다
   return {
     team: team ? team.id : '', role, roleFromBoard, lead,
     sid: s.sid, title: s.title, state: st.key, meta, tip: (tab ? L('Shown in a tab right now') + '\n' : '') + sessionTooltip(s, st) + (ctx ? '\n' + ctx.tip : '') + '\n' + hint, canOpen, alive: !!s.alive, codex, tab,
@@ -2804,7 +2804,7 @@ function sessionRow(s, tabs, team) {
   };
 }
 
-// 대화 크기 고리: 마지막 응답에 들어간 토큰 ÷ 자동 압축 기준(Claude는 settings의 autoCompactWindow, Codex는 모델 문맥 창)
+// 대화 크기(세션 창의 접는 "대화 크기" 구역): 마지막 응답에 들어간 토큰 ÷ 자동 압축 기준(Claude는 settings의 autoCompactWindow, Codex는 모델 문맥 창)
 // 색은 50% 미만 초록 · 80% 미만 노랑 · 그 이상 빨강(50%는 전역 지침 19절 "15만쯤 넘으면 /compact 권함"과 맞춘 선)
 function contextGauge(c) {
   if (!c || !(c.used > 0) || !(c.window > 0)) return null;
@@ -2819,7 +2819,7 @@ function contextGauge(c) {
     setting: () => L('Conversation size {0} / {1} ({2}%) · autoCompactWindow setting', n(c.used), n(c.window), pct) + where,
     default: () => L('Conversation size {0} / {1} ({2}%) · default auto-compact point for {3}', n(c.used), n(c.window), pct, c.model || '?'),
   }[c.source] || (() => L('Conversation size {0} / {1} ({2}%) · unknown model, assumed {1}', n(c.used), n(c.window), pct));
-  return { pct, level: pct >= 80 ? 'hi' : pct >= 50 ? 'mid' : 'lo', tip: tip() };
+  return { pct, level: pct >= 80 ? 'hi' : pct >= 50 ? 'mid' : 'lo', tip: tip(), text: n(c.used) + ' / ' + n(c.window) };
 }
 
 function sessionsPayload() {
@@ -2830,7 +2830,7 @@ function sessionsPayload() {
     // 숫자는 화면 쪽에서 채운다 → 자리표시자를 그대로 넘겨 번역 함수가 건드리지 않게 한다
     activeTip: L('Show only sessions that are open right now (working, waiting or idle). The number counts this folder: {0}. Other folders: {1}.', '{0}', '{1}'),
     search: L('Search sessions'), searchHint: L('Name, role or folder · Enter: inside conversations'), searchDeep: L('Search conversations and answers for “{0}” (Enter)', '{0}'), noMatch: L('No matching sessions'), legend: L('What the colors mean'),
-    archive: L('Archive'), unarchive: L('Restore from archive'), archivedTitle: L('Archived'), archiveRule: L('Choose when sessions move to Archived'),
+    archive: L('Archive'), unarchive: L('Restore from archive'), archivedTitle: L('Archived'), ctxTitle: L('Conversation size'), ctxDesc: L('against the auto-compact point'), ctxHiTip: L('{0} sessions past 80% of the auto-compact point', '{0}'), archiveRule: L('Choose when sessions move to Archived'),
     loadChanges: L("Load this session's changed files"),
     rename: L('Rename session'),
     overlapTip: L('{0} file(s) here were also changed by another session. Click to compare or stop the warning.', '{0}'),
@@ -2992,13 +2992,20 @@ function sessionsHtml(webview) {
   .tabkey { display: inline-block; width: 14px; height: 12px; border-radius: 2px; }
   .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .meta { flex-shrink: 0; font-size: 12px; color: var(--vscode-descriptionForeground); }
-  .ring { flex-shrink: 0; display: inline-flex; }
-  .ring circle { fill: none; stroke-width: 2.4; }
-  .ring .tr { stroke: var(--vscode-descriptionForeground); opacity: .25; }
-  .ring .arc { stroke-linecap: round; }
-  .ring.lo .arc { stroke: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
-  .ring.mid .arc { stroke: var(--vscode-editorWarning-foreground, #cca700); }
-  .ring.hi .arc { stroke: var(--vscode-editorError-foreground, #f14c4c); }
+  /* 대화 크기 구역: 세션마다 한 줄(이름 · 막대 · % · 크기/기준) */
+  .crow { display: flex; align-items: center; gap: 8px; min-height: 24px; padding: 0 8px 0 26px; font-size: 12.5px; cursor: pointer; border-radius: 3px; }
+  .crow:hover, .crow:focus-visible { background: var(--vscode-list-hoverBackground); outline: none; }
+  .crow.other { cursor: default; }
+  .cname { flex: 1; min-width: 4em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cbar { flex: 0 1 90px; min-width: 36px; height: 6px; border-radius: 3px; overflow: hidden; background: color-mix(in srgb, var(--vscode-descriptionForeground) 22%, transparent); }
+  .cbar i { display: block; height: 100%; border-radius: 3px; }
+  .cbar.lo i { background: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
+  .cbar.mid i { background: var(--vscode-editorWarning-foreground, #cca700); }
+  .cbar.hi i { background: var(--vscode-editorError-foreground, #f14c4c); }
+  .cpct { flex-shrink: 0; width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
+  .cpct.hi { color: var(--vscode-editorError-foreground, #f14c4c); font-weight: 600; }
+  .cnum { flex-shrink: 0; font-size: 11.5px; color: var(--vscode-descriptionForeground); font-variant-numeric: tabular-nums; }
+  .gcount.hi { color: var(--vscode-editor-background); background: var(--vscode-editorError-foreground, #f14c4c); }
   /* 단추는 마우스를 올린 줄에서만 시간 자리에 나온다(평소에는 자리를 차지하지 않아 제목이 덜 잘린다. Claude 세션 목록과 같은 방식) */
   .act { flex-shrink: 0; display: none; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--vscode-icon-foreground, var(--vscode-foreground)); cursor: pointer; }
   .row:hover .act, .row:focus-visible .act, .row:has(.act:focus-visible) .act { display: inline-flex; }
@@ -3140,14 +3147,21 @@ function sessionsHtml(webview) {
   const boardIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="11" rx="1"/><path d="M2 6h12M6.5 6v7.5"/></svg>';
   const trashIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.7 9h6.6l.7-9"/></svg>';
   const gearIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/></svg>';
-  // 대화 크기 고리(지름 14px): 옅은 바탕 원 위에 찬 만큼 호를 그린다. 100%를 넘으면 꽉 찬 원
-  function ring(c) {
-    if (!c) return '';
-    const C = 2 * Math.PI * 5.5;
-    const len = (Math.min(100, Math.max(0, c.pct)) / 100) * C;
-    return '<span class="ring ' + esc(c.level) + '" title="' + esc(c.tip) + '" aria-label="' + esc(c.tip) + '" role="img">'
-      + '<svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" class="tr"/>'
-      + '<circle cx="7" cy="7" r="5.5" class="arc" stroke-dasharray="' + len.toFixed(2) + ' ' + C.toFixed(2) + '" transform="rotate(-90 7 7)"/></svg></span>';
+  // 대화 크기 구역(접힘이 기본): 세션마다 이름 · 막대 · % · 크기/기준, 많이 찬 순. 80% 넘은 세션 수를 빨간 숫자로
+  function ctxSection(rows, needle) {
+    const seen = new Set();
+    const list = rows.filter((r) => r.ctx && !seen.has(r.sid) && seen.add(r.sid)).sort((a, b) => b.ctx.pct - a.ctx.pct);
+    if (!list.length) return '';
+    const hi = list.filter((r) => r.ctx.level === 'hi').length;
+    const open = needle ? true : !!saved.open.__context;
+    return '<details class="grp ctx" data-key="__context"' + (open ? ' open' : '') + '><summary><span class="chev">›</span><span class="gname">' + esc(strings.ctxTitle) + '</span>'
+      + '<span class="gdesc">' + esc(strings.ctxDesc) + '</span>'
+      + (hi ? '<span class="gcount hi" title="' + esc(String(strings.ctxHiTip || '').replace('{0}', hi)) + '">' + hi + '</span>' : '') + '</summary>'
+      + list.map((r) => '<div class="crow' + (r.canOpen ? '' : ' other') + '" role="listitem" tabindex="0" data-sid="' + esc(r.sid) + '" data-open="' + (r.canOpen ? '1' : '') + '" title="' + esc(r.ctx.tip) + '">'
+        + '<span class="cname">' + esc(r.title) + '</span>'
+        + '<span class="cbar ' + esc(r.ctx.level) + '"><i style="width:' + Math.min(100, Math.max(0, r.ctx.pct)) + '%"></i></span>'
+        + '<span class="cpct ' + esc(r.ctx.level) + '">' + r.ctx.pct + '%</span><span class="cnum">' + esc(r.ctx.text) + '</span></div>').join('')
+      + '</details>';
   }
   function row(r, inArchive) {
     const btn = (act, label, svg) => '<button class="act" data-act="' + act + '" data-sid="' + esc(r.sid) + '" title="' + esc(label) + '" aria-label="' + esc(label) + '">' + svg + '</button>';
@@ -3168,7 +3182,7 @@ function sessionsHtml(webview) {
       + (r.overlap ? '<button class="tag warn" data-act="overlap" data-sid="' + esc(r.sid) + '" title="' + esc(String(strings.overlapTip || '').replace('{0}', r.overlap)) + '">⚠ ' + r.overlap + '</button>' : '')
       + (inArchive && r.folder ? '<span class="tag">' + esc(r.folder) + '</span>' : '')
       + (r.worktree ? '<span class="tag wt" title="' + esc(String(strings.worktreeTip || '').replace('{0}', r.worktree)) + '">worktree</span>' : '')
-      + ring(r.ctx) + '<span class="meta">' + esc(r.meta) + '</span>' + acts + '</div>' + sub + '</div>';
+      + '<span class="meta">' + esc(r.meta) + '</span>' + acts + '</div>' + sub + '</div>';
   }
   // 색 범례(? 단추)
   const legendBox = document.getElementById('legend');
@@ -3268,6 +3282,12 @@ function sessionsHtml(webview) {
         + '<span class="gicon">' + folderIcon + '</span>' + (g.waiting ? '<span class="bell"></span>' : '') + '<span class="gname">' + esc(g.key) + '</span><span class="gdesc">' + esc(g.desc) + '</span></summary>'
         + rows.map((r) => row(r, false)).join('') + '</details>';
     }
+    // 대화 크기 구역: 보관함 바로 위. 지금 보이는 세션(그룹·이 폴더·다른 폴더)만
+    const ctxRows = [];
+    for (const t of p.teams || []) ctxRows.push(...t.rows.filter(keep));
+    ctxRows.push(...mine);
+    for (const g of p.groups || []) ctxRows.push(...g.rows.filter(keep));
+    h += ctxSection(ctxRows, needle);
     // 보관함: 맨 아래 접힌 묶음. "실행 중만" 필터에서는 숨기고, 검색하면 맞는 것이 있을 때 펼친다
     const arch = saved.active ? [] : (p.archived || []).filter((r) => !needle || String(r.title).toLowerCase().includes(needle));
     if (arch.length) {
@@ -3284,12 +3304,12 @@ function sessionsHtml(webview) {
   root.addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-act]');
     if (btn) { e.stopPropagation(); e.preventDefault(); vscode.postMessage({ type: btn.dataset.act, sid: btn.dataset.sid, team: btn.dataset.team }); return; }
-    const r = e.target.closest('.row');
+    const r = e.target.closest('.row, .crow');
     if (r && r.dataset.open) vscode.postMessage({ type: 'open', sid: r.dataset.sid });
   });
   root.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
-    const r = e.target.closest && e.target.closest('.row');
+    const r = e.target.closest && e.target.closest('.row, .crow');
     if (r && r === e.target && r.dataset.open) vscode.postMessage({ type: 'open', sid: r.dataset.sid });
   });
   root.addEventListener('toggle', (e) => {

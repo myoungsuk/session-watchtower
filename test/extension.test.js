@@ -141,24 +141,26 @@ test('세션 창: 상태·지금 하는 일·변경 규모·다른 폴더 묶음
   assert.match(p.strings.diffTip, /^Last 24 hours: /);
   const g = p.groups.find((x) => x.key === 'other-app');
   assert.ok(g && g.rows[0].canOpen === true && g.rows[0].state === 'idle', '다른 폴더 세션도 누를 수 있다(그 폴더 창에서 연다)');
-  // 대화 크기 고리: 15만 ÷ 기준. 시험 홈에는 설정이 없어 그 모델(Opus 4.6, 200k 창)의 기본 압축 지점과 비교한다
+  // 대화 크기: 15만 ÷ 기준. 시험 홈에는 설정이 없어 그 모델(Opus 4.6, 200k 창)의 기본 압축 지점과 비교한다
   assert.deepStrictEqual([g.rows[0].ctx.pct, g.rows[0].ctx.level], [75, 'mid']);
   assert.strictEqual(g.rows[0].ctx.tip, 'Conversation size 150k / 200k (75%) · default auto-compact point for claude-opus-4-6');
+  assert.strictEqual(g.rows[0].ctx.text, '150k / 200k');
+  assert.ok(['ctxTitle', 'ctxDesc', 'ctxHiTip'].every((k) => p.strings[k]), '구역 글자');
   assert.match(g.rows[0].tip, /Conversation size 150k/, '줄 설명에도 나온다');
-  assert.strictEqual(a.ctx, null, '응답 토큰 기록이 없는 세션은 고리를 그리지 않는다');
+  assert.strictEqual(a.ctx, null, '응답 토큰 기록이 없는 세션은 대화 크기 구역에 나오지 않는다');
   assert.match(web.view.description, /Working 1 · Waiting 0 · Idle 1/, '머리말은 이 폴더 세션만 센다');
   assert.deepStrictEqual([web.lastPayload().openHere, web.lastPayload().openElsewhere], [2, 1], '열린 세션 단추의 숫자도 이 폴더만(다른 폴더는 따로)');
   const str = web.lastPayload().strings;
   assert.ok(/\{0\}.*\{1\}/.test(str.activeTip) && /\{0\}/.test(str.worktreeTip) && !/undefined/.test(JSON.stringify(str)), '화면에서 채울 자리표시자가 그대로 넘어가야 함');
 });
 
-test('설정 contextRing을 끄면 대화 크기 고리를 그리지 않고, 켜면 다시 그린다', async () => {
+test('설정 contextSize를 끄면 대화 크기를 보내지 않고, 켜면 다시 보낸다', async () => {
   const ctxOf = () => (web.lastPayload().groups || []).flatMap((g) => g.rows).find((r) => r.sid === SID_OTHER).ctx;
   assert.ok(ctxOf(), '기본은 켜짐');
-  stub.changeConfig('contextRing', false);
-  await waitFor(() => ctxOf() === null, '끄면 고리 없음');
+  stub.changeConfig('contextSize', false);
+  await waitFor(() => ctxOf() === null, '끄면 대화 크기 없음');
   assert.doesNotMatch((web.lastPayload().groups || []).flatMap((g) => g.rows).find((r) => r.sid === SID_OTHER).tip, /Conversation size/, '줄 설명에서도 빠진다');
-  stub.changeConfig('contextRing', true);
+  stub.changeConfig('contextSize', true);
   await waitFor(() => ctxOf() && ctxOf().pct === 75, '켜면 다시');
 });
 
@@ -175,16 +177,25 @@ test('세션 창 화면 코드가 문법 오류 없이 읽힌다', () => {
   assert.doesNotThrow(() => new vm.Script(m[1]));
   assert.match(web.view.webview.html, /default-src 'none'/, '외부 자원을 막는 보안 정책');
   assert.match(web.view.webview.html, /\.deep\[hidden\]\s*\{\s*display:\s*none/, '칸을 비우면 "대화 내용·답에서 찾기" 줄이 숨는다(display: block이 hidden을 이기지 않게)');
-  // 대화 크기 고리: 찬 만큼 호 길이, 100%를 넘으면 꽉 찬 원, 값이 없으면 그리지 않는다
-  const fn = /function ring\(c\) \{[\s\S]*?\n  \}\n/.exec(m[1]);
-  assert.ok(fn, '고리 그리는 코드');
-  const ring = new vm.Script('(function(){ const esc = (s) => String(s); ' + fn[0] + ' return ring; })()').runInNewContext({});
-  const C = (2 * Math.PI * 5.5).toFixed(2);
-  assert.match(ring({ pct: 50, level: 'mid', tip: 't' }), new RegExp('class="ring mid"[\\s\\S]*stroke-dasharray="' + (Math.PI * 5.5).toFixed(2) + ' ' + C + '"'));
-  assert.match(ring({ pct: 130, level: 'hi', tip: 't' }), new RegExp('stroke-dasharray="' + C + ' ' + C + '"'));
-  assert.strictEqual(ring(null), '');
-  assert.match(web.view.webview.html, /\.ring\.hi \.arc \{ stroke: var\(--vscode-editorError-foreground/);
-  assert.doesNotMatch(web.view.webview.html, /\.ring \{[^}]*cursor: help/, '물음표 모양 마우스 포인터를 쓰지 않는다');
+  // 대화 크기 구역: 세션 줄에는 고리가 없고, 접는 구역 하나에 많이 찬 순으로 모은다
+  assert.doesNotMatch(m[1], /function ring\(/, '세션 줄마다 그리던 고리는 없앴다');
+  const fn = /function ctxSection\(rows, needle\) \{[\s\S]*?\n  \}\n/.exec(m[1]);
+  assert.ok(fn, '대화 크기 구역 그리는 코드');
+  const mk = (saved) => new vm.Script('(function(){ const esc = (s) => String(s); const saved = ' + JSON.stringify(saved) + '; const strings = { ctxTitle: "CS", ctxDesc: "D", ctxHiTip: "{0} over" }; ' + fn[0] + ' return ctxSection; })()').runInNewContext({});
+  const row = (sid, pct, level, canOpen = true) => ({ sid, title: 't' + sid, canOpen, ctx: { pct, level, tip: 'tip' + sid, text: pct + 'k / 100k' } });
+  const rows = [row('a', 40, 'lo'), row('b', 130, 'hi'), row('a', 40, 'lo'), { sid: 'c', title: 'tc', ctx: null }, row('d', 85, 'hi', false)];
+  const closed = mk({ open: {} })(rows, '');
+  assert.match(closed, /^<details class="grp ctx" data-key="__context"><summary>/, '기본은 접힘');
+  assert.match(closed, /<span class="gcount hi" title="2 over">2<\/span>/, '80% 넘은 세션 수');
+  assert.deepStrictEqual([...closed.matchAll(/data-sid="(\w)"/g)].map((x) => x[1]), ['b', 'd', 'a'], '많이 찬 순·같은 세션은 한 번·값 없는 세션은 빠짐');
+  assert.match(closed, /<i style="width:100%"><\/i><\/span><span class="cpct hi">130%<\/span><span class="cnum">130k \/ 100k<\/span>/, '막대는 100%에서 멈추고 숫자는 그대로');
+  assert.match(closed, /class="crow other"[^>]*data-sid="d" data-open=""/, '열 수 없는 세션은 눌러도 안 열림');
+  assert.match(mk({ open: { __context: true } })(rows, ''), /data-key="__context" open>/, '열어 둔 상태 기억');
+  assert.match(mk({ open: {} })(rows, 'x'), /data-key="__context" open>/, '찾는 중에는 펼침');
+  assert.doesNotMatch(mk({ open: {} })([row('a', 40, 'lo')], ''), /gcount/, '80% 넘은 세션이 없으면 숫자 없음');
+  assert.strictEqual(mk({ open: {} })([{ sid: 'c', ctx: null }], ''), '', '값이 하나도 없으면 구역도 없음');
+  assert.match(web.view.webview.html, /\.cbar\.hi i \{ background: var\(--vscode-editorError-foreground/);
+  assert.match(m[1], /closest\('\.row, \.crow'\)/, '구역 줄을 눌러도 세션이 열린다');
 });
 
 test('세션을 누르면 Claude 대화 열기, 새 세션 열기', async () => {

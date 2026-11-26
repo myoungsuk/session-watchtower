@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.42.0
+
+- **Conversation size moved from every session row into one collapsible section.** A ring on every row was noisy. The rings are gone; a **Conversation size** section above Archived (closed by default, remembers open or closed) lists each session with a bar, a percent and *used / point* (for example *245k / 300k*), fullest first. A red number on its header counts the sessions past 80%, visible even when closed. Click a line to open the session. The session row's tooltip still shows the numbers.
+- **The setting is now `contextSize`** (was `contextRing` in 0.41.2, which was never on the marketplace). It shows or hides the section.
+
 ## 0.41.2
 
 - **The conversation-size ring can be turned off.** New setting `contextRing` (on by default). Changes apply right away.
