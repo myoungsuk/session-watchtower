@@ -201,7 +201,14 @@ test('상태 표시줄 대화 크기: 사용량 바로 오른쪽, 열린 세션 
   assert.strictEqual(item.backgroundColor, undefined, '80% 넘은 열린 세션이 없으면 색 없음');
   const md = item.tooltip.value;
   assert.match(md, /\| Session \| Full \| Used \/ point \|\n\|---\|---\|--:\|\n/, '머리줄에 칸 이름(빈칸 없음)');
-  assert.match(md, /\| Other folder work · other\\-app \| `████████░░` 75% \| 150k \/ 200k \|/, '세션마다 이름·막대와 %·크기');
+  const BAR = (c, k) => `<span style="background-color:${c};">${'&nbsp;'.repeat(k)}</span>`;
+  assert.ok(md.includes('| Other folder work · other\\-app | ' + BAR('var(--vscode-progressBar-background)', 15) + BAR('var(--vscode-scrollbarSlider-background)', 5) + ' 75% | 150k / 200k |'), '세션마다 이름·막대(75% → 20칸 중 15칸)와 %·크기');
+  assert.doesNotMatch(md, /[█░]/, '글꼴 따라 길이가 뭉개지는 막대 글자 없음');
+  // 85번 VS Code(69047191fc) 화면 코드 workbench.desktop.main.js가 span style에 허용하는 형식. 벗어나면 막대가 통째로 지워진다
+  const allowed = /^(color\:(#[0-9a-fA-F]+|var\(--vscode(-[a-zA-Z0-9]+)+\));)?(background-color\:(#[0-9a-fA-F]+|var\(--vscode(-[a-zA-Z0-9]+)+\));)?(display\:inline-block;)?(border-radius:[0-9]+px;)?$/;
+  const styles = [...md.matchAll(/style="([^"]*)"/g)].map((m) => m[1]);
+  assert.ok(styles.length >= 2 && styles.every((v) => allowed.test(v)), 'VS Code가 남기는 style 형식만');
+  assert.strictEqual(item.tooltip.supportHtml, true, '막대 span을 쓰려면 HTML 허용');
   assert.doesNotMatch(md, /Finished chat/, '끝난 세션은 표에도 없다');
   assert.strictEqual(item.tooltip.isTrusted, false);
   stub.calls.length = 0;

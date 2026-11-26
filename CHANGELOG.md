@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.43.3
+
+- **Conversation-size bars have real lengths.** The block-character bar (█░) drew every row at the same length in some fonts (84% and 45% looked identical). The bar is now drawn with background-colored spans in 5% steps, using theme colors (progress-bar color, yellow from 80%, scrollbar color for the empty part), so it no longer depends on the font. Only the `background-color` style that VS Code keeps in hovers is used.
+
 ## 0.43.2
 
 - **The bar is back in the conversation-size table.** 0.43.1 removed it, but the bar was the part that read best. It now sits in the *Full* column next to the percent (left-aligned, so every bar starts at the same place); the named header and the two-line note from 0.43.1 stay.

@@ -2975,11 +2975,18 @@ function updateContextItem() {
   if (!p.rows.length) { if (contextShown) { contextItem.hide(); contextShown = ''; } return; }
   const top = p.rows[0].ctx;
   const text = '$(comment-discussion) ' + top.pct + '%';
-  const bar = (pct) => { const n = Math.max(0, Math.min(10, Math.round(pct / 10))); return '█'.repeat(n) + '░'.repeat(10 - n); };
+  // 막대 글자(█░)는 85번 글꼴에서 길이가 다 같아 보였다(0.43.2 화면) → 배경색 칸으로 그린다.
+  // VS Code 마우스 올림은 span style 중 background-color(테마 색 var(--vscode-…))만 남기므로 그 형식만 쓴다.
+  const bar = (r) => {
+    const n = Math.max(0, Math.min(20, Math.round(r.ctx.pct / 5)));
+    const fill = r.ctx.level === 'hi' ? 'var(--vscode-charts-yellow)' : 'var(--vscode-progressBar-background)';
+    const seg = (color, k) => k ? `<span style="background-color:${color};">${'&nbsp;'.repeat(k)}</span>` : '';
+    return seg(fill, n) + seg('var(--vscode-scrollbarSlider-background)', 20 - n);
+  };
   // 막대와 %는 한 칸에 둔다: 왼쪽 정렬이라 줄마다 막대 시작이 맞고, 머리줄에 빈칸이 생기지 않는다
   let md = '**' + L('Conversation size') + '** — ' + L('open sessions against their auto-compact point') + '\n\n'
     + `| ${L('Session')} | ${L('Full')} | ${L('Used / point')} |\n|---|---|--:|\n`;
-  for (const r of p.rows) md += `| ${mdCell(r.title)}${r.folder ? ' · ' + mdCell(r.folder) : ''} | \`${bar(r.ctx.pct)}\` ${r.ctx.level === 'hi' ? '**' + r.ctx.pct + '%**' : r.ctx.pct + '%'} | ${mdCell(r.ctx.text)} |\n`;
+  for (const r of p.rows) md += `| ${mdCell(r.title)}${r.folder ? ' · ' + mdCell(r.folder) : ''} | ${bar(r)} ${r.ctx.level === 'hi' ? '**' + r.ctx.pct + '%**' : r.ctx.pct + '%'} | ${mdCell(r.ctx.text)} |\n`;
   md += '\n' + L('Click to pick one and open it.') + '  \n' + L('Where each point comes from: hover the session row in the Sessions view.');
   const key = text + '\u0000' + md + '\u0000' + p.hi;
   if (key === contextShown) return;
@@ -2988,6 +2995,7 @@ function updateContextItem() {
   contextItem.backgroundColor = p.hi ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
   const tip = new vscode.MarkdownString(md);
   tip.isTrusted = false;
+  tip.supportHtml = true; // 막대 span만 쓴다. 세션 이름은 mdCell이 <>를 글자로 막는다
   contextItem.tooltip = tip;
   contextItem.show();
 }
