@@ -547,7 +547,6 @@ const CTX_LINE_MAX = 2 * 1024 * 1024;
 const K_USAGE = B('"usage":{');
 const CX_TOKENS = B('"type":"token_count"');
 const ctxCache = new Map(); // 기록 파일 → { size, mtimeMs, value }
-const DEFAULT_COMPACT_WINDOW = 200000; // 설정이 없을 때(추정값: Claude 모델의 기본 문맥 창)
 
 function claudeCtxOf(o) {
   if (!o || o.type !== 'assistant' || o.isSidechain) return null;
@@ -555,7 +554,8 @@ function claudeCtxOf(o) {
   if (!u || typeof u !== 'object') return null;
   const n = (k) => (typeof u[k] === 'number' && u[k] > 0 ? u[k] : 0);
   const used = n('input_tokens') + n('cache_creation_input_tokens') + n('cache_read_input_tokens') + n('output_tokens');
-  return used > 0 ? { used, ts: Date.parse(o.timestamp) || 0 } : null; // 오류 안내처럼 0으로 적힌 기록은 건너뛴다
+  const model = typeof o.message.model === 'string' ? o.message.model : '';
+  return used > 0 ? { used, model, ts: Date.parse(o.timestamp) || 0 } : null; // 오류 안내처럼 0으로 적힌 기록은 건너뛴다
 }
 
 function codexCtxOf(o) {
@@ -612,33 +612,113 @@ function lastContext(file, agent) {
   return value;
 }
 
-// Claude Code 자동 압축 기준(settings의 autoCompactWindow): 작업 폴더의 settings.local.json → settings.json → 사용자 settings.json 순서로 처음 나온 값
-const settingsCache = new Map(); // 파일 → { mtimeMs, value }
-function settingValue(file) {
+// ---------- Claude Code 자동 압축 기준 ----------
+// 사용자마다 다르다. 공식 문서(code.claude.com/docs/en/model-config "Context window and auto-compaction", 11-26 확인)의 순서대로 찾는다.
+//  1. 환경 변수 CLAUDE_CODE_AUTO_COMPACT_WINDOW: 설정 파일 env 블록에 적힌 것만 본다(세션을 띄운 셸의 값은 이 확장이 알 수 없다)
+//  2. 설정 파일(관리 설정 → 프로젝트 local → 프로젝트 → 사용자, 높은 쪽이 이김). 한 파일 안에서는 /autocompact가 모델마다 적는
+//     modelSettings.<모델>.autoCompactWindow가 맨 위 autoCompactWindow보다 앞선다
+//  3. 아무 데도 없으면 모델에 맞춘 기본값: 1M 창 모델(Fable·Sonnet 5 이상·Haiku 5.5·Opus 4.7 이상)은 약 967k, 그 밖은 200k.
+//     CLAUDE_CODE_DISABLE_1M_CONTEXT=1이면 200k
+//  어느 값이든 모델 문맥 창을 넘지 못한다(Claude Code가 그 창으로 자른다). --autocompact 실행 옵션은 알 수 없다.
+const DEFAULT_1M_COMPACT = 967000; // 문서의 "about 967K"
+const settingsCache = new Map(); // 파일 → { mtimeMs, size, value: { top, perModel, envWindow, env1mOff } | null }
+function readCompactSettings(file) {
   let st;
   try { st = fs.statSync(file); } catch { settingsCache.delete(file); return null; }
   const c = settingsCache.get(file);
-  if (c && c.mtimeMs === st.mtimeMs) return c.value;
+  if (c && c.mtimeMs === st.mtimeMs && c.size === st.size) return c.value;
   let value = null;
-  try { const o = JSON.parse(fs.readFileSync(file, 'utf8')); if (o && typeof o.autoCompactWindow === 'number' && o.autoCompactWindow > 0) value = o.autoCompactWindow; } catch { value = null; }
-  settingsCache.set(file, { mtimeMs: st.mtimeMs, value });
+  try {
+    const o = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (o && typeof o === 'object') {
+      const num = (v) => (typeof v === 'number' && v > 0 ? v : null);
+      const perModel = {};
+      if (o.modelSettings && typeof o.modelSettings === 'object') for (const [m, v] of Object.entries(o.modelSettings)) { const w = v && num(v.autoCompactWindow); if (w) perModel[m] = w; }
+      const env = o.env && typeof o.env === 'object' ? o.env : {};
+      value = { top: num(o.autoCompactWindow), perModel, envWindow: parseWindowEnv(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW), env1mOff: is1mOff(env.CLAUDE_CODE_DISABLE_1M_CONTEXT) };
+    }
+  } catch { value = null; }
+  settingsCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, value });
   return value;
 }
-function claudeCompactWindow(cwd) {
-  const files = cwd ? [path.join(cwd, '.claude', 'settings.local.json'), path.join(cwd, '.claude', 'settings.json')] : [];
-  files.push(path.join(HOME, '.claude', 'settings.json'));
-  for (const f of files) { const v = settingValue(f); if (v) return { window: v, assumed: false }; }
-  return { window: DEFAULT_COMPACT_WINDOW, assumed: true };
+// 환경 변수 값: 숫자(토큰 수) 또는 k·M 붙인 값. 100k 미만은 100k, 1M 초과는 1M으로 본다(문서의 경고 표). 못 읽으면 무시
+function parseWindowEnv(v) {
+  if (typeof v === 'number') v = String(v);
+  const m = typeof v === 'string' ? /^\s*(\d+(?:\.\d+)?)\s*([kKmM]?)\s*$/.exec(v) : null;
+  if (!m) return null;
+  const n = parseFloat(m[1]) * (/k/i.test(m[2]) ? 1e3 : /m/i.test(m[2]) ? 1e6 : 1);
+  return n > 0 ? Math.round(Math.min(1e6, Math.max(1e5, n))) : null;
+}
+const is1mOff = (v) => v === 1 || v === true || (typeof v === 'string' && /^(1|true|yes)$/i.test(v.trim()));
+// 모델 이름으로 문맥 창 크기를 정한다. 모르는 이름이면 null
+function modelContextWindow(model, used, oneMOff) {
+  const m = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?!\d)/.exec(String(model || '').toLowerCase());
+  if (!m) return null;
+  const major = +m[2], minor = m[3] ? +m[3] : 0;
+  const v = major + minor / 10;
+  const native1m = m[1] === 'fable' || (m[1] === 'sonnet' && v >= 5) || (m[1] === 'haiku' && v >= 5.5) || (m[1] === 'opus' && v >= 4.7);
+  if (oneMOff) return { limit: 200000, native1m: false };
+  // [1m] 변형은 기록에 표시가 없다: 200k를 넘게 쓴 것이 보이면 1M 창으로 본다(추정)
+  if (native1m || /\[1m\]/i.test(model) || used > 200000) return { limit: 1000000, native1m };
+  return { limit: 200000, native1m: false };
+}
+function managedSettingsFile() {
+  if (process.platform === 'win32') return 'C:\\Program Files\\ClaudeCode\\managed-settings.json';
+  if (process.platform === 'darwin') return '/Library/Application Support/ClaudeCode/managed-settings.json';
+  return '/etc/claude-code/managed-settings.json';
+}
+// 프로젝트 local 설정은 git 저장소 맨 위에 둔다(Claude Code 2.1.211부터). Claude Code가 만든 worktree는 원래 저장소 맨 위
+const rootCache = new Map();
+function repoRoot(cwd) {
+  if (rootCache.has(cwd)) return rootCache.get(cwd);
+  const wt = /^(.+)[\\/]\.claude[\\/]worktrees[\\/][^\\/]+$/.exec(cwd);
+  let dir = wt ? wt[1] : cwd, root = null;
+  for (let i = 0; i < 40 && dir; i++) {
+    try { fs.statSync(path.join(dir, '.git')); root = dir; break; } catch { /* 위로 */ }
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  if (root === HOME) root = null; // 저장소 맨 위가 홈 폴더면 시작 폴더 쪽 파일을 쓴다(문서)
+  rootCache.set(cwd, root);
+  return root;
+}
+function claudeSettingsFiles(cwd) {
+  const files = [{ file: managedSettingsFile(), scope: 'managed' }];
+  if (cwd) {
+    const root = repoRoot(cwd);
+    if (root && root !== cwd) files.push({ file: path.join(root, '.claude', 'settings.local.json'), scope: 'local' });
+    files.push({ file: path.join(cwd, '.claude', 'settings.local.json'), scope: 'local' });
+    files.push({ file: path.join(cwd, '.claude', 'settings.json'), scope: 'project' });
+  }
+  files.push({ file: path.join(HOME, '.claude', 'settings.json'), scope: 'user' });
+  return files;
+}
+// 결과: { window, source, assumed } — source: env · model-setting · setting · default · unknown-model
+function claudeCompactWindow(cwd, model, used) {
+  const files = claudeSettingsFiles(cwd).map((f) => ({ ...f, v: readCompactSettings(f.file) })).filter((f) => f.v);
+  const oneMOff = is1mOff(process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT) || files.some((f) => f.v.env1mOff);
+  const ctx = modelContextWindow(model, used || 0, oneMOff);
+  const cap = (w) => (ctx ? Math.min(w, ctx.limit) : w);
+  const envF = files.find((f) => f.v.envWindow);
+  if (envF) return { window: cap(envF.v.envWindow), source: 'env', file: envF.file, assumed: false };
+  for (const f of files) {
+    const per = model && f.v.perModel[model];
+    if (per) return { window: cap(per), source: 'model-setting', file: f.file, assumed: false };
+    if (f.v.top) return { window: cap(f.v.top), source: 'setting', file: f.file, assumed: false };
+  }
+  if (!ctx) return { window: 200000, source: 'unknown-model', assumed: true };
+  return { window: ctx.native1m ? DEFAULT_1M_COMPACT : ctx.limit, source: 'default', assumed: false };
 }
 
-// 세션 줄에 붙일 값: { used, window, assumed }
+// 세션 줄에 붙일 값: { used, window, source, assumed, model }
 function sessionContext(main, cwd) {
   if (!main || !main.file) return null;
   const v = lastContext(main.file, main.agent);
   if (!v) return null;
-  if (main.agent === 'codex') return v.window ? { used: v.used, window: v.window, assumed: false, codex: true } : null;
-  const w = claudeCompactWindow(cwd);
-  return { used: v.used, window: w.window, assumed: w.assumed };
+  if (main.agent === 'codex') return v.window ? { used: v.used, window: v.window, source: 'codex', assumed: false, codex: true } : null;
+  const w = claudeCompactWindow(cwd, v.model, v.used);
+  return { used: v.used, window: w.window, source: w.source, file: w.file || null, assumed: w.assumed, model: v.model || '' };
 }
 
 // 읽은 구간에 제목이 없을 때만: 뒤에서 앞으로 가며 마지막 제목 기록을 찾는다

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.41.1
+
+- **The conversation-size ring now uses each person's own auto-compact point.** 0.41.0 read only the top-level `autoCompactWindow` and assumed 200k when it was missing, which is wrong for most people: with nothing set, Claude Code compacts at about 967k on models with a native 1M window. The ring now follows Claude Code's documented order: `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in a settings file's `env`, then managed, project local, project and user settings (a per-model window saved with `/autocompact` before the top-level key in each file), then the model's default (about 967k for native 1M models, 200k for the others, 200k with `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`), never past the model's context window. The tooltip says where the point came from.
+
 ## 0.41.0
 
 - **A ring shows how full each conversation is.** A small ring before the time on each session row compares the tokens sent with the session's last reply (new input + cache write + cache read + output) with Claude Code's `autoCompactWindow` setting (the session folder's `.claude/settings.local.json`, then `.claude/settings.json`, then `~/.claude/settings.json`; 200k assumed and said so when none sets it). Green under 50%, yellow under 80%, red from 80%; hover for *Conversation size 236k / 300k (79%)*. Codex sessions are compared with the model context window from Codex's token record. Only the end of each log is read, and only when the file changed.

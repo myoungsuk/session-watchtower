@@ -2808,13 +2808,16 @@ function sessionRow(s, tabs, team) {
 function contextGauge(c) {
   if (!c || !(c.used > 0) || !(c.window > 0)) return null;
   const pct = Math.round((c.used / c.window) * 100);
-  const k = (n) => Math.round(n / 1000) + 'k';
-  const tip = c.codex
-    ? L('Conversation size {0} / {1} ({2}%) · model context window', k(c.used), k(c.window), pct)
-    : c.assumed
-      ? L('Conversation size {0} / {1} ({2}%) · no autoCompactWindow setting found, assumed {1}', k(c.used), k(c.window), pct)
-      : L('Conversation size {0} / {1} ({2}%) · autoCompactWindow setting', k(c.used), k(c.window), pct);
-  return { pct, level: pct >= 80 ? 'hi' : pct >= 50 ? 'mid' : 'lo', tip };
+  const n = (x) => (x >= 1e6 ? +(x / 1e6).toFixed(2) + 'M' : Math.round(x / 1000) + 'k');
+  const where = c.file ? ' · ' + c.file.replace(os.homedir(), '~') : '';
+  const tip = {
+    codex: () => L('Conversation size {0} / {1} ({2}%) · model context window', n(c.used), n(c.window), pct),
+    'model-setting': () => L('Conversation size {0} / {1} ({2}%) · auto-compact window saved for this model (/autocompact)', n(c.used), n(c.window), pct) + where,
+    env: () => L('Conversation size {0} / {1} ({2}%) · auto-compact window from CLAUDE_CODE_AUTO_COMPACT_WINDOW', n(c.used), n(c.window), pct) + where,
+    setting: () => L('Conversation size {0} / {1} ({2}%) · autoCompactWindow setting', n(c.used), n(c.window), pct) + where,
+    default: () => L('Conversation size {0} / {1} ({2}%) · default auto-compact point for {3}', n(c.used), n(c.window), pct, c.model || '?'),
+  }[c.source] || (() => L('Conversation size {0} / {1} ({2}%) · unknown model, assumed {1}', n(c.used), n(c.window), pct));
+  return { pct, level: pct >= 80 ? 'hi' : pct >= 50 ? 'mid' : 'lo', tip: tip() };
 }
 
 function sessionsPayload() {

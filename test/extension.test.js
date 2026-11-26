@@ -60,7 +60,7 @@ fx.claudeSession(home, other, SID_OTHER, [
   rec.user(other, now - 15 * MIN, 'Something in another folder'),
   rec.aiTitle(SID_OTHER, 'Other folder work'),
   // 마지막 응답에 15만 토큰이 들어갔다(대화 크기 고리 시험용)
-  (() => { const r = rec.toolUse(other, now - 14 * MIN, 't_o', 'Write', { file_path: path.join(other, 'o.txt'), content: 'o\n' }); r.message.usage = { input_tokens: 10, cache_creation_input_tokens: 990, cache_read_input_tokens: 148000, output_tokens: 1000 }; return r; })(),
+  (() => { const r = rec.toolUse(other, now - 14 * MIN, 't_o', 'Write', { file_path: path.join(other, 'o.txt'), content: 'o\n' }); r.message.usage = { input_tokens: 10, cache_creation_input_tokens: 990, cache_read_input_tokens: 148000, output_tokens: 1000 }; r.message.model = 'claude-opus-4-6'; return r; })(),
   rec.toolResult(now - 14 * MIN + 300, 't_o', rec.writeResult(path.join(other, 'o.txt'), 'o\n')),
 ]);
 fs.writeFileSync(path.join(other, 'o.txt'), 'o\n');
@@ -141,9 +141,9 @@ test('세션 창: 상태·지금 하는 일·변경 규모·다른 폴더 묶음
   assert.match(p.strings.diffTip, /^Last 24 hours: /);
   const g = p.groups.find((x) => x.key === 'other-app');
   assert.ok(g && g.rows[0].canOpen === true && g.rows[0].state === 'idle', '다른 폴더 세션도 누를 수 있다(그 폴더 창에서 연다)');
-  // 대화 크기 고리: 15만 ÷ 기준. 시험 홈에는 autoCompactWindow 설정이 없어 20만으로 가정한다고 알린다
+  // 대화 크기 고리: 15만 ÷ 기준. 시험 홈에는 설정이 없어 그 모델(Opus 4.6, 200k 창)의 기본 압축 지점과 비교한다
   assert.deepStrictEqual([g.rows[0].ctx.pct, g.rows[0].ctx.level], [75, 'mid']);
-  assert.match(g.rows[0].ctx.tip, /^Conversation size 150k \/ 200k \(75%\) · no autoCompactWindow setting found, assumed 200k$/);
+  assert.strictEqual(g.rows[0].ctx.tip, 'Conversation size 150k / 200k (75%) · default auto-compact point for claude-opus-4-6');
   assert.match(g.rows[0].tip, /Conversation size 150k/, '줄 설명에도 나온다');
   assert.strictEqual(a.ctx, null, '응답 토큰 기록이 없는 세션은 고리를 그리지 않는다');
   assert.match(web.view.description, /Working 1 · Waiting 0 · Idle 1/, '머리말은 이 폴더 세션만 센다');
