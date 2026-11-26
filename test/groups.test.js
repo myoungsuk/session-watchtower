@@ -625,3 +625,15 @@ test('팀 문서 틀: 체크리스트 둘은 제목·문서 줄 바로 아래가
     assert.match(test, ko ? /층끼리 서로 대신하지 않습니다/ : /One layer never stands in for another/);
   }
 });
+
+test('커밋 안 한 파일 짝짓기: Windows는 드라이브 글자 대소문자가 달라도 같은 파일(세션 기록 c:\\…, git C:\\…), 다른 운영체제는 글자 그대로', () => {
+  const { matchDirty } = ext._test;
+  const git = ['C:\\Users\\kms\\hmi\\PlantRuntime.h', 'C:\\Users\\kms\\hmi\\stray.txt'];
+  const rec = ['c:\\Users\\kms\\hmi\\PlantRuntime.h'];
+  const win = matchDirty(git, [rec, []], rec, 'win32');
+  assert.deepStrictEqual(win.uncommitted, [rec, []], 'Claude가 고친 파일이 그 세션의 커밋 안 함 칸에(세션 기록의 표기 그대로)');
+  assert.deepStrictEqual(win.unknown, ['C:\\Users\\kms\\hmi\\stray.txt'], '어느 세션도 안 고친 파일만 남는다');
+  const lin = matchDirty(['/a/App.js'], [['/a/app.js']], ['/a/app.js'], 'linux');
+  assert.deepStrictEqual(lin.uncommitted, [[]], 'Linux에서는 App.js와 app.js가 다른 파일');
+  assert.deepStrictEqual(lin.unknown, ['/a/App.js']);
+});

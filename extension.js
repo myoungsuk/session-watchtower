@@ -1873,6 +1873,19 @@ function runGit(cwd, args) {
 
 // 저장소별 커밋 안 한 파일(절대 경로). 큰 저장소에서 git status를 너무 자주 돌리지 않게 10초 동안은 다시 묻지 않는다(새로 고침 단추는 바로)
 const dirtyMemo = new Map(); // 폴더 → { at, top, files }
+// 커밋 안 한 파일(git)을 세션 기록의 파일과 짝짓는다. Windows는 같은 파일을 세션 기록에는 c:\…, git에는 C:\…로 적어
+// 글자 그대로 비교하면 Claude가 고친 파일도 "어느 세션도 안 고친 변경"으로 떴다(11-26 85번 semes_hmi) → pathKey로 비교
+function matchDirty(dirtyFiles, memberPaths, knownPaths, platform = process.platform) {
+  const key = (p) => pathKey(p, platform);
+  const dirty = new Map();
+  for (const f of dirtyFiles) if (!dirty.has(key(f))) dirty.set(key(f), f);
+  const known = new Set(knownPaths.map(key));
+  return {
+    uncommitted: memberPaths.map((ps) => ps.filter((p) => dirty.has(key(p)))),
+    unknown: [...dirty.values()].filter((p) => !known.has(key(p))),
+  };
+}
+
 async function dirtyFilesOf(cwd) {
   const hit = dirtyMemo.get(cwd);
   if (hit && Date.now() - hit.at < 10000) return hit;
@@ -1931,23 +1944,24 @@ async function boardPayload(id) {
     if (s.cwd) tops.set(s.cwd, true);
   }
   // 커밋 안 한 파일: 그룹 세션들의 저장소마다 git status를 보고, 그 파일을 바꾼 세션에 붙인다
-  const dirty = new Set();
+  const dirtyFiles = [];
   for (const cwd of tops.keys()) {
     const d = await dirtyFilesOf(cwd);
-    for (const f of d.files) dirty.add(f);
+    dirtyFiles.push(...d.files);
   }
-  for (const r of members) {
-    if (!r.paths) continue;
-    r.uncommitted = r.paths.filter((p) => dirty.has(p));
+  const known = [];
+  for (const m of model) for (const f of m.files) known.push(f.path);
+  const match = matchDirty(dirtyFiles, members.map((r) => r.paths || []), known);
+  members.forEach((r, i) => {
+    if (!r.paths) return;
+    r.uncommitted = match.uncommitted[i];
     delete r.paths;
-  }
+  });
   // 보는 기간 안에 바뀌었는데 어느 세션 기록으로도 설명되지 않는 커밋 전 변경: 사람이 직접 고쳤거나 다른 도구.
   // 바뀐 시각을 꼭 본다: 오래전부터 커밋 안 한 채 있는 파일(백업·git에 안 올린 파일)까지 넣으면 늘 같은 파일이 떠서 쓸모가 없다(11-12 사용자 화면)
-  const known = new Set();
-  for (const m of model) for (const f of m.files) known.add(f.path);
   const since = Date.now() - cfg().lookbackHours * 3600000;
   const changedSince = (p) => { try { return fs.statSync(p).mtimeMs >= since; } catch { return false; } };
-  const unknown = [...dirty].filter((p) => !known.has(p) && changedSince(p)).sort();
+  const unknown = match.unknown.filter(changedSince).sort();
   const b = boards.get(id);
   const memo = await memoView(g.memo);
   const setup = { members: members.length, roles: members.filter((r) => r.role || eff.get(r.sid).lead).length, memo: !!g.memo };
@@ -3912,7 +3926,7 @@ const explorerEvents = new vscode.EventEmitter();
 let explorerLive = new Map(); // 경로 열쇠 → { state: 'editing' | 'approval', title, uri }
 let spinFrame = 0;
 let spinTimer = null;
-const pathKey = (p) => (process.platform === 'win32' ? String(p).toLowerCase() : String(p));
+const pathKey = (p, platform = process.platform) => (platform === 'win32' ? String(p).toLowerCase() : String(p));
 
 // 작업 폴더 안의 파일이면 탐색기가 쓰는 주소로 바꾼다(원격 창은 작업 폴더와 같은 scheme·authority). 폴더 밖이면 null
 function workspaceUri(p) {
@@ -5181,4 +5195,4 @@ function deactivate() {
   })]).then(() => undefined);
 }
 
-module.exports = { activate, deactivate, _test: { teamDocTemplates, teamDocCheck, boardState: () => (boardHost ? boardHost.state() : 'off'), syncBuiltInBoard: (f) => syncBuiltInBoard(f), takeOpenRequests: () => takeOpenRequests(), canOpenSession: (s) => canOpenSession(s), usageRefreshing: () => usageRefreshing, parseBoardRoles, hunksToSides, applyEdit, displayDir, fmtTime, sidesForCodex, sameTitle, sessionKeyOf, setCodexCli: (v) => { codexCli = v; hasCodexCli.fixed = true; }, setClaudeBin: (p) => { claudeBinFixed = p; } } };
+module.exports = { activate, deactivate, _test: { matchDirty, teamDocTemplates, teamDocCheck, boardState: () => (boardHost ? boardHost.state() : 'off'), syncBuiltInBoard: (f) => syncBuiltInBoard(f), takeOpenRequests: () => takeOpenRequests(), canOpenSession: (s) => canOpenSession(s), usageRefreshing: () => usageRefreshing, parseBoardRoles, hunksToSides, applyEdit, displayDir, fmtTime, sidesForCodex, sameTitle, sessionKeyOf, setCodexCli: (v) => { codexCli = v; hasCodexCli.fixed = true; }, setClaudeBin: (p) => { claudeBinFixed = p; } } };

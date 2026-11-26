@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.43.6
+
+- **Windows: files Claude edited no longer show as unexplained changes on the group board.** Session logs write the drive letter as `c:\…` and git writes `C:\…`. The board compared them letter for letter, so a file a session had just edited appeared under changes no session explains, and that session's *Uncommitted* column stayed empty. Paths are now compared case-insensitively on Windows, as the rest of the extension already did.
+
 ## 0.43.5
 
 - **Conversation size counts only this window's sessions by default.** The status bar number and the hover table now include only open sessions started in this window's workspace folders. The new setting `contextSizeScope` (`workspace` by default, or `all`) brings back every folder. A window with no folder open counts all.
