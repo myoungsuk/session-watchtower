@@ -200,7 +200,9 @@ test('상태 표시줄 대화 크기: 사용량 바로 오른쪽, 열린 세션 
   assert.strictEqual(item.text, '$(comment-discussion) 75%', '끝난 세션(95%)이 아니라 열린 세션 중 가장 찬 값');
   assert.strictEqual(item.backgroundColor, undefined, '80% 넘은 열린 세션이 없으면 색 없음');
   const md = item.tooltip.value;
-  assert.match(md, /\| Other folder work · other\\-app \| `████████░░` \| 75% \| 150k \/ 200k \|/, '세션마다 이름·막대·%·크기');
+  assert.match(md, /\| Session \| Full \| Used \/ point \|\n\|---\|--:\|--:\|\n/, '머리줄에 칸 이름');
+  assert.match(md, /\| Other folder work · other\\-app \| 75% \| 150k \/ 200k \|/, '세션마다 이름·%·크기');
+  assert.doesNotMatch(md, /[█░]/, '글꼴 따라 뭉개지는 막대 글자 없음');
   assert.doesNotMatch(md, /Finished chat/, '끝난 세션은 표에도 없다');
   assert.strictEqual(item.tooltip.isTrusted, false);
   stub.calls.length = 0;

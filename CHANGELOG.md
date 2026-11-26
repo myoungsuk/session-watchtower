@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.43.1
+
+- **The conversation-size hover table reads cleanly.** The bar column (block characters in code formatting) rendered as grey blobs whose lengths barely differed, the header row was empty, and the note under the table was cut off at the right edge. The bar column is gone, the header now names the columns (*Session · Full · Used / point*), and the note is two short lines.
+
 ## 0.43.0
 
 - **Conversation size moved to the status bar.** The separate view could not be made smaller than VS Code's minimum height. Now one status bar item, right of plan usage, shows the fullest open session (for example *💬 84%*, yellow from 80%). Hover it for every open session with a bar, a percent and *used / point*; click it to pick a session and open it. The Conversation Size view is removed.
