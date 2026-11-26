@@ -68,6 +68,8 @@ One row per session, newest conversation first, in the same colors as Claude Cod
 
 Under a working or waiting session a second line shows **what it is doing now** (*Running: npm test*, *Editing README.md*, *2 subagents working*) and **how much it changed** (`+142 −38` with a small green and red bar). A `⚠ 2` tag means two of its files were also changed by another session.
 
+**The small ring before the time** shows how full the conversation is: the tokens sent with its last reply (new input + cache write + cache read + output) against Claude Code's `autoCompactWindow` setting. Watchtower reads the setting from the session folder's `.claude/settings.local.json`, then `.claude/settings.json`, then `~/.claude/settings.json`; when none sets it, it assumes 200k and says so. Green under 50%, yellow under 80%, red from 80%. Hover it for the numbers (*Conversation size 236k / 300k (79%)*). For a Codex session the ring is against the model's context window from Codex's own token record. After `/compact` the next reply is small again and the ring drops.
+
 - **Click a row** to open that conversation in Claude Code. **New session** starts a new one: a Claude Code conversation, or a Codex chat when the setting `newSessionTool` is `codex` (the Codex extension's new agent, or the Codex CLI in a terminal when the extension is not installed). To switch, use *Choose what New session opens* in the view's `…` menu; *Open all Watchtower settings* in the same menu lists every setting.
 - **Open · 5** filters the list to sessions that are open right now (working, waiting or idle). The number counts this folder.
 - **The magnifier** filters by title, role, folder and team name (a team name shows the whole team). Press Enter, or click the line under the box, to search inside conversations and answers instead.
@@ -361,6 +363,8 @@ Dark and light themes are both supported; colors come from the active VS Code th
 | Shell command text (`>`, `>>`, `tee`, `sed -i`, `cp`, `mv`, `touch`) and file modification time | Best effort |
 | Uncommitted files in the repository that changed while one of the session's commands ran | Best effort |
 
+The conversation-size ring comes from the last `usage` record at the end of the session log (only the end of the file is read, and only when the file changed) and the `autoCompactWindow` value in the settings files above. Watchtower only reads these files.
+
 Session state is read from the files Claude Code writes in `~/.claude/sessions/`. If you use a hook that writes `<first 12 hex of sha256(session id)>.pending` files when an approval prompt appears, point `attentionMarkerDir` at that folder for an extra "waiting for you" signal.
 
 ## Privacy and what is written
@@ -468,6 +472,7 @@ Claude Code 세션을 여러 개 돌릴 때 **어느 세션이 일하는 중이�
 - **정리**: 보관함, 세션 이름 바꾸기, 변경 요약을 마크다운으로 복사.
 - **바깥에서 열기**: 데스크톱 알림 같은 다른 프로그램이 `vscode://kms-labs.session-watchtower/open?title=…` 주소로 그 세션의 대화를 열 수 있습니다.
 - **Codex** 세션도 함께 나옵니다.
+- **대화 크기 고리**: 세션 줄의 시간 앞 작은 고리가 대화가 얼마나 찼는지 보여 줍니다. 마지막 응답에 들어간 토큰(새 입력 + 캐시 쓰기 + 캐시 읽기 + 출력)을 Claude Code 설정 `autoCompactWindow`(작업 폴더 `.claude/settings.local.json` → `.claude/settings.json` → `~/.claude/settings.json` 순서, 없으면 20만으로 가정하고 그렇다고 표시)와 비교합니다. 50% 미만 초록, 80% 미만 노랑, 그 이상 빨강. 마우스를 올리면 `대화 크기 236k / 300k (79%)`처럼 나옵니다. Codex 세션은 Codex 기록의 모델 문맥 창과 비교합니다. `/compact` 뒤 다음 응답부터 고리가 줄어듭니다.
 - **요금제 사용량**: 상태 표시줄 오른쪽에 Claude Code·Codex 한도를 몇 % 썼는지(예: `Claude 83% · Fable 21% · Codex 23%`) 보여 줍니다. Fable처럼 모델마다 따로 있는 주간 한도도 따로 나옵니다. 마우스를 올리면 칸별 값, 초기화 시각, 모델이 주간 한도의 몇 %까지 쓸 수 있는지, 이번 주 사용 비율, 몇 분 전 값인지가 나옵니다. Claude는 Claude Code가 `~/.claude.json`에 받아 둔 값이고, Claude를 쓰는 동안 15분마다 Claude Code 자신의 명령(`claude -p /usage`, 모델을 부르지 않음)으로 다시 확인하게 합니다. 누르면 바로 확인합니다. 확장은 로그인 정보를 읽지 않습니다. Codex는 마지막 Codex 기록의 값입니다. 세션 숫자도 사용량 바로 옆(오른쪽)에 있습니다. 인터넷에 묻지 않고, 두 파일의 크기·시각만 보다가 바뀌었을 때만 읽어서 CPU를 거의 쓰지 않습니다.
 - **휴대폰 보드(내장, 기본 꺼짐)**: "휴대폰 보드: 켜기·끄기"로 켜면 이 컴퓨터에만(127.0.0.1:5290) 보드가 열리고, 휴대폰으로 열 QR·링크·코드(10분, 한 번만)와 Tailscale 설정 순서를 보여 줍니다. 순서: ① 휴대폰과 이 컴퓨터에 Tailscale을 깔고 같은 계정으로 로그인 ② 켜기 ③ 패널의 serve 명령 실행("터미널에서 실행" 단추, Windows는 `& "C:\Program Files\Tailscale\tailscale.exe" serve --bg 5290`) — 처음 한 번은 나오는 login.tailscale.com 주소에서 HTTPS certificates를 켜고 Funnel은 끔 ④ "새 링크 만들기" → https 링크의 QR을 휴대폰으로 찍기. 준비가 안 됐으면 패널이 다음 할 일을 표시하고 휴대폰 QR은 숨깁니다. 휴대폰은 각자의 Tailscale(`tailscale serve`)로 들어오고, 인터넷에 여는 Funnel은 쓰지 않습니다. 기기는 일회용 코드로만 연결되고 "연결된 휴대폰·브라우저 모두 끊기"로 한 번에 끊습니다. 창이 여러 개면 한 창만 보드를 맡고, 그 창이 닫히면 다른 창이 넘겨받습니다. 세션 창의 컴퓨터 단추는 같은 보드를 이 컴퓨터 브라우저로 엽니다. 따로 설치한 session-board가 이미 돌면 그것을 씁니다.
 - **대장이 스스로 역할 나누기**: 그룹마다 팀 명단 파일(세션 이름·도구·상태·메시지 주소·역할·들어오고 빠진 기록)을 확장 저장소에 쓰고 그룹이 바뀔 때마다 새로 씁니다. 대장의 "역할 안내"에 명단 경로와 규칙(새 세션에 역할과 첫 지시, 빠진 세션의 일 나누기, 보드 표에 역할 적기, 메시지 주소로 직접 알리기)이 들어갑니다.

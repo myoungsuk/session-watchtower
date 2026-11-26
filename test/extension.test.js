@@ -59,7 +59,8 @@ const fileA = fx.claudeSession(home, project, SID_A, [
 fx.claudeSession(home, other, SID_OTHER, [
   rec.user(other, now - 15 * MIN, 'Something in another folder'),
   rec.aiTitle(SID_OTHER, 'Other folder work'),
-  rec.toolUse(other, now - 14 * MIN, 't_o', 'Write', { file_path: path.join(other, 'o.txt'), content: 'o\n' }),
+  // 마지막 응답에 15만 토큰이 들어갔다(대화 크기 고리 시험용)
+  (() => { const r = rec.toolUse(other, now - 14 * MIN, 't_o', 'Write', { file_path: path.join(other, 'o.txt'), content: 'o\n' }); r.message.usage = { input_tokens: 10, cache_creation_input_tokens: 990, cache_read_input_tokens: 148000, output_tokens: 1000 }; return r; })(),
   rec.toolResult(now - 14 * MIN + 300, 't_o', rec.writeResult(path.join(other, 'o.txt'), 'o\n')),
 ]);
 fs.writeFileSync(path.join(other, 'o.txt'), 'o\n');
@@ -140,6 +141,11 @@ test('세션 창: 상태·지금 하는 일·변경 규모·다른 폴더 묶음
   assert.match(p.strings.diffTip, /^Last 24 hours: /);
   const g = p.groups.find((x) => x.key === 'other-app');
   assert.ok(g && g.rows[0].canOpen === true && g.rows[0].state === 'idle', '다른 폴더 세션도 누를 수 있다(그 폴더 창에서 연다)');
+  // 대화 크기 고리: 15만 ÷ 기준. 시험 홈에는 autoCompactWindow 설정이 없어 20만으로 가정한다고 알린다
+  assert.deepStrictEqual([g.rows[0].ctx.pct, g.rows[0].ctx.level], [75, 'mid']);
+  assert.match(g.rows[0].ctx.tip, /^Conversation size 150k \/ 200k \(75%\) · no autoCompactWindow setting found, assumed 200k$/);
+  assert.match(g.rows[0].tip, /Conversation size 150k/, '줄 설명에도 나온다');
+  assert.strictEqual(a.ctx, null, '응답 토큰 기록이 없는 세션은 고리를 그리지 않는다');
   assert.match(web.view.description, /Working 1 · Waiting 0 · Idle 1/, '머리말은 이 폴더 세션만 센다');
   assert.deepStrictEqual([web.lastPayload().openHere, web.lastPayload().openElsewhere], [2, 1], '열린 세션 단추의 숫자도 이 폴더만(다른 폴더는 따로)');
   const str = web.lastPayload().strings;
@@ -159,6 +165,15 @@ test('세션 창 화면 코드가 문법 오류 없이 읽힌다', () => {
   assert.doesNotThrow(() => new vm.Script(m[1]));
   assert.match(web.view.webview.html, /default-src 'none'/, '외부 자원을 막는 보안 정책');
   assert.match(web.view.webview.html, /\.deep\[hidden\]\s*\{\s*display:\s*none/, '칸을 비우면 "대화 내용·답에서 찾기" 줄이 숨는다(display: block이 hidden을 이기지 않게)');
+  // 대화 크기 고리: 찬 만큼 호 길이, 100%를 넘으면 꽉 찬 원, 값이 없으면 그리지 않는다
+  const fn = /function ring\(c\) \{[\s\S]*?\n  \}\n/.exec(m[1]);
+  assert.ok(fn, '고리 그리는 코드');
+  const ring = new vm.Script('(function(){ const esc = (s) => String(s); ' + fn[0] + ' return ring; })()').runInNewContext({});
+  const C = (2 * Math.PI * 5.5).toFixed(2);
+  assert.match(ring({ pct: 50, level: 'mid', tip: 't' }), new RegExp('class="ring mid"[\\s\\S]*stroke-dasharray="' + (Math.PI * 5.5).toFixed(2) + ' ' + C + '"'));
+  assert.match(ring({ pct: 130, level: 'hi', tip: 't' }), new RegExp('stroke-dasharray="' + C + ' ' + C + '"'));
+  assert.strictEqual(ring(null), '');
+  assert.match(web.view.webview.html, /\.ring\.hi \.arc \{ stroke: var\(--vscode-editorError-foreground/);
 });
 
 test('세션을 누르면 Claude 대화 열기, 새 세션 열기', async () => {

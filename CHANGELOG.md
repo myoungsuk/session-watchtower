@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.41.0
+
+- **A ring shows how full each conversation is.** A small ring before the time on each session row compares the tokens sent with the session's last reply (new input + cache write + cache read + output) with Claude Code's `autoCompactWindow` setting (the session folder's `.claude/settings.local.json`, then `.claude/settings.json`, then `~/.claude/settings.json`; 200k assumed and said so when none sets it). Green under 50%, yellow under 80%, red from 80%; hover for *Conversation size 236k / 300k (79%)*. Codex sessions are compared with the model context window from Codex's token record. Only the end of each log is read, and only when the file changed.
+
 ## 0.40.1
 
 - **Codex chats stand out in Search conversations.** When both kinds match, results are split into a *Claude Code* section and a *Codex* section (each newest first), and each Codex row starts with a robot icon before *Codex ·*. The small *Codex ·* text alone was easy to miss.

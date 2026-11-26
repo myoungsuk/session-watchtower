@@ -537,6 +537,110 @@ function findLastMessageTs(fd, endPos) {
   return 0;
 }
 
+// ---------- 지금 대화 크기(문맥 토큰)와 자동 압축 기준 ----------
+// 마지막 응답 한 번에 들어간 토큰(새 입력 + 캐시 쓰기 + 캐시 읽기 + 출력)이 지금 대화의 크기다. 압축하면 다음 응답부터 작아진다.
+// 기록 끝에서 거꾸로 찾는다(앞부분은 읽지 않는다). 파일 크기·시각이 같으면 다시 읽지 않는다.
+// Claude: 마지막 assistant 기록의 message.usage. 같은 응답이 여러 줄로 남지만 마지막 줄 하나만 쓰므로 중복은 상관없다.
+// Codex: 마지막 token_count 기록의 last_token_usage와 model_context_window.
+const CTX_BACK_STEPS = [512 * 1024, 4 * 1024 * 1024, 32 * 1024 * 1024];
+const CTX_LINE_MAX = 2 * 1024 * 1024;
+const K_USAGE = B('"usage":{');
+const CX_TOKENS = B('"type":"token_count"');
+const ctxCache = new Map(); // 기록 파일 → { size, mtimeMs, value }
+const DEFAULT_COMPACT_WINDOW = 200000; // 설정이 없을 때(추정값: Claude 모델의 기본 문맥 창)
+
+function claudeCtxOf(o) {
+  if (!o || o.type !== 'assistant' || o.isSidechain) return null;
+  const u = o.message && o.message.usage;
+  if (!u || typeof u !== 'object') return null;
+  const n = (k) => (typeof u[k] === 'number' && u[k] > 0 ? u[k] : 0);
+  const used = n('input_tokens') + n('cache_creation_input_tokens') + n('cache_read_input_tokens') + n('output_tokens');
+  return used > 0 ? { used, ts: Date.parse(o.timestamp) || 0 } : null; // 오류 안내처럼 0으로 적힌 기록은 건너뛴다
+}
+
+function codexCtxOf(o) {
+  const p = o && o.payload;
+  const info = p && p.type === 'token_count' ? p.info : null;
+  const u = info && info.last_token_usage;
+  if (!u || typeof u !== 'object') return null;
+  const used = typeof u.total_tokens === 'number' && u.total_tokens > 0 ? u.total_tokens : (u.input_tokens || 0) + (u.output_tokens || 0);
+  if (!(used > 0)) return null;
+  const win = typeof info.model_context_window === 'number' && info.model_context_window > 0 ? info.model_context_window : 0;
+  return { used, window: win || null, ts: Date.parse(o.timestamp) || 0 };
+}
+
+function findContextIn(buf, codex, truncatedHead) {
+  const key = codex ? CX_TOKENS : K_USAGE;
+  let end = buf.length;
+  while (end > 0) {
+    const j = buf.lastIndexOf(key, end - 1);
+    if (j < 0) return null;
+    const s = j > 0 ? buf.lastIndexOf(10, j - 1) + 1 : 0;
+    if (s === 0 && truncatedHead) return null; // 잘린 첫 줄: 더 넓게 다시 읽는다
+    let e = buf.indexOf(10, j);
+    if (e < 0) e = buf.length;
+    if (e - s <= CTX_LINE_MAX && buf.subarray(s, Math.min(e, s + 48)).indexOf(K_APIREQ) < 0) {
+      let o = null;
+      try { o = JSON.parse(buf.toString('utf8', s, e)); } catch { o = null; }
+      const v = codex ? codexCtxOf(o) : claudeCtxOf(o);
+      if (v) return v;
+    }
+    end = s;
+  }
+  return null;
+}
+
+function lastContext(file, agent) {
+  let stat;
+  try { stat = fs.statSync(file); } catch { return null; }
+  const c = ctxCache.get(file);
+  if (c && c.size === stat.size && c.mtimeMs === stat.mtimeMs) return c.value;
+  let value = null;
+  let fd;
+  try { fd = fs.openSync(file, 'r'); } catch { return null; }
+  try {
+    for (const back of CTX_BACK_STEPS) {
+      const from = Math.max(0, stat.size - back);
+      const buf = Buffer.allocUnsafe(stat.size - from);
+      const n = fs.readSync(fd, buf, 0, buf.length, from);
+      extraRead += n;
+      value = findContextIn(buf.subarray(0, n), agent === 'codex', from > 0);
+      if (value || from === 0) break;
+    }
+  } catch { value = null; } finally { fs.closeSync(fd); }
+  ctxCache.set(file, { size: stat.size, mtimeMs: stat.mtimeMs, value });
+  return value;
+}
+
+// Claude Code 자동 압축 기준(settings의 autoCompactWindow): 작업 폴더의 settings.local.json → settings.json → 사용자 settings.json 순서로 처음 나온 값
+const settingsCache = new Map(); // 파일 → { mtimeMs, value }
+function settingValue(file) {
+  let st;
+  try { st = fs.statSync(file); } catch { settingsCache.delete(file); return null; }
+  const c = settingsCache.get(file);
+  if (c && c.mtimeMs === st.mtimeMs) return c.value;
+  let value = null;
+  try { const o = JSON.parse(fs.readFileSync(file, 'utf8')); if (o && typeof o.autoCompactWindow === 'number' && o.autoCompactWindow > 0) value = o.autoCompactWindow; } catch { value = null; }
+  settingsCache.set(file, { mtimeMs: st.mtimeMs, value });
+  return value;
+}
+function claudeCompactWindow(cwd) {
+  const files = cwd ? [path.join(cwd, '.claude', 'settings.local.json'), path.join(cwd, '.claude', 'settings.json')] : [];
+  files.push(path.join(HOME, '.claude', 'settings.json'));
+  for (const f of files) { const v = settingValue(f); if (v) return { window: v, assumed: false }; }
+  return { window: DEFAULT_COMPACT_WINDOW, assumed: true };
+}
+
+// 세션 줄에 붙일 값: { used, window, assumed }
+function sessionContext(main, cwd) {
+  if (!main || !main.file) return null;
+  const v = lastContext(main.file, main.agent);
+  if (!v) return null;
+  if (main.agent === 'codex') return v.window ? { used: v.used, window: v.window, assumed: false, codex: true } : null;
+  const w = claudeCompactWindow(cwd);
+  return { used: v.used, window: w.window, assumed: w.assumed };
+}
+
 // 읽은 구간에 제목이 없을 때만: 뒤에서 앞으로 가며 마지막 제목 기록을 찾는다
 function findLastTitle(st, fd, endPos, size) {
   const step = 4 * 1024 * 1024;
@@ -2105,6 +2209,8 @@ function createModel() {
         liveFiles,
         // 하위 에이전트(Codex는 하위 스레드): 기록 파일이 방금까지 자라고 있으면 작업 중으로 본다
         subagents: { total: sts.filter((x) => x.sub).length, active: sts.filter((x) => x.sub && t0 - x.mtimeMs < SUB_ACTIVE_MS).length },
+        // 지금 대화 크기와 자동 압축 기준(Codex는 모델 문맥 창)
+        context: main.sub ? null : sessionContext(main, projectCwd),
         changes,
       });
     }
@@ -2124,4 +2230,4 @@ function scanOne(file, agent, sinceMs, seekMinBytes) {
   return st;
 }
 
-module.exports = { LIVE_MS, parseCodexIndex, codexNames, pathDirsIn, codexPatchText, looksReadOnly, createPromptIndex, createModel, shellTargets, stripHeredocBodies, hunkCounts, isScratch, readRegistry, parsePatch, attentionMarker, scanOne };
+module.exports = { LIVE_MS, lastContext, claudeCompactWindow, parseCodexIndex, codexNames, pathDirsIn, codexPatchText, looksReadOnly, createPromptIndex, createModel, shellTargets, stripHeredocBodies, hunkCounts, isScratch, readRegistry, parsePatch, attentionMarker, scanOne };

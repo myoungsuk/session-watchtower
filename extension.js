@@ -2793,12 +2793,28 @@ function sessionRow(s, tabs, team) {
   const lead = !!(eff && eff.lead);
   const role = eff ? eff.extra : '';
   const roleFromBoard = !!(eff && eff.extraSource === 'board');
+  const ctx = contextGauge(s.context);
   return {
     team: team ? team.id : '', role, roleFromBoard, lead,
-    sid: s.sid, title: s.title, state: st.key, meta, tip: (tab ? L('Shown in a tab right now') + '\n' : '') + sessionTooltip(s, st) + '\n' + hint, canOpen, alive: !!s.alive, codex, tab,
+    sid: s.sid, title: s.title, state: st.key, meta, tip: (tab ? L('Shown in a tab right now') + '\n' : '') + sessionTooltip(s, st) + (ctx ? '\n' + ctx.tip : '') + '\n' + hint, canOpen, alive: !!s.alive, codex, tab,
     files: m ? m.files.length : 0, add, del, now: [subText(s, st), nowText(s, st)].filter(Boolean).join(' · '), folder: inWorkspace(s) ? '' : s.project || '', worktree: s.worktree || '',
     overlap: m ? m.files.filter((f) => f.overlap).length : 0,
+    ctx,
   };
+}
+
+// 대화 크기 고리: 마지막 응답에 들어간 토큰 ÷ 자동 압축 기준(Claude는 settings의 autoCompactWindow, Codex는 모델 문맥 창)
+// 색은 50% 미만 초록 · 80% 미만 노랑 · 그 이상 빨강(50%는 전역 지침 19절 "15만쯤 넘으면 /compact 권함"과 맞춘 선)
+function contextGauge(c) {
+  if (!c || !(c.used > 0) || !(c.window > 0)) return null;
+  const pct = Math.round((c.used / c.window) * 100);
+  const k = (n) => Math.round(n / 1000) + 'k';
+  const tip = c.codex
+    ? L('Conversation size {0} / {1} ({2}%) · model context window', k(c.used), k(c.window), pct)
+    : c.assumed
+      ? L('Conversation size {0} / {1} ({2}%) · no autoCompactWindow setting found, assumed {1}', k(c.used), k(c.window), pct)
+      : L('Conversation size {0} / {1} ({2}%) · autoCompactWindow setting', k(c.used), k(c.window), pct);
+  return { pct, level: pct >= 80 ? 'hi' : pct >= 50 ? 'mid' : 'lo', tip };
 }
 
 function sessionsPayload() {
@@ -2971,6 +2987,13 @@ function sessionsHtml(webview) {
   .tabkey { display: inline-block; width: 14px; height: 12px; border-radius: 2px; }
   .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .meta { flex-shrink: 0; font-size: 12px; color: var(--vscode-descriptionForeground); }
+  .ring { flex-shrink: 0; display: inline-flex; cursor: help; }
+  .ring circle { fill: none; stroke-width: 2.4; }
+  .ring .tr { stroke: var(--vscode-descriptionForeground); opacity: .25; }
+  .ring .arc { stroke-linecap: round; }
+  .ring.lo .arc { stroke: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
+  .ring.mid .arc { stroke: var(--vscode-editorWarning-foreground, #cca700); }
+  .ring.hi .arc { stroke: var(--vscode-editorError-foreground, #f14c4c); }
   /* 단추는 마우스를 올린 줄에서만 시간 자리에 나온다(평소에는 자리를 차지하지 않아 제목이 덜 잘린다. Claude 세션 목록과 같은 방식) */
   .act { flex-shrink: 0; display: none; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--vscode-icon-foreground, var(--vscode-foreground)); cursor: pointer; }
   .row:hover .act, .row:focus-visible .act, .row:has(.act:focus-visible) .act { display: inline-flex; }
@@ -3112,6 +3135,15 @@ function sessionsHtml(webview) {
   const boardIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="11" rx="1"/><path d="M2 6h12M6.5 6v7.5"/></svg>';
   const trashIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.7 9h6.6l.7-9"/></svg>';
   const gearIcon = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/></svg>';
+  // 대화 크기 고리(지름 14px): 옅은 바탕 원 위에 찬 만큼 호를 그린다. 100%를 넘으면 꽉 찬 원
+  function ring(c) {
+    if (!c) return '';
+    const C = 2 * Math.PI * 5.5;
+    const len = (Math.min(100, Math.max(0, c.pct)) / 100) * C;
+    return '<span class="ring ' + esc(c.level) + '" title="' + esc(c.tip) + '" aria-label="' + esc(c.tip) + '" role="img">'
+      + '<svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" class="tr"/>'
+      + '<circle cx="7" cy="7" r="5.5" class="arc" stroke-dasharray="' + len.toFixed(2) + ' ' + C.toFixed(2) + '" transform="rotate(-90 7 7)"/></svg></span>';
+  }
   function row(r, inArchive) {
     const btn = (act, label, svg) => '<button class="act" data-act="' + act + '" data-sid="' + esc(r.sid) + '" title="' + esc(label) + '" aria-label="' + esc(label) + '">' + svg + '</button>';
     // 보는 기간 안에 바꾼 파일이 없는 세션은 "불러오기" 단추(그 세션의 마지막 작업분을 읽어 온다)
@@ -3131,7 +3163,7 @@ function sessionsHtml(webview) {
       + (r.overlap ? '<button class="tag warn" data-act="overlap" data-sid="' + esc(r.sid) + '" title="' + esc(String(strings.overlapTip || '').replace('{0}', r.overlap)) + '">⚠ ' + r.overlap + '</button>' : '')
       + (inArchive && r.folder ? '<span class="tag">' + esc(r.folder) + '</span>' : '')
       + (r.worktree ? '<span class="tag wt" title="' + esc(String(strings.worktreeTip || '').replace('{0}', r.worktree)) + '">worktree</span>' : '')
-      + '<span class="meta">' + esc(r.meta) + '</span>' + acts + '</div>' + sub + '</div>';
+      + ring(r.ctx) + '<span class="meta">' + esc(r.meta) + '</span>' + acts + '</div>' + sub + '</div>';
   }
   // 색 범례(? 단추)
   const legendBox = document.getElementById('legend');

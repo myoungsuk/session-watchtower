@@ -465,5 +465,8 @@
   "(showing the newest {0})": "(최근 {0}개만 표시)",
   "{0} places": "{0}곳",
   "Name, role or folder · Enter: inside conversations": "이름·역할·폴더 · Enter: 대화 내용까지",
-  "Search conversations and answers for “{0}” (Enter)": "“{0}”을(를) 대화 내용·답에서 찾기 (Enter)"
+  "Search conversations and answers for “{0}” (Enter)": "“{0}”을(를) 대화 내용·답에서 찾기 (Enter)",
+  "Conversation size {0} / {1} ({2}%) · autoCompactWindow setting": "대화 크기 {0} / {1} ({2}%) · 자동 압축 기준(autoCompactWindow)",
+  "Conversation size {0} / {1} ({2}%) · no autoCompactWindow setting found, assumed {1}": "대화 크기 {0} / {1} ({2}%) · autoCompactWindow 설정이 없어 {1}로 가정",
+  "Conversation size {0} / {1} ({2}%) · model context window": "대화 크기 {0} / {1} ({2}%) · 모델 문맥 창(Codex)"
 }
