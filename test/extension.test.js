@@ -181,11 +181,8 @@ test('세션 창 화면 코드가 문법 오류 없이 읽힌다', () => {
   assert.doesNotMatch(m[1], /function ring\(|function ctxSection\(|class="crow/, '세션 창에는 대화 크기를 그리지 않는다');
 });
 
-test('"대화 크기" 창: MCP 서버 바로 위·기본 접힘, 열린 세션만 많이 찬 순, 누르면 열림, 설정으로 끔', async () => {
-  const views = require('../package.json').contributes.views.claudeSessionChanges.map((v) => v.id);
-  assert.strictEqual(views.indexOf('claudeSessionChanges.context'), views.indexOf('claudeSessionChanges.mcp') - 1, 'MCP 서버 바로 위');
-  assert.strictEqual(require('../package.json').contributes.views.claudeSessionChanges.find((v) => v.id === 'claudeSessionChanges.context').visibility, 'collapsed');
-  // 프로세스가 없는(끝난) 세션: 마지막 응답 19만 토큰(95%). 창에는 열린 세션만 나오므로 빠져야 한다(다른 시험의 목록 순서를 건드리지 않게 여기서만 만들고 끝에 지운다)
+test('상태 표시줄 대화 크기: 사용량 바로 오른쪽, 열린 세션 중 가장 찬 값, 마우스를 올리면 세션마다 표, 누르면 골라 열기, 설정으로 끔', async () => {
+  // 프로세스가 없는(끝난) 세션: 마지막 응답 19만 토큰(95%). 열린 세션만 세므로 빠져야 한다(다른 시험의 목록 순서를 건드리지 않게 여기서만 만들고 끝에 지운다)
   const refresh = () => stub.commands.get('claudeSessionChanges.refresh')();
   const goneFile = fx.claudeSession(home, project, SID_GONE, [
     rec.user(project, now - 50 * MIN, 'A finished chat'),
@@ -194,39 +191,29 @@ test('"대화 크기" 창: MCP 서버 바로 위·기본 접힘, 열린 세션�
   ]);
   await refresh();
   await waitFor(() => web.lastPayload().mine.some((r) => r.sid === SID_GONE), '끝난 세션 읽기');
-  const cw = stub.openWebview('claudeSessionChanges.context');
-  cw.send({ type: 'ready' });
-  await waitFor(() => cw.lastPayload(), '대화 크기 창 내용');
-  const html = cw.view.webview.html;
-  const m = /<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(html);
-  assert.doesNotThrow(() => new vm.Script(m[1]));
-  assert.match(html, /default-src 'none'/);
-  assert.match(html, /\.cbar\.hi i \{ background: var\(--vscode-editorError-foreground/);
-  assert.match(html, /\.crow \{[^}]*min-height: 22px/, '줄 높이 22px(VS Code 목록과 같음)');
-  assert.doesNotMatch(html, /id="note"/, '안내 줄은 따로 두지 않는다(최소 높이 안에 줄 5개)');
-  const p = cw.lastPayload();
-  const alive = new Set((web.lastPayload().groups || []).flatMap((g) => g.rows).concat(web.lastPayload().mine).filter((r) => r.alive).map((r) => r.sid));
-  assert.ok(p.rows.length >= 1 && p.rows.every((r) => alive.has(r.sid)), '열린 세션만');
   const gone = web.lastPayload().mine.find((r) => r.sid === SID_GONE);
   assert.ok(gone && !gone.alive && gone.ctx && gone.ctx.pct === 95, '끝난 세션도 값은 있다(95%)');
-  assert.ok(!p.rows.some((r) => r.sid === SID_GONE), '그래도 창에는 안 나온다');
-  const o = p.rows.find((r) => r.sid === SID_OTHER);
-  assert.deepStrictEqual([o.ctx.pct, o.ctx.text, o.folder], [75, '150k / 200k', 'other-app']);
-  assert.ok(p.rows.every((r, i) => !i || p.rows[i - 1].ctx.pct >= r.ctx.pct), '많이 찬 순');
-  assert.strictEqual(p.hi, 0);
-  assert.strictEqual(cw.view.description, '', '80% 넘은 세션이 없으면 제목 옆 글자 없음');
-  // 화면 그리기: 막대는 100%에서 멈추고 숫자는 그대로, 열 수 없는 세션은 눌러도 안 열림
-  const crow = new vm.Script('(function(){ const esc = (s) => String(s); ' + /function crow\(r\) \{[\s\S]*?\n  \}\n/.exec(m[1])[0] + ' return crow; })()').runInNewContext({});
-  const h = crow({ sid: 'x', title: 't', canOpen: false, folder: 'f', ctx: { pct: 130, level: 'hi', tip: 'tip', text: '390k / 300k' } });
-  assert.match(h, /class="crow other"[^>]*data-open=""/);
-  assert.match(h, /<i style="width:100%"><\/i><\/span><span class="cpct hi">130%<\/span><span class="cnum">390k \/ 300k<\/span>/);
+  const item = stub.statusItems.find((x) => x.id === 'claudeSessionChanges.context');
+  const usageItem = stub.statusItems.find((x) => x.id === 'claudeSessionChanges.usage');
+  assert.ok(item && item.priority < usageItem.priority && usageItem.priority - item.priority < 0.001, '사용량 바로 오른쪽');
+  await waitFor(() => item.visible && item.text, '대화 크기 항목');
+  assert.strictEqual(item.text, '$(comment-discussion) 75%', '끝난 세션(95%)이 아니라 열린 세션 중 가장 찬 값');
+  assert.strictEqual(item.backgroundColor, undefined, '80% 넘은 열린 세션이 없으면 색 없음');
+  const md = item.tooltip.value;
+  assert.match(md, /\| Other folder work · other\\-app \| `████████░░` \| 75% \| 150k \/ 200k \|/, '세션마다 이름·막대·%·크기');
+  assert.doesNotMatch(md, /Finished chat/, '끝난 세션은 표에도 없다');
+  assert.strictEqual(item.tooltip.isTrusted, false);
   stub.calls.length = 0;
-  cw.send({ type: 'open', sid: SID_A });
-  await waitFor(() => stub.calls.find((c) => c[0] === 'claude-vscode.editor.open'), '줄을 누르면 대화 열기');
+  stub.state.pick = (items) => items[0];
+  await stub.commands.get('claudeSessionChanges.pickContext')();
+  stub.state.pick = undefined;
+  const pick = stub.calls.find((c) => c[0] === 'pick');
+  assert.deepStrictEqual(pick[1].map((x) => x.sid), [SID_OTHER], '고르기 목록도 열린 세션만');
+  assert.match(pick[1][0].description, /^75% · 150k \/ 200k · other-app$/);
   stub.changeConfig('contextSize', false);
-  await waitFor(() => cw.lastPayload().rows.length === 0 && /Turned off/.test(cw.lastPayload().empty), '끄면 비우고 안내');
+  await waitFor(() => !item.visible, '끄면 숨김');
   stub.changeConfig('contextSize', true);
-  await waitFor(() => cw.lastPayload().rows.length >= 1, '켜면 다시');
+  await waitFor(() => item.visible, '켜면 다시');
   fs.unlinkSync(goneFile);
   await refresh();
   await waitFor(() => !web.lastPayload().mine.some((r) => r.sid === SID_GONE), '시험용 세션 지움');

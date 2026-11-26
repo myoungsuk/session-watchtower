@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.43.0
+
+- **Conversation size moved to the status bar.** The separate view could not be made smaller than VS Code's minimum height. Now one status bar item, right of plan usage, shows the fullest open session (for example *💬 84%*, yellow from 80%). Hover it for every open session with a bar, a percent and *used / point*; click it to pick a session and open it. The Conversation Size view is removed.
+
 ## 0.42.2
 
 - **The Conversation Size view fits five sessions in its smallest height.** VS Code keeps an open view at least about 120 px tall, and the note line under the list pushed in a scroll bar. The note now shows on hover, rows are 22 px like VS Code lists, and the padding is smaller. To hide the list completely, collapse the view: its title still shows *N past 80%*.

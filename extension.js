@@ -2575,7 +2575,7 @@ function rebuildSessions() {
       : undefined;
   }
   sessionsWebview.post();
-  contextWebview.post();
+  updateContextItem();
   refreshBoards();
   writeTeamRosters();
 }
@@ -2795,7 +2795,7 @@ function sessionRow(s, tabs, team) {
   const lead = !!(eff && eff.lead);
   const role = eff ? eff.extra : '';
   const roleFromBoard = !!(eff && eff.extraSource === 'board');
-  const ctx = cfg().contextSize ? contextGauge(s.context) : null; // 설정 contextSize를 끄면 "대화 크기" 창도 줄 설명의 크기도 없다
+  const ctx = cfg().contextSize ? contextGauge(s.context) : null; // 설정 contextSize를 끄면 상태 표시줄의 대화 크기도 줄 설명의 크기도 없다
   return {
     team: team ? team.id : '', role, roleFromBoard, lead,
     sid: s.sid, title: s.title, state: st.key, meta, tip: (tab ? L('Shown in a tab right now') + '\n' : '') + sessionTooltip(s, st) + (ctx ? '\n' + ctx.tip : '') + '\n' + hint, canOpen, alive: !!s.alive, codex, tab,
@@ -2805,7 +2805,7 @@ function sessionRow(s, tabs, team) {
   };
 }
 
-// 대화 크기("MCP 서버" 위의 "대화 크기" 창): 마지막 응답에 들어간 토큰 ÷ 자동 압축 기준(Claude는 settings의 autoCompactWindow, Codex는 모델 문맥 창)
+// 대화 크기(상태 표시줄의 대화 크기 항목): 마지막 응답에 들어간 토큰 ÷ 자동 압축 기준(Claude는 settings의 autoCompactWindow, Codex는 모델 문맥 창)
 // 색은 50% 미만 초록 · 80% 미만 노랑 · 그 이상 빨강(50%는 전역 지침 19절 "15만쯤 넘으면 /compact 권함"과 맞춘 선)
 function contextGauge(c) {
   if (!c || !(c.used > 0) || !(c.window > 0)) return null;
@@ -2956,98 +2956,44 @@ class SessionsWebview {
 
 const sessionsWebview = new SessionsWebview();
 
-// "대화 크기" 창("MCP 서버" 바로 위, 기본 접힘): 지금 열려 있는 세션만, 많이 찬 순.
+// "대화 크기" 상태 표시줄 항목(사용량 바로 오른쪽): 지금 열려 있는 세션 중 가장 찬 값만 보이고, 마우스를 올리면 세션마다 표.
 // 끝난 세션은 뺀다 — 옛 기준(예: 40만) 시절에 끝난 대화를 지금 기준(30만)과 비교하면 195%처럼 잘못 경고한다.
-// 80%를 넘은 세션 수는 창 제목 옆 설명 글자로(배지는 활동 막대 아이콘의 "기다림" 숫자와 섞일 수 있어 쓰지 않는다).
-const CONTEXT_VIEW = 'claudeSessionChanges.context';
+// 누르면 많이 찬 순으로 골라 그 세션을 연다.
+let contextItem = null;
+let contextShown = '';
 function contextPayload() {
-  const off = !cfg().contextSize;
-  const rows = off ? [] : sessionsModel.filter((s) => s.alive).map((s) => {
+  const rows = !cfg().contextSize ? [] : sessionsModel.filter((s) => s.alive).map((s) => {
     const ctx = contextGauge(s.context);
     return ctx ? { sid: s.sid, title: s.title, canOpen: canOpenSession(s), folder: inWorkspace(s) ? '' : s.project || '', ctx } : null;
   }).filter(Boolean).sort((a, b) => b.ctx.pct - a.ctx.pct);
-  const hi = rows.filter((r) => r.ctx.level === 'hi').length;
-  return {
-    rows, hi,
-    empty: off ? L('Turned off (setting claudeSessionChanges.contextSize).') : L('No open session has a conversation size yet.'),
-    note: L('Open sessions only, fullest first. Against each session\'s auto-compact point; hover a line for where the point came from.'),
-  };
+  return { rows, hi: rows.filter((r) => r.ctx.level === 'hi').length };
 }
-class ContextWebview {
-  constructor() { this.view = undefined; this.ready = false; }
-  resolveWebviewView(view) {
-    this.view = view;
-    this.ready = false;
-    view.webview.options = { enableScripts: true, localResourceRoots: [] };
-    view.webview.html = contextHtml(view.webview);
-    view.webview.onDidReceiveMessage((m) => {
-      if (!m || typeof m !== 'object') return;
-      if (m.type === 'ready') { this.ready = true; this.post(); }
-      else if (m.type === 'open' && typeof m.sid === 'string') openClaudeSession(m.sid);
-    });
-    view.onDidChangeVisibility(() => { if (view.visible) this.post(); });
-    view.onDidDispose(() => { if (this.view === view) { this.view = undefined; this.ready = false; } });
-  }
-  post() {
-    if (!this.view) return;
-    const p = contextPayload();
-    this.view.description = p.hi ? L('{0} past 80%', p.hi) : '';
-    if (this.ready) this.view.webview.postMessage({ type: 'render', payload: p });
-  }
+const mdCell = (t) => String(t == null ? '' : t).replace(/[\\`*_{}[\]()#+!|<>~-]/g, '\\$&').replace(/\s+/g, ' ');
+function updateContextItem() {
+  if (!contextItem) return;
+  const p = contextPayload();
+  if (!p.rows.length) { if (contextShown) { contextItem.hide(); contextShown = ''; } return; }
+  const top = p.rows[0].ctx;
+  const text = '$(comment-discussion) ' + top.pct + '%';
+  const bar = (pct) => { const n = Math.max(0, Math.min(10, Math.round(pct / 10))); return '█'.repeat(n) + '░'.repeat(10 - n); };
+  let md = '**' + L('Conversation size') + '** — ' + L('open sessions against their auto-compact point') + '\n\n| | | | |\n|---|---|--:|--:|\n';
+  for (const r of p.rows) md += `| ${mdCell(r.title)}${r.folder ? ' · ' + mdCell(r.folder) : ''} | \`${bar(r.ctx.pct)}\` | ${r.ctx.level === 'hi' ? '**' + r.ctx.pct + '%**' : r.ctx.pct + '%'} | ${mdCell(r.ctx.text)} |\n`;
+  md += '\n' + L('Click to open one of them. Where each point comes from is in the session row\'s tooltip in the Sessions view.');
+  const key = text + '\u0000' + md + '\u0000' + p.hi;
+  if (key === contextShown) return;
+  contextShown = key;
+  contextItem.text = text;
+  contextItem.backgroundColor = p.hi ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
+  const tip = new vscode.MarkdownString(md);
+  tip.isTrusted = false;
+  contextItem.tooltip = tip;
+  contextItem.show();
 }
-const contextWebview = new ContextWebview();
-
-function contextHtml(webview) {
-  const n = nonce();
-  return `<!DOCTYPE html>
-<html lang="${isKo() ? 'ko' : 'en'}"><head><meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${n}';">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>
-  body { margin: 0; padding: 1px 0; font-family: var(--vscode-font-family); font-size: 13px; color: var(--vscode-foreground); background: transparent; }
-  .info { margin: 2px 10px 6px; font-size: 11.5px; color: var(--vscode-descriptionForeground); }
-  .cfold { color: var(--vscode-descriptionForeground); font-size: 11.5px; }
-  .crow { display: flex; align-items: center; gap: 8px; min-height: 22px; padding: 0 10px; font-size: 12.5px; cursor: pointer; border-radius: 3px; }
-  .crow:hover, .crow:focus-visible { background: var(--vscode-list-hoverBackground); outline: none; }
-  .crow.other { cursor: default; }
-  .cname { flex: 1; min-width: 4em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cbar { flex: 0 1 90px; min-width: 36px; height: 6px; border-radius: 3px; overflow: hidden; background: color-mix(in srgb, var(--vscode-descriptionForeground) 22%, transparent); }
-  .cbar i { display: block; height: 100%; border-radius: 3px; }
-  .cbar.lo i { background: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
-  .cbar.mid i { background: var(--vscode-editorWarning-foreground, #cca700); }
-  .cbar.hi i { background: var(--vscode-editorError-foreground, #f14c4c); }
-  .cpct { flex-shrink: 0; width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
-  .cpct.hi { color: var(--vscode-editorError-foreground, #f14c4c); font-weight: 600; }
-  .cnum { flex-shrink: 0; font-size: 11.5px; color: var(--vscode-descriptionForeground); font-variant-numeric: tabular-nums; }
-</style></head><body>
-<div id="root" role="list"></div>
-<script nonce="${n}">
-  const vscode = acquireVsCodeApi();
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-  function crow(r) {
-    const w = Math.min(100, Math.max(0, r.ctx.pct));
-    return '<div class="crow' + (r.canOpen ? '' : ' other') + '" role="listitem" tabindex="0" data-sid="' + esc(r.sid) + '" data-open="' + (r.canOpen ? '1' : '') + '" title="' + esc(r.ctx.tip) + '">'
-      + '<span class="cname">' + esc(r.title) + (r.folder ? ' <span class="cfold">· ' + esc(r.folder) + '</span>' : '') + '</span>'
-      + '<span class="cbar ' + esc(r.ctx.level) + '"><i style="width:' + w + '%"></i></span>'
-      + '<span class="cpct ' + esc(r.ctx.level) + '">' + r.ctx.pct + '%</span><span class="cnum">' + esc(r.ctx.text) + '</span></div>';
-  }
-  function render(p) {
-    document.getElementById('root').innerHTML = p.rows.length ? p.rows.map(crow).join('') : '<div class="info">' + esc(p.empty) + '</div>';
-    // VS Code가 펼친 창의 최소 높이(본문 약 120px)를 정해 두므로, 안내 줄은 따로 두지 않고 마우스를 올렸을 때만 보인다 → 줄(22px) 5개가 스크롤 없이 들어간다
-    document.getElementById('root').title = p.rows.length ? p.note : '';
-  }
-  document.addEventListener('click', (e) => {
-    const r = e.target.closest('.crow');
-    if (r && r.dataset.open) vscode.postMessage({ type: 'open', sid: r.dataset.sid });
-  });
-  document.addEventListener('keydown', (e) => {
-    const r = e.target.closest && e.target.closest('.crow');
-    if (e.key === 'Enter' && r && r === e.target && r.dataset.open) vscode.postMessage({ type: 'open', sid: r.dataset.sid });
-  });
-  window.addEventListener('message', (e) => { if (e.data && e.data.type === 'render') render(e.data.payload); });
-  vscode.postMessage({ type: 'ready' });
-</script>
-</body></html>`;
+async function pickContextSession() {
+  const p = contextPayload();
+  if (!p.rows.length) return;
+  const pick = await vscode.window.showQuickPick(p.rows.map((r) => ({ label: r.title, description: r.ctx.pct + '% · ' + r.ctx.text + (r.folder ? ' · ' + r.folder : ''), sid: r.sid })), { placeHolder: L('Open a session (fullest first)') });
+  if (pick) openClaudeSession(pick.sid);
 }
 
 function sessionsHtml(webview) {
@@ -5107,7 +5053,7 @@ function activate(context) {
   vscode.commands.executeCommand('setContext', CTX_ALIVE, aliveOnly);
 
   treeView = vscode.window.createTreeView(VIEW, { treeDataProvider: provider, showCollapseAll: true });
-  // 세션 숫자와 사용량은 오른쪽에 나란히(사용자 요청). 다른 확장 항목이 사이에 끼지 않게 흔치 않은, 바로 붙은 우선순위를 쓴다
+  // 세션 숫자·사용량·대화 크기는 오른쪽에 나란히(사용자 요청). 다른 확장 항목이 사이에 끼지 않게 흔치 않은, 바로 붙은 우선순위를 쓴다
   const STATUS_PRIORITY = 9876.5432;
   statusItem = vscode.window.createStatusBarItem('claudeSessionChanges.status', vscode.StatusBarAlignment.Right, STATUS_PRIORITY + 0.0001);
   statusItem.name = 'Session Watchtower';
@@ -5115,12 +5061,16 @@ function activate(context) {
   usageItem = vscode.window.createStatusBarItem('claudeSessionChanges.usage', vscode.StatusBarAlignment.Right, STATUS_PRIORITY);
   usageItem.name = L('Plan usage');
   usageItem.command = 'claudeSessionChanges.refreshUsage';
+  contextItem = vscode.window.createStatusBarItem('claudeSessionChanges.context', vscode.StatusBarAlignment.Right, STATUS_PRIORITY - 0.0001);
+  contextItem.name = L('Conversation size');
+  contextItem.command = 'claudeSessionChanges.pickContext';
   context.subscriptions.push(
     treeView,
     statusItem,
     usageItem,
+    contextItem,
+    vscode.commands.registerCommand('claudeSessionChanges.pickContext', pickContextSession),
     vscode.window.registerWebviewViewProvider(SESSIONS_VIEW, sessionsWebview),
-    vscode.window.registerWebviewViewProvider(CONTEXT_VIEW, contextWebview),
     vscode.window.registerWebviewViewProvider(MCP_VIEW, mcpWebview),
     vscode.commands.registerCommand('claudeSessionChanges.refreshUsage', () => refreshClaudeUsage(true)),
     vscode.commands.registerCommand('claudeSessionChanges.phoneBoardPair', () => phoneBoardPair()),
